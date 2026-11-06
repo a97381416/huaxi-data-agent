@@ -1,0 +1,62 @@
+# 本地开发环境连接（来自 项目基础环境.md，环境在远程，不要自动执行任何库变更脚本）
+spring:
+  datasource:
+    # M-H1：华西 PG 库（同库同 schema：业务表 + system_* + agentx_*×7；账号/库名联调时按实际填）
+    url: jdbc:postgresql://192.168.2.61:5432/huaxi?currentSchema=public
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+  data:
+    redis:   # 与华西共用实例，agent 侧 key 统一加前缀 huaxi-data-agent:（M-H4 落实）
+      host: 192.168.2.61
+      port: 6379
+      database: 9
+      timeout: 5s
+      password: zrkj8888
+  ai:
+    openai:
+      # MiniMax M3.1-Flash 走 OpenAI 兼容端点（completions 路径默认 /v1/chat/completions）
+      api-key: sk-cp-5m_0cC-sC8pEEbOPBLFCsF21nvbtCZb8zzxjXLAIgHRa37KpUYXdN8g1k166X8OrlQiQq4asukKm13kDEWp9X23Kk62Y2NiV-luWhNypW_FF-dCz5tek8Tk
+      base-url: https://api.minimax.chat
+      chat:
+        options:
+          model: MiniMax-M3.1-Flash
+          temperature: 0.7
+          # 流式返回 usage（stream_options.include_usage）——agentx_trace 的 prompt/completion tokens 依赖它，缺了恒为 0
+          stream-usage: true
+
+# ── M6 技能目录（绝对路径：spring-boot:run -pl 的 CWD 是模块目录，相对路径会解析错） ──
+skills:
+  directory: D:/work/llmetor-manage/my-data-agent/backend/skills
+
+
+# ── M6 Tavily 联网搜索（项目基础环境.md；mcp-url 保持默认 https://mcp.tavily.com/mcp/，Bearer 认证） ──
+tavily:
+  api-key: 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
+
+# ── M5 文件问答新增依赖（项目基础环境.md，全部远程环境） ──
+data-agent:
+  agent-eval:                    # M8 评测体系文件路径（绝对路径，同 skills.directory 原因）
+    dataset-path: D:/work/llmetor-manage/my-data-agent/scripts/agent/dataset.jsonl
+    report-dir: D:/work/llmetor-manage/my-data-agent/scripts/agent/report
+  minio:
+    endpoint: http://192.168.2.63:9000   # S3 API 端口（9090 是控制台）
+    bucket-name: dodo-agentx-files       # 不存在则启动首次上传时自动创建并设公读
+    access-key: zrkjadmin
+    secret-key: Sczrkj8888
+  embeddings:
+    # DashScope 兼容端点（text-embedding-v3，1024 维）
+    base-url: https://llm-32q3q7ar8bk8jam5.cn-beijing.maas.aliyuncs.com/compatible-mode
+    api-key: sk-7160e62719964bc388dcbf516b5b423c
+    store:
+      host: 192.168.2.77
+      port: 5432
+      database: postgres
+      user: postgres
+      password: postgres666
+  multimodal:
+    # DashScope OpenAI 兼容端点（qwen VL 系）
+    base-url: https://dashscope.aliyuncs.com/compatible-mode
+    api-key: sk-7160e62719964bc388dcbf516b5b423c

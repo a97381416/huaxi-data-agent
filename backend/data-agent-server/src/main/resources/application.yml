@@ -1,0 +1,144 @@
+server:
+  port: 8889
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+      enabled: true
+
+spring:
+  application:
+    name: data-agent-server
+  profiles:
+    active: local   # 数据源/Redis 连接在 application-local.yml
+  autoconfigure:
+    exclude: org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration  # M5 手动装配 PgVectorStore（EmbeddingService），排除 starter 默认 vector_store 表
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 100MB
+      max-request-size: 300MB
+
+sa-token:
+  token-name: satoken       # 前端请求头名（与原版一致）
+  timeout: 2592000          # token 有效期 30 天（秒）
+  active-timeout: -1        # 不做临时过期
+  is-concurrent: true       # 同账号可并发登录
+  is-share: false           # 每次登录新 token
+  token-style: uuid
+  is-log: false
+  is-print: false
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+    db-config:
+      id-type: assign_id
+
+data-agent:
+  agent-eval:
+    # M8 评测体系：裁判/诊断模型名（默认跟主模型同款；temperature 固定 0 保证可复现，
+    # 读超时 judge 120s / diagnose 300s 写死在 EvalChatModels）
+    # judge-model: MiniMax-M3.1-Flash
+    # diagnose-model: MiniMax-M3.1-Flash
+    # 评测数据集与报告目录（默认相对 CWD 的 ../scripts/agent/*；spring-boot:run -pl 时 CWD 是模块目录，
+    # 实际路径在 application-local.yml 配绝对路径，与 skills.directory 同款做法）
+    # dataset-path: ../scripts/agent/dataset.jsonl
+    # report-dir: ../scripts/agent/report
+  bird-eval:
+    # M9 BIRD 外部基准：模型名默认跟主模型同款（temperature 固定 0 保证 EX 可复现，
+    # 读超时 300s 写死在 BirdEvalService，复用 EvalChatModels 构建口径）
+    # model: MiniMax-M3.1-Flash
+    # max-rounds: 50   # 单题 ReAct 轮次上限（原版默认 50）
+  agent:
+    max-rounds: 100          # ReAct 最大轮次（对齐原版 DodoAgent）
+    retry-interval-ms: 3000  # LLM 调用失败重试间隔
+    # 思考回流形态：REASONING_CONTENT（模型独立 reasoning_content 字段，MiniMax M3.1-Flash 路线）
+    #                THINK_TAG（思考以 <think> 标签嵌在 content 里，MiniMax M3 路线）
+    #                DISABLED（不输出思考）
+    thinking-mode: REASONING_CONTENT
+    # M7 tool_search 延迟工具发现：单次搜索返回的工具数上限（SQL 六工具建议 ≥6 一网打尽）
+    tool-search-max-results: 8
+    # M7 上下文压缩（内核 ReactAgent 默认开启，阈值用内核默认值）：
+    #   消息数 ≥100 或估算 token ≥90000 触发 → L1 历史工具段 offload → L2 大消息 offload → L4 轮次 LLM 摘要
+    #   offload 原文存 agentx_session.offload_context，LLM 用 context_reload 按 uuid 取回
+    #   lastKeep=50（最近 50 条保护区）/ 摘要单次最多 3 轮 —— 见内核 ContextPolicy
+  schema:
+    provider: mschema        # 只实现 A 轨（实时内省）；B 轨 yml 字典不做，留接口抽象
+    mschema:
+      exclude-tables: agentx_*,QRTZ_*,infra_*,bpm_*   # 排除表（支持 * 通配）；白名单模式下仅作兜底
+      # M-H3 华西白名单（65 张，方案 §5 终版；include 非空即只放行名单内表）
+      include-tables: >-
+        doc_project,doc_phase,doc_node,doc_phase_node,doc_node_category,doc_node_relation,
+        doc_file_category,doc_phase_template,doc_template_phase,
+        doc_project_annotation,doc_project_annotation_item,doc_project_annotation_attachment,
+        doc_project_member,doc_project_payment_progress,
+        doc_project_invest_completion,doc_project_budget_estimate,
+        doc_project_fee_audit,doc_project_advance,doc_project_output_value,
+        doc_ledger,doc_file_entry,doc_file_entry_history,doc_sub_phase_stats,
+        doc_node_biz_table,doc_form,doc_lifecycle_category,
+        doc_warning,doc_warning_rule,doc_warning_event,
+        ru_task,ru_task_node,ru_process_instance,ru_task_variable,
+        hi_task,hi_task_node,hi_process_instance,hi_task_variable,
+        doc_fund_plan_annual,doc_fund_plan_annual_row,
+        doc_fund_plan_quarterly,doc_fund_plan_quarterly_row,
+        doc_fund_plan_monthly,doc_fund_plan_monthly_row,
+        doc_fund_payment,doc_fund_payment_row,
+        doc_debt_statistics,doc_debt_statistics_row,doc_debt_detail,doc_debt_detail_row,
+        doc_lifecycle_cost_round,doc_lifecycle_cost_row,doc_lifecycle_custom_category,
+        doc_meeting_info,doc_meeting_info_row,
+        doc_site_inspection,doc_site_inspection_row,
+        doc_subsection_acceptance,doc_subsection_acceptance_row,
+        doc_biz_output_value,doc_biz_output_value_row,
+        system_users,system_dept,system_user_concurrent_dept,system_dict_type,system_dict_data
+      refresh-cron: "0 0 3 * * *"  # 每天凌晨 3 点定时刷新 Redis 缓存（TTL 7 天）
+  safety:
+    max-rows: 200            # LIMIT 治理上限 + 行数硬限
+    max-joins: 3             # JOIN 数上限
+    query-timeout-seconds: 30  # 只读查询超时
+    explain:                 # M4 EXPLAIN 预检（保守拦截 + fail-open，只拦明细形态）
+      enabled: true
+      timeout-seconds: 5       # EXPLAIN 超时即拦截（真实执行大概率更慢）
+      max-estimated-rows: 100000  # 单表明细扫描拦截阈值；JOIN 扩张阈值 = 10 倍
+  data-permission:           # M4 数据权限改写（DataScope 四档，AST 注入 WHERE/ON）
+    enabled: true
+  sensitive-filter:          # M4 敏感字段脱敏（同一份 mask-fields 三处复用：结果集/示例值/档案展示）
+    enabled: true
+    mask-fields: sys_user.password,user_profile.id_card,user_profile.home_address
+
+  file:                      # M5 文件问答（上传解析 / 分块阈值 / 预览删除）
+    max-count: 3             # 单轮最多上传文件数（前端发送时校验）
+    max-size-mb: 100         # 单文件大小上限
+    large-file-threshold: 10000  # 全文长度达到该值 → 切分 + 向量化（embed=1）
+    text-max-length: 20000   # extracted_text 截断长度（细节可 RAG 检索）
+  embeddings:                # M5 向量化与 RAG（embeddings.store 存在才启用 pgvector 连接）
+    model: text-embedding-v3
+    dimensions: 1024         # 与 PgVectorStore dimensions 严格一致
+    rag-top-k: 5             # 每个变体检索条数（4 变体去重合并）
+    store:
+      host:
+      port: 5432
+      database: postgres
+      user: postgres
+      password:
+  multimodal:                # M5 多模态（DashScope qwen VL，OpenAI 兼容协议）
+    model: qwen3-vl-plus
+    temperature: 0.2
+    timeout-seconds: 60
+  chart:                     # mcp-echarts（本地 Node 服务，streamable 模式；
+                             #  Node 进程经 MINIO_* 环境变量直传 MinIO 返回图片 URL）
+                             # M6 补充：仅作 agentx_mcp_server 空表时的种子，此后以管理页（/mcp）为准
+    mcp-url: http://localhost:3033/mcp
+
+skills:                      # M6 技能目录（standalone 本地目录为权威源，启动/定时同步进 agentx_skill）
+  directory: ./skills        # 相对后端工作目录（backend/skills，内置三技能随仓库分发）
+
+tavily:                      # Tavily 联网搜索——仅作 agentx_mcp_server 空表时的种子
+  api-key:                   # （M6 补充：服务入库管理，key 未配也会种入行，管理页补配即可用）
+  mcp-url: https://mcp.tavily.com/mcp/
+
+logging:
+  level:
+    com.llmetor.dataagent: INFO

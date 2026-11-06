@@ -1,0 +1,277 @@
+# 华西 data-agent 术语表（glossary.yml · 由 docs/华西问数术语表.md v1 转换）
+# 口径基准：2026-11-06 全部 T 项定案版；生成原则见术语表文档附录。
+# 部署：deploy/huaxi/（配合 application-huaxi.yml 使用，勿覆盖 classpath 出厂件）
+# 常驻成本：42 条 ≈ 6.3K token；若联调过长优先裁 §五 导航类（见术语表附录 5）
+
+glossary:
+
+  # ────────────── 一、元规则（4） ──────────────
+
+  - term: 问数总纲
+    description: >-
+      元规则。本库是持续填报的活库：相对时间（近一个月/今年/截至目前）直接用 NOW()；
+      所有金额列单位为万元（问亿元 /10000）；业务表逻辑删除已由系统自动过滤；
+      库里没有的数据（如"哪些项目还没上平台"）要明说无口径，禁止编造。
+    sqlFragment: "-- 相对时间直接 NOW()：WHERE create_time >= NOW() - INTERVAL '1 month'"
+    synonyms: [总规则, 基本规则, 数据口径总纲]
+
+  - term: 文件双状态
+    description: >-
+      doc_file_entry 有两个语义不同的状态列：not_applicable=文件态（-1待上传/0已取得/1空缺/2不涉及/3其他，
+      说的是"文件本身在不在"）；audit_status=审批态（-1待上传/0草稿/1审批中/2已通过/3已驳回，
+      说的是"流程走到哪"）。"文件有了但没批完"= not_applicable=0 AND audit_status<2。
+      说"缺文件/空缺"指 not_applicable；说"被驳回/没通过"指 audit_status。
+    sqlFragment: "not_applicable = 0 AND audit_status < 2  -- 已取得但未审完"
+    synonyms: [状态字段, not_applicable, audit_status, 文件状态, 审批状态]
+
+  - term: 字典取值
+    description: >-
+      元规则。凡列注释含「字典 XX」的枚举字段（全库 24 处），值域与中文含义一律动态查
+      system_dict_data（WHERE dict_type='XX'，label=中文名 value=库存值），不要凭记忆猜枚举。
+    sqlFragment: "SELECT label, value FROM system_dict_data WHERE dict_type = '字典编码' AND deleted = 0"
+    synonyms: [枚举值, 字典, 状态含义, 取值范围]
+
+  - term: 时间口径
+    description: >-
+      元规则。"截至目前/最新"以 NOW() 为准（活库）；"文件实际什么时候提供的"用 doc_file_entry.provider_time
+      （业务时点，补录重传不改变它，update_time 会变）；按填报批次期间查用 doc_period（'2026年度1季度'字符串）。
+    sqlFragment: "-- 期间精确匹配：WHERE doc_period = '2026年度3季度'（模糊 LIKE '%2026%3季度%'）"
+    synonyms: [截至目前, 最新, 时间基准, 业务时间, 提供时间, 期间]
+
+  # ────────────── 二、枚举快路径（9） ──────────────
+
+  - term: 项目状态
+    description: >-
+      doc_project.status：0-草稿 / 1-进行中 / 2-已完结 / 99-预警（派生维度=存在未完结预警，非真实存储值）。
+      领导口径映射：在建中=进行中(status=1)，竣工=已完结(status=2)。历史改名：1 原叫"已发布"。
+    sqlFragment: "status = 1   -- 在建中（进行中，原'已发布'）；竣工用 status = 2"
+    synonyms: [在建, 在建中, 竣工, 已完结, 进行中, 已发布, 草稿, 预警项目]
+
+  - term: 文件状态
+    description: doc_file_entry.not_applicable：-1待上传 / 0已取得 / 1空缺 / 2不涉及 / 3其他。"漏报"= -1 或 1。
+    sqlFragment: "not_applicable IN (-1, 1)   -- 漏报；not_applicable = 0 -- 已完备取得"
+    synonyms: [待上传, 已取得, 空缺, 不涉及, 其他, 漏报, 缺文件]
+
+  - term: 审批状态
+    description: doc_file_entry/各台账的审批流状态：-1待上传 / 0草稿 / 1审批中 / 2已通过 / 3已驳回。
+    sqlFragment: "audit_status = 2   -- 审批通过；audit_status = 3 -- 被驳回"
+    synonyms: [草稿, 审批中, 已通过, 已驳回, 通过, 驳回]
+
+  - term: 预警等级
+    description: doc_warning.risk_level 四级：remind提醒 / low低风险 / medium中风险 / high高风险，按规则阈值自动升级。
+    sqlFragment: "risk_level = 'high'   -- 高风险；排序提醒<低<中<高"
+    synonyms: [风险等级, 高风险, 低风险, 中风险, 提醒]
+
+  - term: 预警状态
+    description: doc_warning.status：0待签收 / 1预警中 / 2已完结 / 3已关闭。"活跃预警"= status IN (0,1)。
+    sqlFragment: "status IN (0, 1)   -- 活跃（未处理完）预警"
+    synonyms: [待签收, 预警中, 已完结, 已关闭, 活跃预警, 未处理]
+
+  - term: 批注
+    description: >-
+      doc_project_annotation（项目批注，领导/审核人人工发现问题）：status 0待回复/1已回复；
+      type 七类=资料不全需补齐/资料格式不规范/签字盖章缺失/数据前后不一致/内容不符合要求/
+      影像资料缺失/附件不清晰需重传（存中文文本，按需精确或 LIKE 匹配）；
+      明细到文件类别粒度（annotation_item 一个文件类别一条意见，回复按类别逐条）。
+    sqlFragment: "status = 0   -- 待回复的批注"
+    synonyms: [批注类型, 待回复, 已回复, 资料质量问题, 质量问题, 签字盖章缺失]
+
+  - term: 开复工状态
+    description: doc_project.constructionStatus（字典 doc_project_construction_status）：开工令 start_order / 停工令 stop_order / 复工令 resume_order。
+    sqlFragment: "construction_status = 'stop_order'   -- 停工项目"
+    synonyms: [开工, 停工, 复工, 开工令, 停工令, 复工令]
+
+  - term: 项目分类
+    description: doc_project.category（字典 doc_project_category）：电力工程 power / 市政工程 municipal / 房建工程 building / 道路桥梁 bridge / 其他 other。
+    sqlFragment: "GROUP BY category   -- 分类分布"
+    synonyms: [电力, 市政, 房建, 道桥, 项目类型]
+
+  - term: 审核意见
+    description: >-
+      审批的审核状态与意见存在 ru_task_variable/hi_task_variable（按 instance_id 关联）：
+      var_key='opinion' 为审核意见（驳回理由），var_key='approve_status' 为审核状态。
+      bizRows:*/bizHeader:* 是业务表格 JSON 快照，问业务数据一律查对应物理表，禁止解析这些 JSON。
+    sqlFragment: "SELECT var_value FROM hi_task_variable WHERE instance_id = ? AND var_key = 'opinion'"
+    synonyms: [驳回理由, 审核理由, 为什么被驳回, 审批意见, 驳回原因]
+
+  # ────────────── 三、防雷辨析（10） ──────────────
+
+  - term: 文件份数
+    description: >-
+      doc_file_entry.file_url 与 file_name 是逗号分隔多值且下标对齐——一行可挂多个文件。
+      数"多少份文件"必须数逗号，COUNT(*) 数的是条目不是文件！
+    sqlFragment: "SUM(COALESCE(array_length(string_to_array(file_url, ','), 1), 0))  -- 真实文件份数"
+    synonyms: [多少份文件, 交了几个文件, 文件数量]
+
+  - term: 设计概算
+    description: >-
+      doc_project_budget_estimate 是版本快照表：同项目多版本并存（提交有变化才插新版本）。
+      查概算必须按项目取最新一条（create_time 最大的），全表 SUM 会把多版本重复计算！
+      六项金额：approveAmount 批复/constructionCost 建安/equipmentCost 设备工器具/otherCost 其他费/reserveCost 预备费/interestCost 建设期利息（全万元）。
+    sqlFragment: "SELECT * FROM doc_project_budget_estimate WHERE project_id = ? ORDER BY create_time DESC LIMIT 1"
+    synonyms: [概算, 概算批复, 费用构成, 批复金额]
+
+  - term: 产值口径
+    description: >-
+      产值有三处数据，默认走档案卡片版：①doc_project_output_value（项目档案卡片，问"项目产值/
+      报审/审定/形象进度"都走它；4 个合计持久化在 doc_project.output_*_total）②doc_biz_output_value
+      （节点业务表格版，"一张表"填报数据）③统计台账 doc_output_value（未启用，勿查）。
+    sqlFragment: "doc_project_output_value   -- 问项目产值默认查此表；全司合计用 doc_project.output_report_amount_total 等主表 4 列"
+    synonyms: [产值, 报审金额, 审定金额, 形象进度, 工程款]
+
+  - term: 投资完成口径
+    description: >-
+      "投资完成及款项回收情况"默认指档案卡片表 doc_project_invest_completion（每项目一组行）；
+      同名统计台账 doc_investment_completion 未启用勿查。五张档案卡片：invest_completion/budget_estimate/
+      fee_audit/advance/output_value，全部行级直接落库不走审批，金额全万元手工输入。
+    sqlFragment: "doc_project_invest_completion   -- 投资完成及款项回收（档案版）"
+    synonyms: [投资完成, 款项回收, 费用审核与支付, 项目推进情况, 台账卡片]
+
+  - term: 业务表格
+    description: >-
+      节点可挂载业务动态表格（doc_node_biz_table 绑定，11 类：资金计划年/季/月、资金支付、债务统计/明细、
+      全周期成本、会议、现场检查、分部验收、业务产值）。统一模式：主表 project+node 单例只存最近一次
+      审批通过的对账快照——非权威！问数一律查 _row 明细行（展示口径以明细读时计算为准）。
+    sqlFragment: "doc_fund_plan_annual_row   -- 例：年度资金计划查明细行，不查主表合计"
+    synonyms: [资金计划, 债务, 全周期成本, 会议信息, 现场检查, 分部验收, 动态表格, 一张表填报]
+
+  - term: 形象进度
+    description: 形象进度的正式载体是 doc_project_output_value（旧 doc_project_image_progress 已摒弃，勿查）。
+    sqlFragment: "doc_project_output_value   -- 形象进度字段在此表"
+    synonyms: [形象进度, 施工进度描述]
+
+  - term: 文档期间
+    description: >-
+      doc_file_entry.doc_period 是字符串（'2026年度1季度'），不是日期！按期间统计用精确匹配或 LIKE；
+      "2025年4季度"='2025年度4季度'。跨期间时间分析用 create_time/provider_time。
+    sqlFragment: "WHERE doc_period = '2026年度3季度'   -- 或模糊 LIKE '%2026%3季度%'"
+    synonyms: [季度, 年度, 期间, 上季度, 本季度]
+
+  - term: 金额单位
+    description: 全库金额列均为万元（amount/huaxiAmount/contract_amount/概算六项/产值/收付款等）。问"亿"除以 10000，问"元"乘以 10000，回答时必须带单位。
+    sqlFragment: "SUM(amount) / 10000   -- 投资总额折亿元"
+    synonyms: [万元, 亿元, 单位, 换算, 多少亿]
+
+  - term: 投资金额
+    description: >-
+      doc_project.amount=投资总额（万元）；huaxiAmount=华西投资金额（万元，我方出资部分）。
+      "我们自己投了多少"用 huaxiAmount。六指标官方口径：求和限 status IN (1,2)（排除草稿）。
+    sqlFragment: "SELECT SUM(amount) 总投资, SUM(huaxi_amount) 华西投资 FROM doc_project WHERE status IN (1, 2)"
+    synonyms: [总投资, 投资总额, 华西投资, 自筹, 出资]
+
+  - term: 部门口径
+    description: >-
+      部门统计一律用主部门：人员按 system_users.dept_id，项目按 doc_project.dept_id。
+      system_user_concurrent_dept（兼职）不参与统计。部门排名=按主部门 GROUP BY。
+    sqlFragment: "JOIN system_users u ON e.creator = CAST(u.id AS TEXT) JOIN system_dept d ON u.dept_id = d.id"
+    synonyms: [部门, 归属部门, 主部门, 部门排名, 兼职]
+
+  # ────────────── 四、指标口径（6） ──────────────
+
+  - term: 备案率
+    description: >-
+      官方公式（管理工作台原文）：备案率 = Σuploaded_count / Σentry_total × 100（HALF_UP 1 位）。
+      分子=已取得(not_applicable=0) 且 file_url 非空 且 audit_status=2；分母=排除 待上传(-1)/草稿(0)/驳回(3)
+      的条目等效单位数（空缺/不涉及/其他均在分母内）。直接查 doc_sub_phase_stats 的
+      uploaded_count/entry_total 列，禁止按明细自行重算（快照与官方一致）。
+    sqlFragment: "SELECT SUM(uploaded_count)::numeric / NULLIF(SUM(entry_total), 0) * 100 FROM doc_sub_phase_stats"
+    synonyms: [文件备案率, 完备率, 完整率, 资料齐全率, 备案进度]
+
+  - term: 缺口
+    description: >-
+      doc_sub_phase_stats 官方计数列：missing_count=空缺数（not_applicable=1 且 audit_status IN(1,2)）、
+      not_involved_count=不涉及数、other_count=其他数。"缺什么/缺多少"优先查 stats，需要文件级明细再下钻 entry。
+    sqlFragment: "SELECT project_id, missing_count FROM doc_sub_phase_stats WHERE missing_count > 0 ORDER BY missing_count DESC"
+    synonyms: [空缺, 欠报, 缺失, 缺多少, 催报]
+
+  - term: 预警处理率
+    description: 已定案公式：处理率 = 已签收预警数 / 预警总数。
+    sqlFragment: "SUM(CASE WHEN status >= 1 THEN 1 ELSE 0 END)::numeric / COUNT(*) FROM doc_warning"
+    synonyms: [预警处理情况, 处理率, 签收率]
+
+  - term: 预警响应时效
+    description: 已定案公式：平均响应时长 = Σ(签收时间 − 触发时间) / 签收数。事件在 doc_warning_event（类型：触发1/签收2/说明3/升级4-6/自动完结7）。
+    sqlFragment: "SELECT AVG(b.create_time - a.create_time) FROM doc_warning_event a JOIN doc_warning_event b ON a.warning_id = b.warning_id AND b.event_type = '2' WHERE a.event_type = '1'"
+    synonyms: [响应时长, 签收时效, 多久签收]
+
+  - term: 审批时效
+    description: hi_task.duration 已预计算耗时（毫秒）——平均卡几天直接 AVG(duration)，禁止用时间差重算。慢审批人按 assignee_id 聚合。
+    sqlFragment: "SELECT AVG(duration) / 86400000.0 AS 平均天 FROM hi_task WHERE status = 'completed'"
+    synonyms: [审批时长, 卡多久, 平均审批, 审批效率]
+
+  - term: 活跃度
+    description: 已定案公式：填报活跃度 = 期间 doc_file_entry 新增条目数（按 create_time 窗口计数；部门/人员排名再 GROUP BY creator→主部门）。
+    sqlFragment: "SELECT creator, COUNT(*) FROM doc_file_entry WHERE create_time >= NOW() - INTERVAL '3 month' GROUP BY creator"
+    synonyms: [填报量, 活跃排名, 填报统计, 谁报得多]
+
+  # ────────────── 五、结构与导航（13） ──────────────
+
+  - term: 穿透模型
+    description: >-
+      资料体系的层级：项目(doc_project) → 大阶段(doc_phase 根级，code 如 100=项目前期/200=合同签订) →
+      子阶段(phase 子级，path 物化路径) → 环节/节点(doc_node) → 文件类别(doc_file_category)。
+      "某项目某阶段缺什么"= 沿此链下钻；统计每层 filled/total 看 doc_sub_phase_stats。
+    sqlFragment: "-- 大阶段汇总：GROUP BY substring(phase_path, ...) 或按 path 前缀聚合 stats"
+    synonyms: [一张图, 下钻, 层级, 阶段结构, 项目结构]
+
+  - term: 大阶段
+    description: >-
+      项目当前推进位置=doc_project.current_major_phase_code（doc_phase 根级 code，只进不退，NULL=尚未推进）。
+      名称回显 JOIN doc_phase。注意与 status（在建中/竣工）是两个正交维度。
+    sqlFragment: "SELECT p.name, ph.name AS 大阶段 FROM doc_project p LEFT JOIN doc_phase ph ON p.current_major_phase_code = ph.code"
+    synonyms: [当前阶段, 推进到哪, 项目前期, 合同签订, 阶段]
+
+  - term: 环节
+    description: 文件节点=doc_node（如"施工图审查"）；某阶段要求哪些环节=doc_phase_node（required=1 为必填）；环节含哪些文件类别=doc_node_category。
+    sqlFragment: "SELECT n.name FROM doc_phase_node pn JOIN doc_node n ON pn.node_id = n.id WHERE pn.phase_id = ? AND pn.required = 1"
+    synonyms: [节点, 文件节点, 施工图审查, 必填节点]
+
+  - term: 必填
+    description: doc_phase_node.required=1 的节点才算应报项；非必填缺了不算漏报。备案率分母已按官方口径排除未进流程条目。
+    sqlFragment: "required = 1   -- 必填节点"
+    synonyms: [应报, 要求报送, 必须]
+
+  - term: 前序
+    description: doc_node_relation（relation_type 1前序/2后序）：前序文件没报，后序不能报。"为什么报不了"=查前序节点的填报状态，或查 pre_file 类型预警。
+    sqlFragment: "SELECT r.related_node_id FROM doc_node_relation r WHERE r.node_id = ? AND r.relation_type = 1"
+    synonyms: [后序, 依赖, 为什么报不了, 先报什么, 顺序]
+
+  - term: 台账批次
+    description: 子阶段台账=doc_ledger（项目×子阶段的提交批次，doc_number 如 DOC-XM2026001-100001-001；status 走审批；current_instance_id 关联审批流）。文件明细挂批次下（file_entry.ledger_id）。
+    sqlFragment: "doc_ledger   -- 批次主表；'提交的批次'、'XX期的报审'指它"
+    synonyms: [批次, 提交批次, 报审批次, 子阶段台账]
+
+  - term: 项目档案
+    description: doc_project 是一切问数的锚：基本信息/分类/状态/大阶段/金额（8 列万元）/开复工/部门/成员（member_user_ids 与 doc_project_member 双载体）。项目名模糊匹配 name LIKE。
+    sqlFragment: "SELECT id, name FROM doc_project WHERE name LIKE '%关键词%'"
+    synonyms: [项目, 项目信息, 全周期档案]
+
+  - term: 项目成员
+    description: doc_project_member(project_id, user_id) 是"某人在哪些项目/谁参与某项目"的查询入口；主表 member_user_ids 为 JSON 镜像。人名转译 JOIN system_users。
+    sqlFragment: "SELECT p.name FROM doc_project_member m JOIN doc_project p ON m.project_id = p.id JOIN system_users u ON m.user_id = u.id WHERE u.nickname LIKE '%张三%'"
+    synonyms: [我的项目, 参与项目, 负责人, 团队]
+
+  - term: 待办
+    description: 运行中审批任务=ru_task（assignee_id 处理人，冗余 instance_title/node_name/category_label 免 JOIN）；历史=hi_task。
+    sqlFragment: "SELECT instance_title, node_name FROM ru_task WHERE assignee_id = ?"
+    synonyms: [我的待办, 待审批, 卡在谁, 流程任务]
+
+  - term: 审批进度
+    description: 批次的审批位置：doc_ledger.current_instance_id → ru_process_instance/ru_task_node（运行中）或 hi_*（历史，含 end_time/delete_reason）。审核意见见「审核意见」术语。
+    sqlFragment: "SELECT node_name, status FROM ru_task_node WHERE instance_id = (SELECT current_instance_id FROM doc_ledger WHERE id = ?)"
+    synonyms: [流程到哪, 走到哪个环节, 审批进度, 单子]
+
+  - term: 预警
+    description: 自动发现问题的双轮之一：doc_warning（含 project_name 冗余/responsible_user_id 责任人）；规则=doc_warning_rule（阈值分档）；事件流水=doc_warning_event。另一轮是人工「批注」。类型：pre_file 前序检测/post_file 后序检测/task_timeout 任务超时。
+    sqlFragment: "SELECT warning_code, project_name, trigger_reason FROM doc_warning WHERE risk_level = 'high'"
+    synonyms: [预警中心, 风险, 提示, 预警规则, 触发原因]
+
+  - term: 版本历史
+    description: doc_file_entry_history 是 file_entry 的全量镜像（物理删除），"文件改过几版/何时改的"查它。
+    sqlFragment: "SELECT COUNT(*) FROM doc_file_entry_history WHERE ledger_id = ?"
+    synonyms: [改过几次, 历史版本, 变更记录]
+
+  - term: 文件调阅
+    description: 文件的电子档在 doc_file_entry.file_url（逗号多值，与 file_name 下标对齐）；"电子可调阅"= file_url 非空（备案率分子的条件之一）。
+    sqlFragment: "file_url IS NOT NULL AND file_url <> ''   -- 有电子档"
+    synonyms: [电子档, 可调阅, 附件, 文件在哪]

@@ -1,0 +1,6648 @@
+{
+ "yudao-module-doc": {
+  "doc_project_annotation_attachment": {
+   "table": "doc_project_annotation_attachment",
+   "class": "DocProjectAnnotationAttachmentDO",
+   "doc": "项目批注附件 DO（批注附件与回复附件按 attachmentType 区分）",
+   "fields": [
+    {
+     "name": "annotationId",
+     "type": "Long",
+     "comment": "项目批注附件 DO（批注附件与回复附件按 attachmentType 区分） / @TableName(\"doc_project_annotation_attachment\") @Data @EqualsAndHashCode(callSuper = true) public class DocProjectAnnotationAttachmentDO extends BaseDO { @Tab"
+    },
+    {
+     "name": "attachmentType",
+     "type": "Integer",
+     "comment": "附件类型：0批注附件（发起）1回复附件（见 ProjectAnnotationAttachmentTypeEnum）"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "文件名"
+    },
+    {
+     "name": "url",
+     "type": "String",
+     "comment": "文件URL（infra 文件上传返回的相对路径）"
+    },
+    {
+     "name": "fileSize",
+     "type": "Long",
+     "comment": "文件大小（字节）"
+    },
+    {
+     "name": "sortNo",
+     "type": "Integer",
+     "comment": "排序号"
+    }
+   ]
+  },
+  "doc_project_annotation": {
+   "table": "doc_project_annotation",
+   "class": "DocProjectAnnotationDO",
+   "doc": "项目批注 DO（流程化主表：一次发起含 N 条文件批注明细，流程 category=task_project_annotation）",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "项目批注 DO（流程化主表：一次发起含 N 条文件批注明细，流程 category=task_project_annotation） / @TableName(\"doc_project_annotation\") @Data @EqualsAndHashCode(callSuper = true) public class DocProjectAnnotationDO extends BaseDO "
+    },
+    {
+     "name": "deptId",
+     "type": "Long",
+     "comment": "批注发起人所在部门ID（发起时快照，数据权限部门维度过滤用，调岗不回改）"
+    },
+    {
+     "name": "projectName",
+     "type": "String",
+     "comment": "项目名称（冗余快照，台账列表展示用）"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "项目主阶段ID（发起时刻所选）"
+    },
+    {
+     "name": "phaseName",
+     "type": "String",
+     "comment": "项目主阶段名称（冗余快照）"
+    },
+    {
+     "name": "subPhaseId",
+     "type": "Long",
+     "comment": "文件子阶段ID（发起时刻所选，文件类别来源）"
+    },
+    {
+     "name": "subPhaseName",
+     "type": "String",
+     "comment": "文件子阶段名称（冗余快照）"
+    },
+    {
+     "name": "type",
+     "type": "String",
+     "comment": "批注类型（字典 doc_annotation_type，存中文文本）"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0待回复 1已回复（字典 doc_annotation_status）"
+    },
+    {
+     "name": "processInstanceId",
+     "type": "Long",
+     "comment": "流程实例ID（taskcenter）"
+    },
+    {
+     "name": "replyUser",
+     "type": "String",
+     "comment": "回复人用户ID（终态冗余）"
+    },
+    {
+     "name": "replyTime",
+     "type": "LocalDateTime",
+     "comment": "回复时间（终态冗余）"
+    }
+   ]
+  },
+  "doc_project_annotation_item": {
+   "table": "doc_project_annotation_item",
+   "class": "DocProjectAnnotationItemDO",
+   "doc": "项目批注明细 DO（一个文件类别一条批注意见，回复按类别逐条填写）",
+   "fields": [
+    {
+     "name": "annotationId",
+     "type": "Long",
+     "comment": "项目批注明细 DO（一个文件类别一条批注意见，回复按类别逐条填写） / @TableName(\"doc_project_annotation_item\") @Data @EqualsAndHashCode(callSuper = true) public class DocProjectAnnotationItemDO extends BaseDO { @TableId(type = IdType"
+    },
+    {
+     "name": "fileCategory",
+     "type": "String",
+     "comment": "文件类别（发起时所选子阶段下的类别，文本快照）"
+    },
+    {
+     "name": "opinion",
+     "type": "String",
+     "comment": "批注意见"
+    },
+    {
+     "name": "replyContent",
+     "type": "String",
+     "comment": "批注回复（回复人按类别逐条填写）"
+    },
+    {
+     "name": "replyTime",
+     "type": "LocalDateTime",
+     "comment": "该条回复时间"
+    },
+    {
+     "name": "sortNo",
+     "type": "Integer",
+     "comment": "行序号"
+    }
+   ]
+  },
+  "doc_biz_output_value": {
+   "table": "doc_biz_output_value",
+   "class": "BizOutputValueDO",
+   "doc": "产值台账·主表（project+node 单例） 首个表头字段模板：live 3 列=最新已提交表头值（全视图展示口径）； draft 4 列=草稿编辑值（提交才升格 live，不泄漏给审批侧）； 剩余预付款=约定-Σ扣回B(展示行) 读时计算不落库； 合计快照仅对账用，展示合计以明细行读时计算为准（快照非权威）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "产值台账·主表（project+node 单例） 首个表头字段模板：live 3 列=最新已提交表头值（全视图展示口径）； draft 4 列=草稿编辑值（提交才升格 live，不泄漏给审批侧）； 剩余预付款=约定-Σ扣回B(展示行) 读时计算不落库； 合计快照仅对账用，展示合计以明细行读时计算为准（快照非权威）。 / @TableName(\"doc_biz_output_value\") @Dat"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "contractTotalPrice",
+     "type": "BigDecimal",
+     "comment": "表头(live)：合同总价（占比列分母）"
+    },
+    {
+     "name": "agreedPrepaymentAmount",
+     "type": "BigDecimal",
+     "comment": "表头(live)：合同约定预付款金额"
+    },
+    {
+     "name": "paidPrepaymentAmount",
+     "type": "BigDecimal",
+     "comment": "表头(live)：已支付预付款金额（记录字段，不参与计算）"
+    },
+    {
+     "name": "draftContractTotalPrice",
+     "type": "BigDecimal",
+     "comment": "表头(draft)：合同总价草稿值"
+    },
+    {
+     "name": "draftAgreedPrepaymentAmount",
+     "type": "BigDecimal",
+     "comment": "表头(draft)：合同约定预付款金额草稿值"
+    },
+    {
+     "name": "draftPaidPrepaymentAmount",
+     "type": "BigDecimal",
+     "comment": "表头(draft)：已支付预付款金额草稿值"
+    },
+    {
+     "name": "draftLedgerId",
+     "type": "Long",
+     "comment": "草稿归属台账ID（表头草稿隔离键）"
+    },
+    {
+     "name": "totalReportAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：Σ报审金额"
+    },
+    {
+     "name": "totalVerifyAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：Σ审定金额"
+    },
+    {
+     "name": "totalCumVerifyAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：Σ截至本期累计完成审定产值"
+    },
+    {
+     "name": "totalRatio",
+     "type": "BigDecimal",
+     "comment": "合计快照：Σ累计产值占合同比例（模板口径直接求和）"
+    },
+    {
+     "name": "totalPayableAmountA",
+     "type": "BigDecimal",
+     "comment": "合计快照：Σ按合同约定应付款金额A"
+    },
+    {
+     "name": "totalDeductPrepaymentB",
+     "type": "BigDecimal",
+     "comment": "合计快照：Σ本期扣回预付款金额B"
+    },
+    {
+     "name": "totalCumPaidAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：Σ截至本期累计已付款金额"
+    },
+    {
+     "name": "totalDiffRate",
+     "type": "BigDecimal",
+     "comment": "合计快照：Σ差异率（模板口径直接求和）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "doc_biz_output_value_row": {
+   "table": "doc_biz_output_value_row",
+   "class": "BizOutputValueRowDO",
+   "doc": "产值台账·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 占比/应付C/累计应付/差异金额/差异率 5 计算列读时计算，不落库； 累计完成审定产值/累计已付款金额含业务期初，手填不滚动。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "产值台账·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 占比/应付C/累计应付/差异金额/差异率 5 计算列读时计算，不落库； 累计完成审定产值/累计已付款金额含业务期初，手填不滚动。 / @TableName(\"doc_biz_output_val"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "ledgerId",
+     "type": "Long",
+     "comment": "提交轮次关联的台账ID（doc_ledger）"
+    },
+    {
+     "name": "sourceTaskId",
+     "type": "Long",
+     "comment": "提交轮次任务ID（追溯用；轮次筛选以 audit_status 为准）"
+    },
+    {
+     "name": "auditStatus",
+     "type": "Integer",
+     "comment": "审核状态：0-草稿 1-待审核 2-已通过 3-已驳回"
+    },
+    {
+     "name": "batchName",
+     "type": "String",
+     "comment": "批次（如 XX年XX月产值（第1期））"
+    },
+    {
+     "name": "reportDate",
+     "type": "LocalDate",
+     "comment": "报审日期"
+    },
+    {
+     "name": "reportAmount",
+     "type": "BigDecimal",
+     "comment": "报审金额"
+    },
+    {
+     "name": "verifyDate",
+     "type": "LocalDate",
+     "comment": "审定日期"
+    },
+    {
+     "name": "verifyAmount",
+     "type": "BigDecimal",
+     "comment": "审定金额"
+    },
+    {
+     "name": "cumVerifyAmount",
+     "type": "BigDecimal",
+     "comment": "截至本期累计完成审定产值（含期初，手填）"
+    },
+    {
+     "name": "payableAmountA",
+     "type": "BigDecimal",
+     "comment": "按合同约定应付款金额A（手填）"
+    },
+    {
+     "name": "deductPrepaymentB",
+     "type": "BigDecimal",
+     "comment": "本期扣回预付款金额B（手填）"
+    },
+    {
+     "name": "cumPaidAmount",
+     "type": "BigDecimal",
+     "comment": "截至本期累计已付款金额（含期初，手填）"
+    },
+    {
+     "name": "attachmentUrl",
+     "type": "String",
+     "comment": "行级附件URL（相对路径，逗号多值）"
+    },
+    {
+     "name": "attachmentName",
+     "type": "String",
+     "comment": "行级附件文件名（逗号多值，与 url 下标对齐）"
+    },
+    {
+     "name": "auditOpinion",
+     "type": "String",
+     "comment": "行级审核意见（驳回时回填）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号"
+    }
+   ]
+  },
+  "doc_debt_detail": {
+   "table": "doc_debt_detail",
+   "class": "DebtDetailDO",
+   "doc": "债权核算明细表·主表（project+node 单例） 仅存放最近一次审批通过时的合计快照（对账用）与封账扩展位； 展示口径的合计以明细行读时计算为准（快照非权威）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "债权核算明细表·主表（project+node 单例） 仅存放最近一次审批通过时的合计快照（对账用）与封账扩展位； 展示口径的合计以明细行读时计算为准（快照非权威）。 / @TableName(\"doc_debt_detail\") @Data @EqualsAndHashCode(callSuper = true) public class DebtDetailDO extends BaseDO "
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "totalDueAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：本期应收回款Σ"
+    },
+    {
+     "name": "totalRecvAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：本期实收回款Σ"
+    },
+    {
+     "name": "totalCompletionRate",
+     "type": "BigDecimal",
+     "comment": "合计快照：总回款完成率 = Σ实收/Σ应收"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "doc_debt_detail_row": {
+   "table": "doc_debt_detail_row",
+   "class": "DebtDetailRowDO",
+   "doc": "债权核算明细表·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 完成率/累计三列读时计算，不落库。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "债权核算明细表·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 完成率/累计三列读时计算，不落库。 / @TableName(\"doc_debt_detail_row\") @Data @EqualsAndHashCode(callSuper = tru"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "ledgerId",
+     "type": "Long",
+     "comment": "提交轮次关联的台账ID（doc_ledger）"
+    },
+    {
+     "name": "sourceTaskId",
+     "type": "Long",
+     "comment": "提交轮次任务ID（追溯用；轮次筛选以 audit_status 为准）"
+    },
+    {
+     "name": "auditStatus",
+     "type": "Integer",
+     "comment": "审核状态：0-草稿 1-待审核 2-已通过 3-已驳回"
+    },
+    {
+     "name": "contractCustomer",
+     "type": "String",
+     "comment": "关联合同/客户"
+    },
+    {
+     "name": "fundNature",
+     "type": "String",
+     "comment": "款项性质（字典 debt_fund_nature）"
+    },
+    {
+     "name": "fundNode",
+     "type": "String",
+     "comment": "资金节点"
+    },
+    {
+     "name": "dueDate",
+     "type": "LocalDate",
+     "comment": "账款到期日"
+    },
+    {
+     "name": "actualPayMonth",
+     "type": "String",
+     "comment": "回款实际支付时间（月份 yyyy-MM；展示排序键为创建时间，见 Handler.buildTableVO）"
+    },
+    {
+     "name": "curDueAmount",
+     "type": "BigDecimal",
+     "comment": "本期应收回款"
+    },
+    {
+     "name": "curRecvAmount",
+     "type": "BigDecimal",
+     "comment": "本期实收回款"
+    },
+    {
+     "name": "attachmentUrl",
+     "type": "String",
+     "comment": "行级附件URL（相对路径，逗号多值）"
+    },
+    {
+     "name": "attachmentName",
+     "type": "String",
+     "comment": "行级附件文件名（逗号多值，与 url 下标对齐）"
+    },
+    {
+     "name": "auditOpinion",
+     "type": "String",
+     "comment": "行级审核意见（驳回时回填）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号"
+    }
+   ]
+  },
+  "doc_debt_statistics": {
+   "table": "doc_debt_statistics",
+   "class": "DebtStatisticsDO",
+   "doc": "债权核算统计表·主表（project+node 单例） 仅存放最近一次审批通过时的合计快照（对账用）与封账扩展位； 展示口径的合计以明细行读时计算为准（快照非权威）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "债权核算统计表·主表（project+node 单例） 仅存放最近一次审批通过时的合计快照（对账用）与封账扩展位； 展示口径的合计以明细行读时计算为准（快照非权威）。 / @TableName(\"doc_debt_statistics\") @Data @EqualsAndHashCode(callSuper = true) public class DebtStatisticsDO extends"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "totalReceivableAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：应收款项Σ"
+    },
+    {
+     "name": "totalReceivedAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：已收款项Σ"
+    },
+    {
+     "name": "totalRemainingAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：剩余债权Σ = Σ应收 − Σ已收"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "doc_debt_statistics_row": {
+   "table": "doc_debt_statistics_row",
+   "class": "DebtStatisticsRowDO",
+   "doc": "债权核算统计表·明细行（一行 = 一份合同，时点快照） 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 剩余债权读时计算不落库；回款状态=字典手动下拉落库（pay_status）；无行级附件（严格按模板字段）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "债权核算统计表·明细行（一行 = 一份合同，时点快照） 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 剩余债权读时计算不落库；回款状态=字典手动下拉落库（pay_status）；无行级附件（严格按模板字段）。 / @TableName(\"doc_debt_s"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "ledgerId",
+     "type": "Long",
+     "comment": "提交轮次关联的台账ID（doc_ledger）"
+    },
+    {
+     "name": "sourceTaskId",
+     "type": "Long",
+     "comment": "提交轮次任务ID（追溯用；轮次筛选以 audit_status 为准）"
+    },
+    {
+     "name": "auditStatus",
+     "type": "Integer",
+     "comment": "审核状态：0-草稿 1-待审核 2-已通过 3-已驳回"
+    },
+    {
+     "name": "contractName",
+     "type": "String",
+     "comment": "合同名称（字典 debt_contract_name 下拉+allow-create，存文本本身）"
+    },
+    {
+     "name": "ownerParty",
+     "type": "String",
+     "comment": "业主/债务方"
+    },
+    {
+     "name": "contractAmount",
+     "type": "BigDecimal",
+     "comment": "合同金额"
+    },
+    {
+     "name": "payTerm",
+     "type": "String",
+     "comment": "合同约定回款条款（根据合同摘要）"
+    },
+    {
+     "name": "receivableAmount",
+     "type": "BigDecimal",
+     "comment": "应收款项"
+    },
+    {
+     "name": "receivedAmount",
+     "type": "BigDecimal",
+     "comment": "已收款项"
+    },
+    {
+     "name": "payStatus",
+     "type": "String",
+     "comment": "回款状态（字典 debt_pay_status 编码 unpaid/partial/paid，手动下拉；历史行 NULL）"
+    },
+    {
+     "name": "overdueDays",
+     "type": "Integer",
+     "comment": "逾期天数（手填，填报时点快照）"
+    },
+    {
+     "name": "overdueFlag",
+     "type": "String",
+     "comment": "是否逾期（字典 debt_overdue_flag 编码：yes-是/no-否，手动下拉，不由逾期天数推导）"
+    },
+    {
+     "name": "overdueAmount",
+     "type": "BigDecimal",
+     "comment": "逾期金额"
+    },
+    {
+     "name": "annualRate",
+     "type": "BigDecimal",
+     "comment": "年利率(%)"
+    },
+    {
+     "name": "penaltyRate",
+     "type": "BigDecimal",
+     "comment": "违约金费率(%/日)"
+    },
+    {
+     "name": "penaltyAmount",
+     "type": "BigDecimal",
+     "comment": "违约金（纯手填，无公式）"
+    },
+    {
+     "name": "auditOpinion",
+     "type": "String",
+     "comment": "行级审核意见（驳回时回填）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号"
+    }
+   ]
+  },
+  "doc_lifecycle_cost_round": {
+   "table": "doc_lifecycle_cost_round",
+   "class": "DocLifecycleCostRoundDO",
+   "doc": "生命周期费用台账·轮次登记 DO（doc_lifecycle_cost_round） as-of 快照锚点：每次含该节点的台账提交登记一行（空轮也登记，否则后轮改动会\"穿越\"进前轮已办视图）。 草稿不占轮号：round 行在 onSubmit 时才登记；驳回重提同 ledger 复用同轮（uk_lc_round_led 兜底）。",
+   "fields": [
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "生命周期费用台账·轮次登记 DO（doc_lifecycle_cost_round） as-of 快照锚点：每次含该节点的台账提交登记一行（空轮也登记，否则后轮改动会\"穿越\"进前轮已办视图）。 草稿不占轮号：round 行在 onSubmit 时才登记；驳回重提同 ledger 复用同轮（uk_lc_round_led 兜底）。 / @TableName(\"doc_lifecycle_cost_r"
+    },
+    {
+     "name": "ledgerId",
+     "type": "Long",
+     "comment": "本轮台账ID(doc_ledger)；驳回重提同 ledger 复用同轮，不烧轮号"
+    },
+    {
+     "name": "taskId",
+     "type": "Long",
+     "comment": "本轮首次提交任务ID(追溯用，可空)"
+    },
+    {
+     "name": "roundNo",
+     "type": "Integer",
+     "comment": "轮次号：(project,node) 内提交时 max+1，草稿不占号"
+    },
+    {
+     "name": "auditStatus",
+     "type": "Integer",
+     "comment": "轮状态：1-待审核 2-已通过 3-已驳回"
+    }
+   ]
+  },
+  "doc_lifecycle_cost_row": {
+   "table": "doc_lifecycle_cost_row",
+   "class": "DocLifecycleCostRowDO",
+   "doc": "生命周期费用台账·稀疏行版本 DO（doc_lifecycle_cost_row） 一个类别×一轮最多一行，只存被改过的类别；没写的格子就是 NULL。 当前值/快照均读时合并（cell = round_no ≤ N 的版本中该列最新非空版本的值），不落库。 历史物理行永不 UPDATE（除驳回原位改外）；灰锁校验=该格在 round_no≥1 的其它台账版本中已有非空值即拒绝。",
+   "fields": [
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "生命周期费用台账·稀疏行版本 DO（doc_lifecycle_cost_row） 一个类别×一轮最多一行，只存被改过的类别；没写的格子就是 NULL。 当前值/快照均读时合并（cell = round_no ≤ N 的版本中该列最新非空版本的值），不落库。 历史物理行永不 UPDATE（除驳回原位改外）；灰锁校验=该格在 round_no≥1 的其它台账版本中已有非空值即拒绝。 / @Table"
+    },
+    {
+     "name": "ledgerId",
+     "type": "Long",
+     "comment": "版本所属轮台账ID(doc_ledger)"
+    },
+    {
+     "name": "sourceTaskId",
+     "type": "Long",
+     "comment": "提交轮次任务ID(追溯用)"
+    },
+    {
+     "name": "roundNo",
+     "type": "Integer",
+     "comment": "轮次号：0=草稿未定格，onSubmit 盖章；同轮驳回重提原位改不换号"
+    },
+    {
+     "name": "auditStatus",
+     "type": "Integer",
+     "comment": "0-草稿 1-待审核 2-已通过 3-已驳回（仅驱动可编辑性/高亮/徽章，不参与合并过滤）"
+    },
+    {
+     "name": "categoryCode",
+     "type": "String",
+     "comment": "标准类别编码(doc_lifecycle_category.code，大类/小类均可指向；与 customCategoryCode 二选一)"
+    },
+    {
+     "name": "customCategoryCode",
+     "type": "String",
+     "comment": "自定义大类编码(doc_lifecycle_custom_category.code；与 categoryCode 二选一)"
+    },
+    {
+     "name": "approveDate",
+     "type": "LocalDate",
+     "comment": "批复时间"
+    },
+    {
+     "name": "budgetAmount",
+     "type": "BigDecimal",
+     "comment": "概算批复/财评金额"
+    },
+    {
+     "name": "contractAmount",
+     "type": "BigDecimal",
+     "comment": "合同金额"
+    },
+    {
+     "name": "settledAmount",
+     "type": "BigDecimal",
+     "comment": "至今已结算金额"
+    },
+    {
+     "name": "paidAmount",
+     "type": "BigDecimal",
+     "comment": "至今已支付费用"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "doc_lifecycle_custom_category": {
+   "table": "doc_lifecycle_custom_category",
+   "class": "DocLifecycleCustomCategoryDO",
+   "doc": "生命周期费用台账·自定义类别 DO（doc_lifecycle_custom_category） 用户\"✚ 添加其他 / ✚子级\"产生的自定义行（任意层级，可填 6 列值），随创建轮走生命周期： 草稿轮创建(0) → 提交(1) → 通过(2，永久成为该项目矩阵框架) / 驳回(3，重提可改名)。 挂载关系（XOR 双父列）：parent_std_code=挂标准配置树行下 / parent_custom_code=挂自定义行下 / 双 NULL=一级。",
+   "fields": [
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "生命周期费用台账·自定义类别 DO（doc_lifecycle_custom_category） 用户\"✚ 添加其他 / ✚子级\"产生的自定义行（任意层级，可填 6 列值），随创建轮走生命周期： 草稿轮创建(0) → 提交(1) → 通过(2，永久成为该项目矩阵框架) / 驳回(3，重提可改名)。 挂载关系（XOR 双父列）：parent_std_code=挂标准配置树行下 / parent_cu"
+    },
+    {
+     "name": "ledgerId",
+     "type": "Long",
+     "comment": "创建轮台账ID(doc_ledger)"
+    },
+    {
+     "name": "roundNo",
+     "type": "Integer",
+     "comment": "创建轮次（该轮之前不渲染）：0=草稿未定格，onSubmit 盖章"
+    },
+    {
+     "name": "auditStatus",
+     "type": "Integer",
+     "comment": "随创建轮状态机：0-草稿 1-待审核 2-已通过 3-已驳回"
+    },
+    {
+     "name": "categoryCode",
+     "type": "String",
+     "comment": "自定义类别编码（自动生成 CUST+雪花后缀，用户不可改，全局唯一）"
+    },
+    {
+     "name": "categoryName",
+     "type": "String",
+     "comment": "自定义类别名称（任意层级；不与配置树大类/小类及已有自定义重名，app 校验+库兜底）"
+    },
+    {
+     "name": "parentStdCode",
+     "type": "String",
+     "comment": "父标准类别编码（doc_lifecycle_category.code；挂标准行下时填；与 parentCustomCode 二选一）"
+    },
+    {
+     "name": "parentCustomCode",
+     "type": "String",
+     "comment": "父自定义类别编码（本表 category_code；挂自定义行下时填；双 NULL=一级）"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号（同级兄弟之间=创建序；同级渲染序=标准子类别在前、自定义子类别按 sort 在后）"
+    }
+   ]
+  },
+  "doc_fund_payment": {
+   "table": "doc_fund_payment",
+   "class": "FundPaymentDO",
+   "doc": "资金支付台账·主表（project+node 单例，仅合计快照） 展示合计以读时计算为准，快照仅供对账；累计支付金额列的合计为展示口径，不做快照。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "资金支付台账·主表（project+node 单例，仅合计快照） 展示合计以读时计算为准，快照仅供对账；累计支付金额列的合计为展示口径，不做快照。 / @TableName(\"doc_fund_payment\") @Data @EqualsAndHashCode(callSuper = true) public class FundPaymentDO extends BaseDO { @Table"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "totalRequestAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：请款金额Σ（最近一次审批通过时回写）"
+    },
+    {
+     "name": "totalPayAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：本期支付金额Σ（最近一次审批通过时回写）"
+    }
+   ]
+  },
+  "doc_fund_payment_row": {
+   "table": "doc_fund_payment_row",
+   "class": "FundPaymentRowDO",
+   "doc": "资金支付台账·明细行（严格按模板 13 列，无备注列） 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 累计支付金额读时计算，不落库；无唯一性约束（同期可多笔支付）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "资金支付台账·明细行（严格按模板 13 列，无备注列） 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 累计支付金额读时计算，不落库；无唯一性约束（同期可多笔支付）。 / @TableName(\"doc_fund_payment_row\") @Data @Eq"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "ledgerId",
+     "type": "Long",
+     "comment": "提交轮次关联的台账ID（doc_ledger）"
+    },
+    {
+     "name": "sourceTaskId",
+     "type": "Long",
+     "comment": "提交轮次任务ID（追溯用；轮次筛选以 audit_status 为准）"
+    },
+    {
+     "name": "auditStatus",
+     "type": "Integer",
+     "comment": "审核状态：0-草稿 1-待审核 2-已通过 3-已驳回"
+    },
+    {
+     "name": "feeType",
+     "type": "String",
+     "comment": "费用类型（手填）"
+    },
+    {
+     "name": "feeDetail",
+     "type": "String",
+     "comment": "费用详情（手填）"
+    },
+    {
+     "name": "payMilestone",
+     "type": "String",
+     "comment": "支付节点（手填）"
+    },
+    {
+     "name": "requestDate",
+     "type": "LocalDate",
+     "comment": "请款时间"
+    },
+    {
+     "name": "requestAmount",
+     "type": "BigDecimal",
+     "comment": "请款金额"
+    },
+    {
+     "name": "payDate",
+     "type": "LocalDate",
+     "comment": "支付时间"
+    },
+    {
+     "name": "payAmount",
+     "type": "BigDecimal",
+     "comment": "本期支付金额（累计支付金额的滚动基数）"
+    },
+    {
+     "name": "expenseSummary",
+     "type": "String",
+     "comment": "费用摘要"
+    },
+    {
+     "name": "payMethod",
+     "type": "String",
+     "comment": "支付方式（字典 fund_payment_pay_method 编码：transfer-转账/bank_acceptance-银行承兑；历史手填原文回显兜底）"
+    },
+    {
+     "name": "voucherUrl",
+     "type": "String",
+     "comment": "费用支付凭证URL（相对路径，逗号多值）"
+    },
+    {
+     "name": "voucherName",
+     "type": "String",
+     "comment": "费用支付凭证文件名（逗号多值，与 url 下标对齐）"
+    },
+    {
+     "name": "attachmentUrl",
+     "type": "String",
+     "comment": "行级附件URL（相对路径，逗号多值；请款资料/发票等）"
+    },
+    {
+     "name": "attachmentName",
+     "type": "String",
+     "comment": "行级附件文件名（逗号多值，与 url 下标对齐）"
+    },
+    {
+     "name": "auditOpinion",
+     "type": "String",
+     "comment": "行级审核意见（驳回时回填）"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号"
+    }
+   ]
+  },
+  "doc_fund_plan_annual": {
+   "table": "doc_fund_plan_annual",
+   "class": "FundPlanAnnualDO",
+   "doc": "年度资金计划台账·主表（project+node 单例） 仅存放最近一次审批通过时的合计快照（对账用）与封账扩展位； 展示口径的合计以明细行读时计算为准（快照非权威）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "年度资金计划台账·主表（project+node 单例） 仅存放最近一次审批通过时的合计快照（对账用）与封账扩展位； 展示口径的合计以明细行读时计算为准（快照非权威）。 / @TableName(\"doc_fund_plan_annual\") @Data @EqualsAndHashCode(callSuper = true) public class FundPlanAnnualDO exten"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "totalPlanAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：本期计划完成金额Σ"
+    },
+    {
+     "name": "totalIncomeAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：收入金额Σ"
+    },
+    {
+     "name": "totalExpenseAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：支出金额Σ"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "doc_fund_plan_annual_row": {
+   "table": "doc_fund_plan_annual_row",
+   "class": "FundPlanAnnualRowDO",
+   "doc": "年度资金计划台账·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 累计计划金额手动填写（原读时滚动计算已下线）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "年度资金计划台账·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 累计计划金额手动填写（原读时滚动计算已下线）。 / @TableName(\"doc_fund_plan_annual_row\") @Data @EqualsAndHashCode(cal"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "ledgerId",
+     "type": "Long",
+     "comment": "提交轮次关联的台账ID（doc_ledger）"
+    },
+    {
+     "name": "sourceTaskId",
+     "type": "Long",
+     "comment": "提交轮次任务ID（追溯用；轮次筛选以 audit_status 为准）"
+    },
+    {
+     "name": "auditStatus",
+     "type": "Integer",
+     "comment": "审核状态：0-草稿 1-待审核 2-已通过 3-已驳回"
+    },
+    {
+     "name": "planPeriod",
+     "type": "String",
+     "comment": "时间（年度：yyyy，如 2026；同节点唯一，见 Handler.onSubmit 校验）"
+    },
+    {
+     "name": "planAmount",
+     "type": "BigDecimal",
+     "comment": "本期计划完成金额"
+    },
+    {
+     "name": "expenseSummary",
+     "type": "String",
+     "comment": "费用摘要"
+    },
+    {
+     "name": "incomeAmount",
+     "type": "BigDecimal",
+     "comment": "收入金额"
+    },
+    {
+     "name": "expenseAmount",
+     "type": "BigDecimal",
+     "comment": "支出金额"
+    },
+    {
+     "name": "cumPlanAmount",
+     "type": "BigDecimal",
+     "comment": "累计计划金额（手动填写，不计算）"
+    },
+    {
+     "name": "attachmentUrl",
+     "type": "String",
+     "comment": "行级附件URL（相对路径，逗号多值）"
+    },
+    {
+     "name": "attachmentName",
+     "type": "String",
+     "comment": "行级附件文件名（逗号多值，与 url 下标对齐）"
+    },
+    {
+     "name": "auditOpinion",
+     "type": "String",
+     "comment": "行级审核意见（驳回时回填）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号"
+    }
+   ]
+  },
+  "doc_fund_plan_monthly": {
+   "table": "doc_fund_plan_monthly",
+   "class": "FundPlanMonthlyDO",
+   "doc": "月度资金计划台账·主表（project+node 单例） 仅存放最近一次审批通过时的合计快照（对账用）与封账扩展位； 展示口径的合计以明细行读时计算为准（快照非权威）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "月度资金计划台账·主表（project+node 单例） 仅存放最近一次审批通过时的合计快照（对账用）与封账扩展位； 展示口径的合计以明细行读时计算为准（快照非权威）。 / @TableName(\"doc_fund_plan_monthly\") @Data @EqualsAndHashCode(callSuper = true) public class FundPlanMonthlyDO ext"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "totalPlanAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：本期计划完成金额Σ"
+    },
+    {
+     "name": "totalIncomeAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：收入金额Σ"
+    },
+    {
+     "name": "totalExpenseAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：支出金额Σ"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "doc_fund_plan_monthly_row": {
+   "table": "doc_fund_plan_monthly_row",
+   "class": "FundPlanMonthlyRowDO",
+   "doc": "月度资金计划台账·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 累计计划金额手动填写（原读时滚动计算已下线）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "月度资金计划台账·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 累计计划金额手动填写（原读时滚动计算已下线）。 / @TableName(\"doc_fund_plan_monthly_row\") @Data @EqualsAndHashCode(ca"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "ledgerId",
+     "type": "Long",
+     "comment": "提交轮次关联的台账ID（doc_ledger）"
+    },
+    {
+     "name": "sourceTaskId",
+     "type": "Long",
+     "comment": "提交轮次任务ID（追溯用；轮次筛选以 audit_status 为准）"
+    },
+    {
+     "name": "auditStatus",
+     "type": "Integer",
+     "comment": "审核状态：0-草稿 1-待审核 2-已通过 3-已驳回"
+    },
+    {
+     "name": "planPeriod",
+     "type": "String",
+     "comment": "时间（月度：yyyy-MM，如 2026-01；同节点唯一，见 Handler.onSubmit 校验）"
+    },
+    {
+     "name": "planAmount",
+     "type": "BigDecimal",
+     "comment": "本期计划完成金额"
+    },
+    {
+     "name": "expenseSummary",
+     "type": "String",
+     "comment": "费用摘要"
+    },
+    {
+     "name": "incomeAmount",
+     "type": "BigDecimal",
+     "comment": "收入金额"
+    },
+    {
+     "name": "expenseAmount",
+     "type": "BigDecimal",
+     "comment": "支出金额"
+    },
+    {
+     "name": "cumPlanAmount",
+     "type": "BigDecimal",
+     "comment": "累计计划金额（手动填写，不计算）"
+    },
+    {
+     "name": "attachmentUrl",
+     "type": "String",
+     "comment": "行级附件URL（相对路径，逗号多值）"
+    },
+    {
+     "name": "attachmentName",
+     "type": "String",
+     "comment": "行级附件文件名（逗号多值，与 url 下标对齐）"
+    },
+    {
+     "name": "auditOpinion",
+     "type": "String",
+     "comment": "行级审核意见（驳回时回填）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号"
+    }
+   ]
+  },
+  "doc_fund_plan_quarterly": {
+   "table": "doc_fund_plan_quarterly",
+   "class": "FundPlanQuarterlyDO",
+   "doc": "季度资金计划台账·主表（project+node 单例） 仅存放最近一次审批通过时的合计快照（对账用）与封账扩展位； 展示口径的合计以明细行读时计算为准（快照非权威）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "季度资金计划台账·主表（project+node 单例） 仅存放最近一次审批通过时的合计快照（对账用）与封账扩展位； 展示口径的合计以明细行读时计算为准（快照非权威）。 / @TableName(\"doc_fund_plan_quarterly\") @Data @EqualsAndHashCode(callSuper = true) public class FundPlanQuarterlyDO"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "totalPlanAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：本期计划完成金额Σ"
+    },
+    {
+     "name": "totalIncomeAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：收入金额Σ"
+    },
+    {
+     "name": "totalExpenseAmount",
+     "type": "BigDecimal",
+     "comment": "合计快照：支出金额Σ"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "doc_fund_plan_quarterly_row": {
+   "table": "doc_fund_plan_quarterly_row",
+   "class": "FundPlanQuarterlyRowDO",
+   "doc": "季度资金计划台账·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 累计计划金额手动填写（原读时滚动计算已下线）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "季度资金计划台账·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 累计计划金额手动填写（原读时滚动计算已下线）。 / @TableName(\"doc_fund_plan_quarterly_row\") @Data @EqualsAndHashCode("
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "ledgerId",
+     "type": "Long",
+     "comment": "提交轮次关联的台账ID（doc_ledger）"
+    },
+    {
+     "name": "sourceTaskId",
+     "type": "Long",
+     "comment": "提交轮次任务ID（追溯用；轮次筛选以 audit_status 为准）"
+    },
+    {
+     "name": "auditStatus",
+     "type": "Integer",
+     "comment": "审核状态：0-草稿 1-待审核 2-已通过 3-已驳回"
+    },
+    {
+     "name": "planPeriod",
+     "type": "String",
+     "comment": "时间（季度：手动填写原文，如 2026年一季度；同节点唯一，见 Handler.onSubmit 校验）"
+    },
+    {
+     "name": "planAmount",
+     "type": "BigDecimal",
+     "comment": "本期计划完成金额"
+    },
+    {
+     "name": "expenseSummary",
+     "type": "String",
+     "comment": "费用摘要"
+    },
+    {
+     "name": "incomeAmount",
+     "type": "BigDecimal",
+     "comment": "收入金额"
+    },
+    {
+     "name": "expenseAmount",
+     "type": "BigDecimal",
+     "comment": "支出金额"
+    },
+    {
+     "name": "cumPlanAmount",
+     "type": "BigDecimal",
+     "comment": "累计计划金额（手动填写，不计算）"
+    },
+    {
+     "name": "attachmentUrl",
+     "type": "String",
+     "comment": "行级附件URL（相对路径，逗号多值）"
+    },
+    {
+     "name": "attachmentName",
+     "type": "String",
+     "comment": "行级附件文件名（逗号多值，与 url 下标对齐）"
+    },
+    {
+     "name": "auditOpinion",
+     "type": "String",
+     "comment": "行级审核意见（驳回时回填）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号"
+    }
+   ]
+  },
+  "doc_meeting_info": {
+   "table": "doc_meeting_info",
+   "class": "MeetingInfoDO",
+   "doc": "会务信息表·主表（project+node 单例） 合计预留骨架：模板当前无任何数值列（无合计），主表仅位置列； 审批通过时 upsert 占位单例，为将来 ALTER ADD 合计列留锚点（历史节点无需回填脚本）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "会务信息表·主表（project+node 单例） 合计预留骨架：模板当前无任何数值列（无合计），主表仅位置列； 审批通过时 upsert 占位单例，为将来 ALTER ADD 合计列留锚点（历史节点无需回填脚本）。 / @TableName(\"doc_meeting_info\") @Data @EqualsAndHashCode(callSuper = true) public class Me"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "doc_meeting_info_row": {
+   "table": "doc_meeting_info_row",
+   "class": "MeetingInfoRowDO",
+   "doc": "会务信息表·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 无计算列、无合计（模板无公式）；日常会议=字典 meeting_daily_type 的 value（提交必填）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "会务信息表·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 无计算列、无合计（模板无公式）；日常会议=字典 meeting_daily_type 的 value（提交必填）。 / @TableName(\"doc_meeting_info_row\") @"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "ledgerId",
+     "type": "Long",
+     "comment": "提交轮次关联的台账ID（doc_ledger）"
+    },
+    {
+     "name": "sourceTaskId",
+     "type": "Long",
+     "comment": "提交轮次任务ID（追溯用；轮次筛选以 audit_status 为准）"
+    },
+    {
+     "name": "auditStatus",
+     "type": "Integer",
+     "comment": "审核状态：0-草稿 1-待审核 2-已通过 3-已驳回"
+    },
+    {
+     "name": "notice",
+     "type": "String",
+     "comment": "会务通知"
+    },
+    {
+     "name": "supervisionUnit",
+     "type": "String",
+     "comment": "监理单位"
+    },
+    {
+     "name": "constructionUnit",
+     "type": "String",
+     "comment": "建设单位"
+    },
+    {
+     "name": "keyWork",
+     "type": "String",
+     "comment": "重点推进工作"
+    },
+    {
+     "name": "dailyMeeting",
+     "type": "String",
+     "comment": "日常会议（字典 meeting_daily_type 的 value，提交必填）"
+    },
+    {
+     "name": "minutes",
+     "type": "String",
+     "comment": "纪要（若有，可选）"
+    },
+    {
+     "name": "auditOpinion",
+     "type": "String",
+     "comment": "行级审核意见（驳回时回填）"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号"
+    }
+   ]
+  },
+  "doc_site_inspection": {
+   "table": "doc_site_inspection",
+   "class": "SiteInspectionDO",
+   "doc": "常态化现场巡查记录表·主表（project+node 单例） 合计预留骨架：模板当前无任何数值列（无合计），主表仅位置列； 审批通过时 upsert 占位单例，为将来 ALTER ADD 合计列留锚点（历史节点无需回填脚本）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "常态化现场巡查记录表·主表（project+node 单例） 合计预留骨架：模板当前无任何数值列（无合计），主表仅位置列； 审批通过时 upsert 占位单例，为将来 ALTER ADD 合计列留锚点（历史节点无需回填脚本）。 / @TableName(\"doc_site_inspection\") @Data @EqualsAndHashCode(callSuper = true) public "
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "doc_site_inspection_row": {
+   "table": "doc_site_inspection_row",
+   "class": "SiteInspectionRowDO",
+   "doc": "常态化现场巡查记录表·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 无计算列、无合计（模板无公式）；检查类型=字典 site_inspection_type 的 value、检查时间=DATE， 两列提交必填；附件=逗号多值（fullUrl 读时拼装不落库）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "常态化现场巡查记录表·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 无计算列、无合计（模板无公式）；检查类型=字典 site_inspection_type 的 value、检查时间=DATE， 两列提交必填；附件=逗号多值（fullUrl 读时拼装"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "ledgerId",
+     "type": "Long",
+     "comment": "提交轮次关联的台账ID（doc_ledger）"
+    },
+    {
+     "name": "sourceTaskId",
+     "type": "Long",
+     "comment": "提交轮次任务ID（追溯用；轮次筛选以 audit_status 为准）"
+    },
+    {
+     "name": "auditStatus",
+     "type": "Integer",
+     "comment": "审核状态：0-草稿 1-待审核 2-已通过 3-已驳回"
+    },
+    {
+     "name": "inspectionType",
+     "type": "String",
+     "comment": "检查类型（字典 site_inspection_type 的 value，提交必填：安全生产/消防/汛期/环保/职业健康/专项检查/其他）"
+    },
+    {
+     "name": "inspectionTime",
+     "type": "LocalDate",
+     "comment": "检查时间（提交必填）"
+    },
+    {
+     "name": "hazard",
+     "type": "String",
+     "comment": "存在的隐患"
+    },
+    {
+     "name": "rectification",
+     "type": "String",
+     "comment": "整改闭环"
+    },
+    {
+     "name": "attachmentUrl",
+     "type": "String",
+     "comment": "行级附件URL（相对路径，逗号多值；fullUrl 读时经 FileUrlBuilder 拼装不落库）"
+    },
+    {
+     "name": "attachmentName",
+     "type": "String",
+     "comment": "行级附件文件名（逗号多值，半角逗号消毒为全角）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "auditOpinion",
+     "type": "String",
+     "comment": "行级审核意见（驳回时回填）"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号"
+    }
+   ]
+  },
+  "doc_subsection_acceptance": {
+   "table": "doc_subsection_acceptance",
+   "class": "SubsectionAcceptanceDO",
+   "doc": "分部分项竣工验收表·主表（project+node 单例） 合计预留骨架：模板当前无任何数值列（无合计），主表仅位置列； 审批通过时 upsert 占位单例，为将来 ALTER ADD 合计列留锚点（历史节点无需回填脚本）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "分部分项竣工验收表·主表（project+node 单例） 合计预留骨架：模板当前无任何数值列（无合计），主表仅位置列； 审批通过时 upsert 占位单例，为将来 ALTER ADD 合计列留锚点（历史节点无需回填脚本）。 / @TableName(\"doc_subsection_acceptance\") @Data @EqualsAndHashCode(callSuper = true) pu"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "doc_subsection_acceptance_row": {
+   "table": "doc_subsection_acceptance_row",
+   "class": "SubsectionAcceptanceRowDO",
+   "doc": "分部分项竣工验收表·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 无计算列、无合计（模板无公式）；工程名称=提交必填；附件=逗号多值（fullUrl 读时拼装不落库）。",
+   "fields": [
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "分部分项竣工验收表·明细行 节点级跨轮次累积实体（区别于 doc_file_entry 的台账轮次内实体）： 已通过(2)历史行与本轮提交(1)行同 node 共存，状态回写必须带 audit_status 守卫。 无计算列、无合计（模板无公式）；工程名称=提交必填；附件=逗号多值（fullUrl 读时拼装不落库）。 / @TableName(\"doc_subsection_acceptance_"
+    },
+    {
+     "name": "phaseId",
+     "type": "Long",
+     "comment": "阶段ID（冗余）"
+    },
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点ID（doc_node）"
+    },
+    {
+     "name": "ledgerId",
+     "type": "Long",
+     "comment": "提交轮次关联的台账ID（doc_ledger）"
+    },
+    {
+     "name": "sourceTaskId",
+     "type": "Long",
+     "comment": "提交轮次任务ID（追溯用；轮次筛选以 audit_status 为准）"
+    },
+    {
+     "name": "auditStatus",
+     "type": "Integer",
+     "comment": "审核状态：0-草稿 1-待审核 2-已通过 3-已驳回"
+    },
+    {
+     "name": "sectionName",
+     "type": "String",
+     "comment": "分部分项工程名称（提交必填）"
+    },
+    {
+     "name": "lotAcceptance",
+     "type": "String",
+     "comment": "检验批质量验收情况"
+    },
+    {
+     "name": "docVisa",
+     "type": "String",
+     "comment": "质量文件签证情况"
+    },
+    {
+     "name": "problemHandling",
+     "type": "String",
+     "comment": "发现问题及处理方法"
+    },
+    {
+     "name": "regulationExecution",
+     "type": "String",
+     "comment": "执行规范法规情况"
+    },
+    {
+     "name": "qualityOpinion",
+     "type": "String",
+     "comment": "分部工程质量评估意见"
+    },
+    {
+     "name": "attachmentUrl",
+     "type": "String",
+     "comment": "行级附件URL（相对路径，逗号多值；fullUrl 读时经 FileUrlBuilder 拼装不落库）"
+    },
+    {
+     "name": "attachmentName",
+     "type": "String",
+     "comment": "行级附件文件名（逗号多值，半角逗号消毒为全角）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "auditOpinion",
+     "type": "String",
+     "comment": "行级审核意见（驳回时回填）"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号"
+    }
+   ]
+  },
+  "doc_construction_other_cost_detail": {
+   "table": "doc_construction_other_cost_detail",
+   "class": "ConstructionOtherCostDetailDO",
+   "doc": "工程建设其他费台账明细行",
+   "fields": [
+    {
+     "name": "content",
+     "type": "String",
+     "comment": "工程建设其他费台账明细行 / @TableName(\"doc_construction_other_cost_detail\") @Data @EqualsAndHashCode(callSuper = true) public class ConstructionOtherCostDetailDO extends BaseDO { @TableId(type = IdType.ASSIGN_ID)"
+    },
+    {
+     "name": "agency",
+     "type": "String",
+     "comment": "中介机构"
+    },
+    {
+     "name": "estimateAmount",
+     "type": "BigDecimal",
+     "comment": "概算批复/财评（万元）"
+    },
+    {
+     "name": "contractAmount",
+     "type": "BigDecimal",
+     "comment": "合同金额（万元）"
+    },
+    {
+     "name": "lastPeriodPayable",
+     "type": "BigDecimal",
+     "comment": "上期累计应支付费用（万元）"
+    },
+    {
+     "name": "currentPeriodPayable",
+     "type": "BigDecimal",
+     "comment": "本期应支付费用（万元）"
+    },
+    {
+     "name": "accruedPayable",
+     "type": "BigDecimal",
+     "comment": "至今累计应支付费用（万元，=上期+本期）"
+    },
+    {
+     "name": "paidAmount",
+     "type": "BigDecimal",
+     "comment": "至今已支付费用（万元）"
+    },
+    {
+     "name": "settlementAmount",
+     "type": "BigDecimal",
+     "comment": "结算金额（万元）"
+    },
+    {
+     "name": "fileUrl",
+     "type": "String",
+     "comment": "附件URL（单文件）"
+    }
+   ]
+  },
+  "doc_construction_other_cost": {
+   "table": "doc_construction_other_cost",
+   "class": "ConstructionOtherCostDO",
+   "doc": "工程建设其他费台账主表",
+   "fields": [
+    {
+     "name": "contractAmountTotal",
+     "type": "BigDecimal",
+     "comment": "工程建设其他费台账主表 / @TableName(\"doc_construction_other_cost\") @Data @EqualsAndHashCode(callSuper = true) public class ConstructionOtherCostDO extends BaseDO { @TableId(type = IdType.ASSIGN_ID) private Long "
+    },
+    {
+     "name": "accruedPayableTotal",
+     "type": "BigDecimal",
+     "comment": "至今累计应支付费用合计（万元，冗余存）"
+    },
+    {
+     "name": "paidAmountTotal",
+     "type": "BigDecimal",
+     "comment": "至今已支付费用合计（万元，冗余存）"
+    },
+    {
+     "name": "settlementAmountTotal",
+     "type": "BigDecimal",
+     "comment": "结算金额合计（万元，冗余存）"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0-草稿 1-审批中 2-已通过 3-已驳回"
+    }
+   ]
+  },
+  "doc_contract_receipt": {
+   "table": "doc_contract_receipt",
+   "class": "ContractReceiptDO",
+   "doc": "合同收款数据台账主表",
+   "fields": [
+    {
+     "name": "contractAmountTotal",
+     "type": "BigDecimal",
+     "comment": "合同收款数据台账主表 / @TableName(\"doc_contract_receipt\") @Data @EqualsAndHashCode(callSuper = true) public class ContractReceiptDO extends BaseDO { @TableId(type = IdType.ASSIGN_ID) private Long id; private Lo"
+    },
+    {
+     "name": "settlementAmountTotal",
+     "type": "BigDecimal",
+     "comment": "本次结算金额合计（万元，子表聚合冗余存）"
+    },
+    {
+     "name": "receiptAmountTotal",
+     "type": "BigDecimal",
+     "comment": "本次收款金额合计（万元，子表聚合冗余存）"
+    },
+    {
+     "name": "arrearsAmountTotal",
+     "type": "BigDecimal",
+     "comment": "本次欠款金额合计（万元，子表聚合冗余存）"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0-草稿 1-审批中 2-已通过 3-已驳回"
+    }
+   ]
+  },
+  "doc_contract_receipt_item": {
+   "table": "doc_contract_receipt_item",
+   "class": "ContractReceiptItemDO",
+   "doc": "合同收款数据台账明细行（子表）。一条主记录对应 N 条明细。",
+   "fields": [
+    {
+     "name": "receiptId",
+     "type": "Long",
+     "comment": "合同收款数据台账明细行（子表）。一条主记录对应 N 条明细。 / @TableName(\"doc_contract_receipt_item\") @Data @EqualsAndHashCode(callSuper = true) public class ContractReceiptItemDO extends BaseDO { @TableId(type = IdType.ASSIGN_ID"
+    },
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "冗余项目 ID，便于按项目跨批次查询"
+    },
+    {
+     "name": "sortNo",
+     "type": "Integer",
+     "comment": "行序号"
+    },
+    {
+     "name": "receiptDate",
+     "type": "LocalDate",
+     "comment": "日期"
+    },
+    {
+     "name": "reachedPaymentNode",
+     "type": "Integer",
+     "comment": "是否达到付款节点：0-否 1-是"
+    },
+    {
+     "name": "paymentRatio",
+     "type": "String",
+     "comment": "按照合同约定付款比例（手填，原样存）"
+    },
+    {
+     "name": "settlementAmount",
+     "type": "BigDecimal",
+     "comment": "本次结算金额（万元）"
+    },
+    {
+     "name": "receiptAmount",
+     "type": "BigDecimal",
+     "comment": "本次收款金额（万元）"
+    },
+    {
+     "name": "arrearsAmount",
+     "type": "BigDecimal",
+     "comment": "本次欠款金额（万元，手填不计算）"
+    }
+   ]
+  },
+  "doc_cost_control_detail": {
+   "table": "doc_cost_control_detail",
+   "class": "CostControlDetailDO",
+   "doc": "造价控制台账明细行",
+   "fields": [
+    {
+     "name": "factorType",
+     "type": "String",
+     "comment": "造价控制台账明细行 / @TableName(\"doc_cost_control_detail\") @Data @EqualsAndHashCode(callSuper = true) public class CostControlDetailDO extends BaseDO { @TableId(type = IdType.ASSIGN_ID) private Long id; privat"
+    },
+    {
+     "name": "lastPeriodAmount",
+     "type": "BigDecimal",
+     "comment": "上期累计金额（万元，手填）"
+    },
+    {
+     "name": "lastPeriodCount",
+     "type": "Integer",
+     "comment": "上期累计份数（手填）"
+    },
+    {
+     "name": "currentAmount",
+     "type": "BigDecimal",
+     "comment": "当期造价（万元，手填）"
+    },
+    {
+     "name": "currentCount",
+     "type": "Integer",
+     "comment": "当期份数（手填）"
+    },
+    {
+     "name": "cumulativeAmount",
+     "type": "BigDecimal",
+     "comment": "至今累计造价（万元，手填）"
+    },
+    {
+     "name": "cumulativeCount",
+     "type": "Integer",
+     "comment": "至今累计份数（手填）"
+    },
+    {
+     "name": "provisionalRatio",
+     "type": "BigDecimal",
+     "comment": "暂列金列支比例（前端算=累计造价/暂列金）"
+    },
+    {
+     "name": "impactRatio",
+     "type": "BigDecimal",
+     "comment": "总影响幅度（前端算=累计造价/控制指标）"
+    },
+    {
+     "name": "fileUrl",
+     "type": "String",
+     "comment": "附件URL（单文件）"
+    }
+   ]
+  },
+  "doc_cost_control": {
+   "table": "doc_cost_control",
+   "class": "CostControlDO",
+   "doc": "造价控制台账主表",
+   "fields": [
+    {
+     "name": "controlIndicator",
+     "type": "BigDecimal",
+     "comment": "造价控制台账主表 / @TableName(\"doc_cost_control\") @Data @EqualsAndHashCode(callSuper = true) public class CostControlDO extends BaseDO { @TableId(type = IdType.ASSIGN_ID) private Long id; private Long project"
+    },
+    {
+     "name": "provisionalSum",
+     "type": "BigDecimal",
+     "comment": "暂列金（万元）"
+    },
+    {
+     "name": "provisionalEstimate",
+     "type": "BigDecimal",
+     "comment": "暂估价（万元）"
+    },
+    {
+     "name": "totalCumulativeAmount",
+     "type": "BigDecimal",
+     "comment": "至今累计造价合计（万元，冗余=子表SUM）"
+    },
+    {
+     "name": "totalCumulativeCount",
+     "type": "Integer",
+     "comment": "至今累计份数合计（冗余=子表SUM）"
+    },
+    {
+     "name": "totalProvisionalRatio",
+     "type": "BigDecimal",
+     "comment": "暂列金列支比例合计（冗余=累计造价合计/暂列金）"
+    },
+    {
+     "name": "totalImpactRatio",
+     "type": "BigDecimal",
+     "comment": "总影响幅度合计（冗余=累计造价合计/控制指标）"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0-草稿 1-审批中 2-已通过 3-已驳回"
+    }
+   ]
+  },
+  "doc_node": {
+   "table": "doc_node",
+   "class": "DocNodeDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0-禁用 1-启用"
+    },
+    {
+     "name": "showFileCategory",
+     "type": "Integer",
+     "comment": "是否展示文件类别表格：1-展示（默认，纯文件/混合） 0-隐藏（纯业务表格）"
+    }
+   ]
+  },
+  "doc_file_category": {
+   "table": "doc_file_category",
+   "class": "FileCategoryDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "fileFormat",
+     "type": "String",
+     "comment": "文件格式，逗号分隔，如 .pdf,.doc,.docx"
+    },
+    {
+     "name": "referenceExample",
+     "type": "String",
+     "comment": "参考示例"
+    },
+    {
+     "name": "summary",
+     "type": "String",
+     "comment": "文件摘要(首次填报时自动填充到文件条目的默认值)"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0-禁用 1-启用"
+    },
+    {
+     "name": "visibleRoleIds",
+     "type": "Set<Long>",
+     "comment": "可见角色ID(JSON数组)，空=全部可见；仅作为首次填报 seed 的默认模板"
+    }
+   ]
+  },
+  "doc_form": {
+   "table": "doc_form",
+   "class": "FormDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "code",
+     "type": "String",
+     "comment": "表单编码"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "表单名称"
+    },
+    {
+     "name": "phaseCode",
+     "type": "String",
+     "comment": "所属模块编码, 关联 doc_phase.code(第一级大阶段, parent_id=0)"
+    },
+    {
+     "name": "version",
+     "type": "String",
+     "comment": "版本, 自由文本"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0-禁用 1-启用"
+    }
+   ]
+  },
+  "doc_investment_completion": {
+   "table": "doc_investment_completion",
+   "class": "InvestmentCompletionDO",
+   "doc": "投资完成台账主表（一条提交/批次）。明细行见 {@link InvestmentCompletionItemDO}。",
+   "fields": [
+    {
+     "name": "batchNo",
+     "type": "String",
+     "comment": "投资完成台账主表（一条提交/批次）。明细行见 {@link InvestmentCompletionItemDO}。 / @TableName(\"doc_investment_completion\") @Data @EqualsAndHashCode(callSuper = true) public class InvestmentCompletionDO extends BaseDO { @Ta"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0-草稿 1-待审核 2-已通过 3-已驳回"
+    }
+   ]
+  },
+  "doc_investment_completion_item": {
+   "table": "doc_investment_completion_item",
+   "class": "InvestmentCompletionItemDO",
+   "doc": "投资完成台账明细行（子表）。一条主记录对应 N 条明细。",
+   "fields": [
+    {
+     "name": "completionId",
+     "type": "Long",
+     "comment": "投资完成台账明细行（子表）。一条主记录对应 N 条明细。 / @TableName(\"doc_investment_completion_item\") @Data @EqualsAndHashCode(callSuper = true) public class InvestmentCompletionItemDO extends BaseDO { @TableId(type = IdType.A"
+    },
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "冗余项目 ID，便于按项目跨批次查明细"
+    },
+    {
+     "name": "fundCategory",
+     "type": "String",
+     "comment": "款项类别（字典 doc_fund_category）"
+    },
+    {
+     "name": "fundingUnit",
+     "type": "String",
+     "comment": "注资单位"
+    },
+    {
+     "name": "amount",
+     "type": "BigDecimal",
+     "comment": "金额（万元）"
+    },
+    {
+     "name": "investmentDate",
+     "type": "LocalDate",
+     "comment": "投资时间"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "fileUrls",
+     "type": "String",
+     "comment": "凭证附件 URL，多个逗号分隔"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "行序号"
+    }
+   ]
+  },
+  "doc_investment_cost": {
+   "table": "doc_investment_cost",
+   "class": "InvestmentCostDO",
+   "doc": "投资费用分析台账主表（一条提交）。明细行见 {@link InvestmentCostItemDO}。",
+   "fields": [
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "投资费用分析台账主表（一条提交）。明细行见 {@link InvestmentCostItemDO}。 / @TableName(\"doc_investment_cost\") @Data @EqualsAndHashCode(callSuper = true) public class InvestmentCostDO extends BaseDO { @TableId(type = IdType"
+    }
+   ]
+  },
+  "doc_investment_cost_item": {
+   "table": "doc_investment_cost_item",
+   "class": "InvestmentCostItemDO",
+   "doc": "投资费用分析台账明细行（子表）。一条主记录对应 N 条明细，每行一种投资控制依据。",
+   "fields": [
+    {
+     "name": "costId",
+     "type": "Long",
+     "comment": "投资费用分析台账明细行（子表）。一条主记录对应 N 条明细，每行一种投资控制依据。 / @TableName(\"doc_investment_cost_item\") @Data @EqualsAndHashCode(callSuper = true) public class InvestmentCostItemDO extends BaseDO { @TableId(type = IdType."
+    },
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "冗余项目 ID，便于按项目跨记录查明细"
+    },
+    {
+     "name": "basisType",
+     "type": "String",
+     "comment": "投资控制依据（字典 doc_cost_basis：research/design/contract/construct/budget/finance）"
+    },
+    {
+     "name": "approveDate",
+     "type": "LocalDate",
+     "comment": "批复时间"
+    },
+    {
+     "name": "engineeringCost",
+     "type": "BigDecimal",
+     "comment": "工程费用（万元）"
+    },
+    {
+     "name": "otherCost",
+     "type": "BigDecimal",
+     "comment": "工程建设其他费（万元）"
+    },
+    {
+     "name": "reserveCost",
+     "type": "BigDecimal",
+     "comment": "预备费用（万元）"
+    },
+    {
+     "name": "interestCost",
+     "type": "BigDecimal",
+     "comment": "建设期利息（万元）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "fileUrls",
+     "type": "String",
+     "comment": "附件 URL，多个逗号分隔"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "行序号"
+    }
+   ]
+  },
+  "doc_investment_leverage": {
+   "table": "doc_investment_leverage",
+   "class": "InvestmentLeverageDO",
+   "doc": "",
+   "fields": []
+  },
+  "doc_file_entry": {
+   "table": "doc_file_entry",
+   "class": "DocFileEntryDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "attachmentUrl",
+     "type": "String",
+     "comment": "附件URL（逗号分隔多值，与 attachmentName 下标对齐）；\"文件\"列附件组，规则同 fileUrl"
+    },
+    {
+     "name": "attachmentName",
+     "type": "String",
+     "comment": "附件文件名（逗号分隔多值，与 attachmentUrl 下标对齐）"
+    },
+    {
+     "name": "summary",
+     "type": "String",
+     "comment": "文件摘要（文件核心内容的简要说明）"
+    },
+    {
+     "name": "source",
+     "type": "Integer",
+     "comment": "来源：0-系统预设 1-用户自定义"
+    },
+    {
+     "name": "auditStatus",
+     "type": "Integer",
+     "comment": "审批状态：0-草稿 1-审批中 2-已通过 3-已驳回（与台账同步）"
+    },
+    {
+     "name": "notApplicable",
+     "type": "Integer",
+     "comment": "文件状态：0-已获取 1-未获取 2-不涉及 3-其他"
+    },
+    {
+     "name": "uploader",
+     "type": "String",
+     "comment": "上传人（当前登录用户 ID，字符串形式与 creator 字段保持一致）"
+    },
+    {
+     "name": "uploadTime",
+     "type": "LocalDateTime",
+     "comment": "上传时间"
+    },
+    {
+     "name": "visibleRoleIds",
+     "type": "Set<Long>",
+     "comment": "可见角色ID(JSON数组)，空=全部可见；填报后以此字段为准（覆盖类别默认）"
+    },
+    {
+     "name": "isConfidential",
+     "type": "Integer",
+     "comment": "是否涉密：0-否 1-是；与 visibleRoleIds 互为佐证，独立存储。 注意：DB 列为 SMALLINT，PG 严格类型不能自动 Boolean↔SMALLINT，所以 DO 用 Integer （与 yudao-module-system ImageDO.isTimeRange 等布尔列同款处理）"
+    },
+    {
+     "name": "pmOpinion",
+     "type": "String",
+     "comment": "项目经理意见：审核通过时对\"不涉及/空缺\"条目的说明；随 approve 全量覆盖取最新值"
+    }
+   ]
+  },
+  "doc_file_entry_history": {
+   "table": "doc_file_entry_history",
+   "class": "DocFileEntryHistoryDO",
+   "doc": "台账文件填报明细历史 DO（doc_file_entry_history） 继承 {@link DocFileEntryDO}：镜像全部业务列（含 visibleRoleIds 的 JacksonTypeHandler 配置）， 主表 DO 新增字段自动继承，只需同步 DDL。 注意：deleted 列仅为建表规范兼容、恒为 0；本表的删除一律走 {@code DocFileEntryHistoryMapper} 的原生 DELETE 物理删除（不能用 MP wrapper 的软删语义， 否则 STAGE\"先删后插\"会软删堆积、history 自身膨胀）。",
+   "fields": [
+    {
+     "name": "dataType",
+     "type": "Integer",
+     "comment": "台账文件填报明细历史 DO（doc_file_entry_history） 继承 {@link DocFileEntryDO}：镜像全部业务列（含 visibleRoleIds 的 JacksonTypeHandler 配置）， 主表 DO 新增字段自动继承，只需同步 DDL。 注意：deleted 列仅为建表规范兼容、恒为 0；本表的删除一律走 {@code DocFileEntryHistor"
+    },
+    {
+     "name": "sourceTaskId",
+     "type": "Long",
+     "comment": "暂存归属的驳回轮次任务 ID（一次驳回 = 一轮，resubmit 取草稿的 KEY）；ARCHIVE 行为 NULL"
+    },
+    {
+     "name": "stageTime",
+     "type": "LocalDateTime",
+     "comment": "暂存时间（STAGE）"
+    },
+    {
+     "name": "archiveTime",
+     "type": "LocalDateTime",
+     "comment": "归档时间（ARCHIVE）"
+    }
+   ]
+  },
+  "doc_ledger": {
+   "table": "doc_ledger",
+   "class": "DocLedgerDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0-草稿 1-审批中 2-已通过 3-已驳回"
+    },
+    {
+     "name": "isSpecial",
+     "type": "Integer",
+     "comment": "是否特殊文件：0-常规 1-特殊 <p>常规文件一审即定稿（needNext=false），特殊文件沿用 coaudit 字典显隐逻辑。"
+    }
+   ]
+  },
+  "doc_lifecycle_category": {
+   "table": "doc_lifecycle_category",
+   "class": "DocLifecycleCategoryDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0-禁用 1-启用"
+    }
+   ]
+  },
+  "doc_material_approval": {
+   "table": "doc_material_approval",
+   "class": "MaterialApprovalDO",
+   "doc": "认质认价台账主表",
+   "fields": [
+    {
+     "name": "totalPriceAggregate",
+     "type": "BigDecimal",
+     "comment": "认质认价台账主表 / @TableName(\"doc_material_approval\") @Data @EqualsAndHashCode(callSuper = true) public class MaterialApprovalDO extends BaseDO { @TableId(type = IdType.ASSIGN_ID) private Long id; private Lo"
+    },
+    {
+     "name": "impactAggregate",
+     "type": "BigDecimal",
+     "comment": "对总投资影响合计（万元，冗余存 = SUM(E)）"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0-草稿 1-审批中 2-已通过 3-已驳回"
+    }
+   ]
+  },
+  "doc_material_approval_item": {
+   "table": "doc_material_approval_item",
+   "class": "MaterialApprovalItemDO",
+   "doc": "认质认价台账材料明细",
+   "fields": [
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "认质认价台账材料明细 / @TableName(\"doc_material_approval_item\") @Data @EqualsAndHashCode(callSuper = true) public class MaterialApprovalItemDO extends BaseDO { @TableId(type = IdType.ASSIGN_ID) private Long id;"
+    },
+    {
+     "name": "unit",
+     "type": "String",
+     "comment": "单位"
+    },
+    {
+     "name": "brand",
+     "type": "String",
+     "comment": "品牌"
+    },
+    {
+     "name": "spec",
+     "type": "String",
+     "comment": "规格/型号"
+    },
+    {
+     "name": "quantity",
+     "type": "BigDecimal",
+     "comment": "工程量 A"
+    },
+    {
+     "name": "basePrice",
+     "type": "BigDecimal",
+     "comment": "基准价 B（万元）"
+    },
+    {
+     "name": "reviewPrice",
+     "type": "BigDecimal",
+     "comment": "送审单价（万元）"
+    },
+    {
+     "name": "approvedPrice",
+     "type": "BigDecimal",
+     "comment": "核定单价 C（万元）"
+    },
+    {
+     "name": "totalPrice",
+     "type": "BigDecimal",
+     "comment": "合价 D=A×C（万元，后端重算）"
+    },
+    {
+     "name": "investmentImpact",
+     "type": "BigDecimal",
+     "comment": "对总投资影响 E=A×(C-B)（万元，后端重算）"
+    },
+    {
+     "name": "attachmentUrl",
+     "type": "String",
+     "comment": "附件URL（单文件）"
+    }
+   ]
+  },
+  "doc_node_biz_table": {
+   "table": "doc_node_biz_table",
+   "class": "DocNodeBizTableDO",
+   "doc": "文件节点-业务表格绑定关系（多对多） 一个节点可绑定多张业务动态表格，sort 为节点内展示顺序（小者先渲染）。 同节点同 code 唯一（uk_doc_node_biz_table_unique, WHERE deleted=0）， 防同模板绑两次撞模板主表 (project_id, node_id) 唯一键。",
+   "fields": [
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "文件节点-业务表格绑定关系（多对多） 一个节点可绑定多张业务动态表格，sort 为节点内展示顺序（小者先渲染）。 同节点同 code 唯一（uk_doc_node_biz_table_unique, WHERE deleted=0）， 防同模板绑两次撞模板主表 (project_id, node_id) 唯一键。 / @TableName(\"doc_node_biz_table\") @Data @"
+    },
+    {
+     "name": "bizTableCode",
+     "type": "String",
+     "comment": "业务表格编码（字典 doc_biz_table，如 DEBT_DETAIL）"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "节点内展示顺序（小者先渲染）"
+    }
+   ]
+  },
+  "doc_node_category": {
+   "table": "doc_node_category",
+   "class": "DocNodeCategoryDO",
+   "doc": "",
+   "fields": []
+  },
+  "doc_node_relation": {
+   "table": "doc_node_relation",
+   "class": "DocNodeRelationDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "nodeId",
+     "type": "Long",
+     "comment": "当前节点ID"
+    },
+    {
+     "name": "relatedNodeId",
+     "type": "Long",
+     "comment": "关联节点ID"
+    },
+    {
+     "name": "relationType",
+     "type": "Integer",
+     "comment": "关系类型：1-前序，2-后序"
+    }
+   ]
+  },
+  "doc_output_value_detail": {
+   "table": "doc_output_value_detail",
+   "class": "OutputValueDetailDO",
+   "doc": "",
+   "fields": []
+  },
+  "doc_output_value": {
+   "table": "doc_output_value",
+   "class": "OutputValueDO",
+   "doc": "",
+   "fields": []
+  },
+  "doc_phase": {
+   "table": "doc_phase",
+   "class": "DocPhaseConfigDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0-禁用 1-启用"
+    }
+   ]
+  },
+  "doc_phase_node": {
+   "table": "doc_phase_node",
+   "class": "DocPhaseNodeDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "required",
+     "type": "Integer",
+     "comment": "是否必填：0-否 1-是"
+    }
+   ]
+  },
+  "doc_phase_template": {
+   "table": "doc_phase_template",
+   "class": "DocPhaseTemplateDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0-禁用 1-启用"
+    }
+   ]
+  },
+  "doc_project_advance": {
+   "table": "doc_project_advance",
+   "class": "DocProjectAdvanceDO",
+   "doc": "项目推进情况（项目档案 1:N 台账子表） <p>草稿项目随项目整表保存、非草稿项目行级直接落库；三个文本列均手工输入。",
+   "fields": [
+    {
+     "name": "batch",
+     "type": "String",
+     "comment": "项目推进情况（项目档案 1:N 台账子表） <p>草稿项目随项目整表保存、非草稿项目行级直接落库；三个文本列均手工输入。 / @TableName(\"doc_project_advance\") @Data @EqualsAndHashCode(callSuper = true) public class DocProjectAdvanceDO extends BaseDO { @TableId(t"
+    },
+    {
+     "name": "measures",
+     "type": "String",
+     "comment": "项目推进情况及过程中采取的措施"
+    },
+    {
+     "name": "problems",
+     "type": "String",
+     "comment": "存在的问题或困难"
+    },
+    {
+     "name": "nextPlan",
+     "type": "String",
+     "comment": "下一步措施及计划"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号（表单行序，最新一条按 create_time 判定）"
+    },
+    {
+     "name": "submitStatus",
+     "type": "Integer",
+     "comment": "提交状态：0=草稿（行级新增未随项目提交定稿） 1=已提交"
+    }
+   ]
+  },
+  "doc_project_budget_estimate": {
+   "table": "doc_project_budget_estimate",
+   "class": "DocProjectBudgetEstimateDO",
+   "doc": "设计概算批复及费用构成（项目档案 1:N 版本快照子表） <p>保存语义：草稿项目只维护最新一条（无则插入、有则更新）； 非草稿项目提交时与最新一条内容比对，有变化才插入新版本（详情页默认最新一条 + 历史展开）。 6 个金额字段全部手动输入。",
+   "fields": [
+    {
+     "name": "approveAmount",
+     "type": "BigDecimal",
+     "comment": "设计概算批复及费用构成（项目档案 1:N 版本快照子表） <p>保存语义：草稿项目只维护最新一条（无则插入、有则更新）； 非草稿项目提交时与最新一条内容比对，有变化才插入新版本（详情页默认最新一条 + 历史展开）。 6 个金额字段全部手动输入。 / @TableName(\"doc_project_budget_estimate\") @Data @EqualsAndHashCode(callSupe"
+    },
+    {
+     "name": "constructionCost",
+     "type": "BigDecimal",
+     "comment": "建安工程费用（万元）"
+    },
+    {
+     "name": "equipmentCost",
+     "type": "BigDecimal",
+     "comment": "设备与工器具购置费用（万元）"
+    },
+    {
+     "name": "otherCost",
+     "type": "BigDecimal",
+     "comment": "工程建设其他费（万元）"
+    },
+    {
+     "name": "reserveCost",
+     "type": "BigDecimal",
+     "comment": "预备费（万元）"
+    },
+    {
+     "name": "interestCost",
+     "type": "BigDecimal",
+     "comment": "建设期利息（万元）"
+    }
+   ]
+  },
+  "doc_project": {
+   "table": "doc_project",
+   "class": "DocProjectDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "category",
+     "type": "String",
+     "comment": "项目分类（字典: doc_project_category）"
+    },
+    {
+     "name": "constructionStatus",
+     "type": "String",
+     "comment": "开复工状态（字典: doc_project_construction_status）"
+    },
+    {
+     "name": "huaxiAmount",
+     "type": "BigDecimal",
+     "comment": "华西投资金额（万元）"
+    },
+    {
+     "name": "deptId",
+     "type": "Long",
+     "comment": "部门ID（数据权限）"
+    },
+    {
+     "name": "contractPeriod",
+     "type": "String",
+     "comment": "合同工期（文本，如：24个月）"
+    },
+    {
+     "name": "planEndDate",
+     "type": "LocalDate",
+     "comment": "计划竣工时间"
+    },
+    {
+     "name": "actualEndDate",
+     "type": "LocalDate",
+     "comment": "实际竣工时间"
+    },
+    {
+     "name": "outputReportAmountTotal",
+     "type": "BigDecimal",
+     "comment": "产值-报审金额合计（万元，按 doc_project_output_value 全部行重算）"
+    },
+    {
+     "name": "outputAuditAmountTotal",
+     "type": "BigDecimal",
+     "comment": "产值-审定金额合计（万元）"
+    },
+    {
+     "name": "outputCumulativePayableTotal",
+     "type": "BigDecimal",
+     "comment": "产值-至本期累计应付款金额合计（万元）"
+    },
+    {
+     "name": "outputCumulativePaidTotal",
+     "type": "BigDecimal",
+     "comment": "产值-累计实际已支付合计（万元）"
+    },
+    {
+     "name": "contractAmount",
+     "type": "BigDecimal",
+     "comment": "合同金额（万元）"
+    },
+    {
+     "name": "actualOutputValue",
+     "type": "BigDecimal",
+     "comment": "实际完成产值（万元）"
+    },
+    {
+     "name": "actualPayment",
+     "type": "BigDecimal",
+     "comment": "实际支付金额（万元）"
+    },
+    {
+     "name": "receivable",
+     "type": "BigDecimal",
+     "comment": "应收账款（万元）"
+    },
+    {
+     "name": "received",
+     "type": "BigDecimal",
+     "comment": "实收账款（万元）"
+    },
+    {
+     "name": "incomeContractAmount",
+     "type": "BigDecimal",
+     "comment": "收入合同额（万元）"
+    },
+    {
+     "name": "expendContractAmount",
+     "type": "BigDecimal",
+     "comment": "支出合同额（万元）"
+    },
+    {
+     "name": "currentMajorPhaseCode",
+     "type": "Integer",
+     "comment": "当前所属大阶段（doc_phase.code，只进不退；NULL 表示尚未推进）"
+    },
+    {
+     "name": "memberUserIds",
+     "type": "Set<Long>",
+     "comment": "项目成员用户 ID 数组（JSON 主存，数据范围-项目成员的数据源） 同时维护 {@code doc_project_member} 关联表（反查索引：按 user_id 拿\"我的项目IDs\"）， 双轨模式与 system_users.concurrent_dept_ids 一致。"
+    },
+    {
+     "name": "investCompletionRemark",
+     "type": "String",
+     "comment": "投资完成及款项回收情况-备注说明（表外，栏目级，随项目保存）"
+    },
+    {
+     "name": "budgetEstimateRemark",
+     "type": "String",
+     "comment": "设计概算批复及费用构成-备注说明（表外，栏目级，随项目保存）"
+    },
+    {
+     "name": "feeAuditRemark",
+     "type": "String",
+     "comment": "费用审核与款项支付情况-备注说明（表外，栏目级，随项目保存）"
+    }
+   ]
+  },
+  "doc_project_fee_audit": {
+   "table": "doc_project_fee_audit",
+   "class": "DocProjectFeeAuditDO",
+   "doc": "费用审核与款项支付情况（项目档案 1:N 台账子表） <p>交互与\"投资完成及款项回收情况\"一致：草稿随项目整表保存、非草稿行级 CRUD。 全部单元格手动输入（不做自动填充）；现场照片存相对路径逗号串（与产值子表存储格式一致）。",
+   "fields": [
+    {
+     "name": "batch",
+     "type": "String",
+     "comment": "费用审核与款项支付情况（项目档案 1:N 台账子表） <p>交互与\"投资完成及款项回收情况\"一致：草稿随项目整表保存、非草稿行级 CRUD。 全部单元格手动输入（不做自动填充）；现场照片存相对路径逗号串（与产值子表存储格式一致）。 / @TableName(\"doc_project_fee_audit\") @Data @EqualsAndHashCode(callSuper = true) pub"
+    },
+    {
+     "name": "feeType",
+     "type": "String",
+     "comment": "费用类别（字典 doc_fee_category，存 label）"
+    },
+    {
+     "name": "feePeriod",
+     "type": "String",
+     "comment": "费用期数（自由文本，如：2026年8月产值（第6期））"
+    },
+    {
+     "name": "applyAmount",
+     "type": "BigDecimal",
+     "comment": "本期报审产值/申请金额（万元）"
+    },
+    {
+     "name": "approvedAmount",
+     "type": "BigDecimal",
+     "comment": "本期审定产值/核定金额（万元）"
+    },
+    {
+     "name": "approvedCumAmount",
+     "type": "BigDecimal",
+     "comment": "至本期累计审定产值/核定金额（万元）"
+    },
+    {
+     "name": "payableAmount",
+     "type": "BigDecimal",
+     "comment": "本期应付款金额（万元）"
+    },
+    {
+     "name": "payableCumAmount",
+     "type": "BigDecimal",
+     "comment": "累计应付款金额（万元）"
+    },
+    {
+     "name": "paidCumAmount",
+     "type": "BigDecimal",
+     "comment": "至本期累计已支付金额（万元）"
+    },
+    {
+     "name": "progress",
+     "type": "String",
+     "comment": "本月形象进度（文本说明）"
+    },
+    {
+     "name": "attachmentFile",
+     "type": "String",
+     "comment": "现场照片（相对路径逗号分隔）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号（表单行序，最新一批按 create_time 判定）"
+    },
+    {
+     "name": "submitStatus",
+     "type": "Integer",
+     "comment": "提交状态：0=草稿（行级新增未随项目提交定稿） 1=已提交"
+    }
+   ]
+  },
+  "doc_project_image_progress": {
+   "table": "doc_project_image_progress",
+   "class": "DocProjectImageProgressDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "siteCompletionRatio",
+     "type": "BigDecimal",
+     "comment": "现场完成比例（%）"
+    },
+    {
+     "name": "phaseCode",
+     "type": "String",
+     "comment": "项目阶段编码（来自 doc_phase.code）"
+    },
+    {
+     "name": "phaseName",
+     "type": "String",
+     "comment": "项目阶段名称（冗余，便于列表展示）"
+    },
+    {
+     "name": "actualProgress",
+     "type": "BigDecimal",
+     "comment": "实际完成进度（%）"
+    },
+    {
+     "name": "attachmentFile",
+     "type": "String",
+     "comment": "附件文件URL"
+    }
+   ]
+  },
+  "doc_project_invest_completion": {
+   "table": "doc_project_invest_completion",
+   "class": "DocProjectInvestCompletionDO",
+   "doc": "投资完成及款项回收情况（项目档案 1:N 台账子表） <p>与统计分析模块的\"投资完成台账\"(investment-completion) 是不同实体： 该表挂在项目档案下，草稿项目随项目整表保存、非草稿项目行级直接落库； 全部金额列手工输入，不做自动填充。",
+   "fields": [
+    {
+     "name": "batch",
+     "type": "String",
+     "comment": "投资完成及款项回收情况（项目档案 1:N 台账子表） <p>与统计分析模块的\"投资完成台账\"(investment-completion) 是不同实体： 该表挂在项目档案下，草稿项目随项目整表保存、非草稿项目行级直接落库； 全部金额列手工输入，不做自动填充。 / @TableName(\"doc_project_invest_completion\") @Data @EqualsAndHashCode"
+    },
+    {
+     "name": "monthCompleteInvest",
+     "type": "BigDecimal",
+     "comment": "本月完成投资（万元）"
+    },
+    {
+     "name": "cumulativeCompleteInvest",
+     "type": "BigDecimal",
+     "comment": "累计完成投资（万元）"
+    },
+    {
+     "name": "monthReceivablePrincipal",
+     "type": "BigDecimal",
+     "comment": "本月应收投资本金（万元）"
+    },
+    {
+     "name": "cumulativeReceivablePrincipal",
+     "type": "BigDecimal",
+     "comment": "累计应收投资本金（万元）"
+    },
+    {
+     "name": "monthPrincipalRecovered",
+     "type": "BigDecimal",
+     "comment": "本月投资本金回款额（万元）"
+    },
+    {
+     "name": "cumulativePrincipalRecovered",
+     "type": "BigDecimal",
+     "comment": "累计投资本金回款额（万元）"
+    },
+    {
+     "name": "monthBankLoan",
+     "type": "BigDecimal",
+     "comment": "本月银行贷款使用（万元）"
+    },
+    {
+     "name": "monthShareholderLoan",
+     "type": "BigDecimal",
+     "comment": "本月股东借款使用（万元）"
+    },
+    {
+     "name": "monthCapital",
+     "type": "BigDecimal",
+     "comment": "本月资本金使用（万元）"
+    },
+    {
+     "name": "cumulativeDividend",
+     "type": "BigDecimal",
+     "comment": "截止本月累计分红（万元）"
+    },
+    {
+     "name": "monthDividend",
+     "type": "BigDecimal",
+     "comment": "本月分红（万元）"
+    },
+    {
+     "name": "monthReceivableInterest",
+     "type": "BigDecimal",
+     "comment": "本月应收利息（万元）"
+    },
+    {
+     "name": "monthReceivedInterest",
+     "type": "BigDecimal",
+     "comment": "本月实收利息（万元）"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号（表单行序，最新一条按 create_time 判定）"
+    },
+    {
+     "name": "submitStatus",
+     "type": "Integer",
+     "comment": "提交状态：0=草稿（行级新增未随项目提交定稿） 1=已提交"
+    }
+   ]
+  },
+  "doc_project_member": {
+   "table": "doc_project_member",
+   "class": "DocProjectMemberDO",
+   "doc": "项目成员关联 DO 镜像 {@code system_user_concurrent_dept} 的设计：与 {@code doc_project.member_user_ids} 双写， 用于数据范围-项目成员的反查（按 user_id 走索引拿\"我的项目IDs\"）。",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "项目成员关联 DO 镜像 {@code system_user_concurrent_dept} 的设计：与 {@code doc_project.member_user_ids} 双写， 用于数据范围-项目成员的反查（按 user_id 走索引拿\"我的项目IDs\"）。 / @TableName(\"doc_project_member\") @Data @EqualsAndHashCode(call"
+    },
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "项目 ID 关联 {@link DocProjectDO#getId()}"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "成员用户 ID 关联 system_users.id"
+    }
+   ]
+  },
+  "doc_project_output_value": {
+   "table": "doc_project_output_value",
+   "class": "DocProjectOutputValueDO",
+   "doc": "产值与进度款项情况（项目档案 1:N 台账子表） <p>\"形象进度\"字段以本表为准（不复用旧 doc_project_image_progress， 历史数据后续人工迁移）；与统计分析模块的\"产值与工程款支付台账\"(output-value) 是不同实体。 全部金额列手工输入（含 C=A-B 列），不做自动填充；4 个合计持久化在 doc_project 主表。",
+   "fields": [
+    {
+     "name": "batch",
+     "type": "String",
+     "comment": "产值与进度款项情况（项目档案 1:N 台账子表） <p>\"形象进度\"字段以本表为准（不复用旧 doc_project_image_progress， 历史数据后续人工迁移）；与统计分析模块的\"产值与工程款支付台账\"(output-value) 是不同实体。 全部金额列手工输入（含 C=A-B 列），不做自动填充；4 个合计持久化在 doc_project 主表。 / @TableName(\"doc"
+    },
+    {
+     "name": "imageProgress",
+     "type": "String",
+     "comment": "本月完成形象进度情况-形象进度（文本说明）"
+    },
+    {
+     "name": "attachmentFile",
+     "type": "String",
+     "comment": "本月完成形象进度情况-附件（现场照片，相对路径逗号分隔）"
+    },
+    {
+     "name": "reportDate",
+     "type": "LocalDate",
+     "comment": "报审产值-报审日期"
+    },
+    {
+     "name": "reportAmount",
+     "type": "BigDecimal",
+     "comment": "报审产值-报审金额（万元）"
+    },
+    {
+     "name": "cumulativeReportAmount",
+     "type": "BigDecimal",
+     "comment": "报审产值-至本期累计报审产值（万元）"
+    },
+    {
+     "name": "auditDate",
+     "type": "LocalDate",
+     "comment": "审定产值-审定日期"
+    },
+    {
+     "name": "auditAmount",
+     "type": "BigDecimal",
+     "comment": "审定产值-审定金额（万元）"
+    },
+    {
+     "name": "cumulativeAuditAmount",
+     "type": "BigDecimal",
+     "comment": "审定产值-至本期累计审定产值（万元）"
+    },
+    {
+     "name": "payableAmount",
+     "type": "BigDecimal",
+     "comment": "按合同约定付款情况-本期应付款金额A（万元）"
+    },
+    {
+     "name": "deductAmount",
+     "type": "BigDecimal",
+     "comment": "按合同约定付款情况-本期应扣回款项金额B（万元）"
+    },
+    {
+     "name": "netPayableAmount",
+     "type": "BigDecimal",
+     "comment": "按合同约定付款情况-扣回预付款后应付金额C=A-B（万元，手填不联动）"
+    },
+    {
+     "name": "cumulativePayableAmount",
+     "type": "BigDecimal",
+     "comment": "按合同约定付款情况-至本期累计应付款金额（万元）"
+    },
+    {
+     "name": "cumulativePaidAmount",
+     "type": "BigDecimal",
+     "comment": "按合同约定付款情况-累计实际已支付金额（万元）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号（表单行序，最新一条按 create_time 判定）"
+    }
+   ]
+  },
+  "doc_project_payment_progress": {
+   "table": "doc_project_payment_progress",
+   "class": "DocProjectPaymentProgressDO",
+   "doc": "项目收款进度明细（项目档案 1:N 子表） <p>与统计分析模块的 doc_contract_receipt 是不同实体： <ul> <li>该表随项目档案一起 CRUD，不发起流程；</li> <li>contract-receipt 是台账批次维度，含状态/流程实例ID/合计冗余。</li> </ul>",
+   "fields": [
+    {
+     "name": "reachedPaymentNode",
+     "type": "Integer",
+     "comment": "项目收款进度明细（项目档案 1:N 子表） <p>与统计分析模块的 doc_contract_receipt 是不同实体： <ul> <li>该表随项目档案一起 CRUD，不发起流程；</li> <li>contract-receipt 是台账批次维度，含状态/流程实例ID/合计冗余。</li> </ul> / @TableName(\"doc_project_payment_progress\") "
+    },
+    {
+     "name": "paymentRatio",
+     "type": "String",
+     "comment": "合同约定付款比例（手填，如 \"30%\"）"
+    },
+    {
+     "name": "settlementAmount",
+     "type": "BigDecimal",
+     "comment": "本次结算金额（万元）"
+    },
+    {
+     "name": "receiptAmount",
+     "type": "BigDecimal",
+     "comment": "本次收款金额（万元）"
+    },
+    {
+     "name": "arrearsAmount",
+     "type": "BigDecimal",
+     "comment": "本次欠款金额（万元，手填不联动）"
+    },
+    {
+     "name": "sortNo",
+     "type": "Integer",
+     "comment": "排序号（从 1 起）"
+    }
+   ]
+  },
+  "doc_recommend_assignee": {
+   "table": "doc_recommend_assignee",
+   "class": "RecommendAssigneeDO",
+   "doc": "智能推荐审核人 - 审核人参与流水 DO 每次「审批节点完成」时，把该节点全部审核人（被选 + 实际审）各写入一行。 纯流水 append-only，去重在查询时 GROUP BY user 聚合完成。 字段时间取自各自 hi_task 行（selected_at=create_time，acted_at=end_time），非采集时刻。",
+   "fields": []
+  },
+  "doc_sub_phase_stats": {
+   "table": "doc_sub_phase_stats",
+   "class": "DocSubPhaseStatsDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "entryTotal",
+     "type": "Integer",
+     "comment": "条目维度分母（排除待上传 -1 / 草稿 0 / 驳回 3 后的 entry 等效单位数）"
+    },
+    {
+     "name": "uploadedCount",
+     "type": "Integer",
+     "comment": "条目维度分子：已取得(not_applicable=0)且file_url非空且audit_status=2(审核通过)"
+    },
+    {
+     "name": "missingCount",
+     "type": "Integer",
+     "comment": "tag：空缺数量（not_applicable=1 且 audit_status IN (1,2)，审批中或已通过）"
+    },
+    {
+     "name": "notInvolvedCount",
+     "type": "Integer",
+     "comment": "tag：不涉及数量（not_applicable=2 且 audit_status IN (1,2)，审批中或已通过）"
+    },
+    {
+     "name": "otherCount",
+     "type": "Integer",
+     "comment": "tag：其他数量（not_applicable=3 且 audit_status IN (1,2)，审批中或已通过）"
+    }
+   ]
+  },
+  "doc_template_phase": {
+   "table": "doc_template_phase",
+   "class": "DocTemplatePhaseDO",
+   "doc": "",
+   "fields": []
+  },
+  "doc_visa_change_detail": {
+   "table": "doc_visa_change_detail",
+   "class": "VisaChangeDetailDO",
+   "doc": "签证变更台账明细行",
+   "fields": [
+    {
+     "name": "scopeType",
+     "type": "String",
+     "comment": "签证变更台账明细行 / @TableName(\"doc_visa_change_detail\") @Data @EqualsAndHashCode(callSuper = true) public class VisaChangeDetailDO extends BaseDO { @TableId(type = IdType.ASSIGN_ID) private Long id; private "
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "名称"
+    },
+    {
+     "name": "content",
+     "type": "String",
+     "comment": "内容"
+    },
+    {
+     "name": "submitDate",
+     "type": "LocalDate",
+     "comment": "报送时间"
+    },
+    {
+     "name": "submitAmount",
+     "type": "BigDecimal",
+     "comment": "报送金额（万元）"
+    },
+    {
+     "name": "approveDate",
+     "type": "LocalDate",
+     "comment": "核定时间"
+    },
+    {
+     "name": "approveAmount",
+     "type": "BigDecimal",
+     "comment": "核定金额（万元）"
+    },
+    {
+     "name": "unapprovedAmount",
+     "type": "BigDecimal",
+     "comment": "未核定金额（万元，前端算=报送-核定，后端原样存）"
+    },
+    {
+     "name": "reason",
+     "type": "String",
+     "comment": "未核定原因"
+    },
+    {
+     "name": "fileUrls",
+     "type": "String",
+     "comment": "附件URL（单文件）"
+    }
+   ]
+  },
+  "doc_visa_change": {
+   "table": "doc_visa_change",
+   "class": "VisaChangeDO",
+   "doc": "签证变更台账主表",
+   "fields": [
+    {
+     "name": "submitTotal",
+     "type": "BigDecimal",
+     "comment": "签证变更台账主表 / @TableName(\"doc_visa_change\") @Data @EqualsAndHashCode(callSuper = true) public class VisaChangeDO extends BaseDO { @TableId(type = IdType.ASSIGN_ID) private Long id; private Long projectId"
+    },
+    {
+     "name": "approvedTotal",
+     "type": "BigDecimal",
+     "comment": "核定金额合计（万元，子表 SUM 回写）"
+    },
+    {
+     "name": "unapprovedTotal",
+     "type": "BigDecimal",
+     "comment": "未核定金额合计（万元，子表 SUM 回写）"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0-草稿 1-审批中 2-已通过 3-已驳回"
+    }
+   ]
+  },
+  "doc_warning": {
+   "table": "doc_warning",
+   "class": "WarningDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "warningCode",
+     "type": "String",
+     "comment": "预警编号"
+    },
+    {
+     "name": "projectId",
+     "type": "Long",
+     "comment": "项目ID"
+    },
+    {
+     "name": "projectName",
+     "type": "String",
+     "comment": "项目名称"
+    },
+    {
+     "name": "warningType",
+     "type": "String",
+     "comment": "预警类型（字典 doc_warning_type）"
+    },
+    {
+     "name": "riskLevel",
+     "type": "String",
+     "comment": "风险等级（字典 doc_warning_risk_level）"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "预警状态（字典 doc_warning_status）"
+    },
+    {
+     "name": "triggerReason",
+     "type": "String",
+     "comment": "触发原因"
+    },
+    {
+     "name": "responsibleUserId",
+     "type": "Long",
+     "comment": "责任人用户ID"
+    },
+    {
+     "name": "deptId",
+     "type": "Long",
+     "comment": "所属部门ID"
+    },
+    {
+     "name": "extraInfo",
+     "type": "String",
+     "comment": "扩展属性JSON"
+    },
+    {
+     "name": "ruleId",
+     "type": "Long",
+     "comment": "关联的预警规则ID"
+    }
+   ]
+  },
+  "doc_warning_event": {
+   "table": "doc_warning_event",
+   "class": "WarningEventDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "warningId",
+     "type": "Long",
+     "comment": "关联预警ID"
+    },
+    {
+     "name": "eventType",
+     "type": "Integer",
+     "comment": "事件类型（字典 doc_warning_event_type）"
+    },
+    {
+     "name": "eventTitle",
+     "type": "String",
+     "comment": "事件标题"
+    },
+    {
+     "name": "eventDesc",
+     "type": "String",
+     "comment": "事件描述（即预警说明内容）"
+    },
+    {
+     "name": "riskLevel",
+     "type": "String",
+     "comment": "关联风险等级（升级事件用）"
+    },
+    {
+     "name": "attachmentUrls",
+     "type": "String",
+     "comment": "附件URL（JSON数组）"
+    }
+   ]
+  },
+  "doc_warning_rule": {
+   "table": "doc_warning_rule",
+   "class": "WarningRuleDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "规则名称"
+    },
+    {
+     "name": "warningType",
+     "type": "String",
+     "comment": "预警类型编码（字典 doc_warning_type）"
+    },
+    {
+     "name": "calcType",
+     "type": "String",
+     "comment": "计算类型（字典 doc_warning_calc_type）：day-天 percent-百分比 other-其他"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0-草稿 1-已发布 2-已停用"
+    },
+    {
+     "name": "remindDays",
+     "type": "String",
+     "comment": "提醒阈值（天/百分比/小数，按 calc_type 解释）"
+    },
+    {
+     "name": "lowRiskDays",
+     "type": "String",
+     "comment": "低风险阈值（天/百分比/小数，按 calc_type 解释）"
+    },
+    {
+     "name": "mediumRiskDays",
+     "type": "String",
+     "comment": "中风险阈值（天/百分比/小数，按 calc_type 解释）"
+    },
+    {
+     "name": "highRiskDays",
+     "type": "String",
+     "comment": "高风险阈值（天/百分比/小数，按 calc_type 解释）"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  }
+ },
+ "yudao-module-messagecenter": {},
+ "yudao-module-mini": {},
+ "yudao-module-taskcenter": {
+  "task_category": {
+   "table": "task_category",
+   "class": "TaskCategoryDO",
+   "doc": "",
+   "fields": []
+  },
+  "hi_process_instance": {
+   "table": "hi_process_instance",
+   "class": "HiProcessInstanceDO",
+   "doc": "",
+   "fields": []
+  },
+  "ru_process_instance": {
+   "table": "ru_process_instance",
+   "class": "RuProcessInstanceDO",
+   "doc": "",
+   "fields": []
+  },
+  "hi_task": {
+   "table": "hi_task",
+   "class": "HiTaskDO",
+   "doc": "",
+   "fields": []
+  },
+  "hi_task_node": {
+   "table": "hi_task_node",
+   "class": "HiTaskNodeDO",
+   "doc": "",
+   "fields": []
+  },
+  "hi_task_variable": {
+   "table": "hi_task_variable",
+   "class": "HiTaskVariableDO",
+   "doc": "",
+   "fields": []
+  },
+  "ru_task": {
+   "table": "ru_task",
+   "class": "RuTaskDO",
+   "doc": "",
+   "fields": []
+  },
+  "ru_task_node": {
+   "table": "ru_task_node",
+   "class": "RuTaskNodeDO",
+   "doc": "",
+   "fields": []
+  },
+  "ru_task_variable": {
+   "table": "ru_task_variable",
+   "class": "RuTaskVariableDO",
+   "doc": "",
+   "fields": []
+  }
+ },
+ "yudao-module-system": {
+  "system_dept": {
+   "table": "system_dept",
+   "class": "DeptDO",
+   "doc": "部门表 @author ruoyi @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "部门表 @author ruoyi @author 芋道源码 / @TableName(\"system_dept\") @Data @EqualsAndHashCode(callSuper = true) public class DeptDO extends TenantBaseDO { public static final Long PARENT_ID_ROOT = 0L; /** 部门ID"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "部门名称"
+    },
+    {
+     "name": "parentId",
+     "type": "Long",
+     "comment": "父部门ID 关联 {@link #id}"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "显示顺序"
+    },
+    {
+     "name": "leaderUserId",
+     "type": "Long",
+     "comment": "负责人 关联 {@link AdminUserDO#getId()}"
+    },
+    {
+     "name": "phone",
+     "type": "String",
+     "comment": "联系电话"
+    },
+    {
+     "name": "email",
+     "type": "String",
+     "comment": "邮箱"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "部门状态 枚举 {@link CommonStatusEnum}"
+    }
+   ]
+  },
+  "system_post": {
+   "table": "system_post",
+   "class": "PostDO",
+   "doc": "岗位表 @author ruoyi",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "岗位表 @author ruoyi / @TableName(\"system_post\") @Data @EqualsAndHashCode(callSuper = true) public class PostDO extends BaseDO { /** 岗位序号"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "岗位名称"
+    },
+    {
+     "name": "code",
+     "type": "String",
+     "comment": "岗位编码"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "岗位排序"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "system_user_concurrent_dept": {
+   "table": "system_user_concurrent_dept",
+   "class": "UserConcurrentDeptDO",
+   "doc": "用户和兼职部门关联 DO 镜像 {@link UserPostDO} 的设计：与 {@code system_users.concurrent_dept_ids} 双写， 用于“通过组织找用户”的检索场景。兼职部门不参与数据权限。",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "用户和兼职部门关联 DO 镜像 {@link UserPostDO} 的设计：与 {@code system_users.concurrent_dept_ids} 双写， 用于“通过组织找用户”的检索场景。兼职部门不参与数据权限。 / @TableName(\"system_user_concurrent_dept\") @Data @EqualsAndHashCode(callSuper = tru"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "用户 ID 关联 {@link AdminUserDO#getId()}"
+    },
+    {
+     "name": "deptId",
+     "type": "Long",
+     "comment": "兼职部门 ID 关联 {@link DeptDO#getId()}"
+    }
+   ]
+  },
+  "system_user_post": {
+   "table": "system_user_post",
+   "class": "UserPostDO",
+   "doc": "用户和岗位关联 @author ruoyi",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "用户和岗位关联 @author ruoyi / @TableName(\"system_user_post\") @Data @EqualsAndHashCode(callSuper = true) public class UserPostDO extends BaseDO { /** 自增主键"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "用户 ID 关联 {@link AdminUserDO#getId()}"
+    },
+    {
+     "name": "postId",
+     "type": "Long",
+     "comment": "角色 ID 关联 {@link PostDO#getId()}"
+    }
+   ]
+  },
+  "system_dict_data": {
+   "table": "system_dict_data",
+   "class": "DictDataDO",
+   "doc": "字典数据表 @author ruoyi",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "字典数据表 @author ruoyi / @TableName(\"system_dict_data\") @Data @EqualsAndHashCode(callSuper = true) @TenantIgnore public class DictDataDO extends BaseDO { /** 字典数据编号"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "字典排序"
+    },
+    {
+     "name": "label",
+     "type": "String",
+     "comment": "字典标签"
+    },
+    {
+     "name": "value",
+     "type": "String",
+     "comment": "字典值"
+    },
+    {
+     "name": "dictType",
+     "type": "String",
+     "comment": "字典类型 冗余 {@link DictDataDO#getDictType()}"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "colorType",
+     "type": "String",
+     "comment": "颜色类型 对应到 element-ui 为 default、primary、success、info、warning、danger"
+    },
+    {
+     "name": "cssClass",
+     "type": "String",
+     "comment": "css 样式"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "system_dict_type": {
+   "table": "system_dict_type",
+   "class": "DictTypeDO",
+   "doc": "字典类型表 @author ruoyi",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "字典类型表 @author ruoyi / @TableName(\"system_dict_type\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstructor @TenantIgnore public class D"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "字典名称"
+    },
+    {
+     "name": "type",
+     "type": "String",
+     "comment": "字典类型"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "deletedTime",
+     "type": "LocalDateTime",
+     "comment": "删除时间"
+    }
+   ]
+  },
+  "system_image": {
+   "table": "system_image",
+   "class": "ImageDO",
+   "doc": "图片管理 DO 通用图片管理（轮播图/背景图/商品图片等），靠 image_type 字段 + 字典区分类型。",
+   "fields": [
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "图片管理 DO 通用图片管理（轮播图/背景图/商品图片等），靠 image_type 字段 + 字典区分类型。 / @TableName(\"system_image\") @Data @EqualsAndHashCode(callSuper = true) public class ImageDO extends BaseDO { @TableId(type = IdType.ASSIGN_ID) "
+    },
+    {
+     "name": "imageType",
+     "type": "String",
+     "comment": "图片类型（字典 system_image_type）：carousel/background/product"
+    },
+    {
+     "name": "imageUrl",
+     "type": "String",
+     "comment": "图片 URL（完整可预览地址，来自 /infra/file/upload-respVO）"
+    },
+    {
+     "name": "linkType",
+     "type": "Integer",
+     "comment": "点击行为：0-无 1-外链 2-小程序页面"
+    },
+    {
+     "name": "linkUrl",
+     "type": "String",
+     "comment": "点击跳转地址（linkType > 0 时生效）"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序号（升序，越小越靠前）"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态：0-禁用 1-启用"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "system_login_log": {
+   "table": "system_login_log",
+   "class": "LoginLogDO",
+   "doc": "登录日志表 注意，包括登录和登出两种行为 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "登录日志表 注意，包括登录和登出两种行为 @author 芋道源码 / @TableName(\"system_login_log\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) public class LoginLogDO extends BaseDO { /** 日志主键"
+    },
+    {
+     "name": "logType",
+     "type": "Integer",
+     "comment": "日志类型 枚举 {@link LoginLogTypeEnum}"
+    },
+    {
+     "name": "traceId",
+     "type": "String",
+     "comment": "链路追踪编号"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "用户编号"
+    },
+    {
+     "name": "userType",
+     "type": "Integer",
+     "comment": "用户类型 枚举 {@link UserTypeEnum}"
+    },
+    {
+     "name": "username",
+     "type": "String",
+     "comment": "用户账号 冗余，因为账号可以变更"
+    },
+    {
+     "name": "result",
+     "type": "Integer",
+     "comment": "登录结果 枚举 {@link LoginResultEnum}"
+    },
+    {
+     "name": "userIp",
+     "type": "String",
+     "comment": "用户 IP"
+    },
+    {
+     "name": "userAgent",
+     "type": "String",
+     "comment": "浏览器 UA"
+    }
+   ]
+  },
+  "system_operate_log": {
+   "table": "system_operate_log",
+   "class": "OperateLogDO",
+   "doc": "操作日志表 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "操作日志表 @author 芋道源码 / @TableName(value = \"system_operate_log\", autoResultMap = true) @Data public class OperateLogDO extends BaseDO { /** 日志主键"
+    },
+    {
+     "name": "traceId",
+     "type": "String",
+     "comment": "链路追踪编号 一般来说，通过链路追踪编号，可以将访问日志，错误日志，链路追踪日志，logger 打印日志等，结合在一起，从而进行排错。"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "用户编号 关联 MemberUserDO 的 id 属性，或者 AdminUserDO 的 id 属性"
+    },
+    {
+     "name": "userType",
+     "type": "Integer",
+     "comment": "用户类型 关联 {@link  UserTypeEnum}"
+    },
+    {
+     "name": "type",
+     "type": "String",
+     "comment": "操作模块类型"
+    },
+    {
+     "name": "subType",
+     "type": "String",
+     "comment": "操作名"
+    },
+    {
+     "name": "bizId",
+     "type": "Long",
+     "comment": "操作模块业务编号"
+    },
+    {
+     "name": "action",
+     "type": "String",
+     "comment": "日志内容，记录整个操作的明细 例如说，修改编号为 1 的用户信息，将性别从男改成女，将姓名从芋道改成源码。"
+    },
+    {
+     "name": "extra",
+     "type": "String",
+     "comment": "拓展字段，有些复杂的业务，需要记录一些字段 ( JSON 格式 ) 例如说，记录订单编号，{ orderId: \"1\"}"
+    },
+    {
+     "name": "requestMethod",
+     "type": "String",
+     "comment": "请求方法名"
+    },
+    {
+     "name": "requestUrl",
+     "type": "String",
+     "comment": "请求地址"
+    },
+    {
+     "name": "userIp",
+     "type": "String",
+     "comment": "用户 IP"
+    },
+    {
+     "name": "userAgent",
+     "type": "String",
+     "comment": "浏览器 UA"
+    }
+   ]
+  },
+  "system_mail_account": {
+   "table": "system_mail_account",
+   "class": "MailAccountDO",
+   "doc": "邮箱账号 DO 用途：配置发送邮箱的账号 @author wangjingyi @since 2022-03-21",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "邮箱账号 DO 用途：配置发送邮箱的账号 @author wangjingyi @since 2022-03-21 / @TableName(value = \"system_mail_account\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) @TenantIgnore public class MailAc"
+    },
+    {
+     "name": "mail",
+     "type": "String",
+     "comment": "邮箱"
+    },
+    {
+     "name": "username",
+     "type": "String",
+     "comment": "用户名"
+    },
+    {
+     "name": "password",
+     "type": "String",
+     "comment": "密码"
+    },
+    {
+     "name": "host",
+     "type": "String",
+     "comment": "SMTP 服务器域名"
+    },
+    {
+     "name": "port",
+     "type": "Integer",
+     "comment": "SMTP 服务器端口"
+    },
+    {
+     "name": "sslEnable",
+     "type": "Boolean",
+     "comment": "是否开启 SSL"
+    },
+    {
+     "name": "starttlsEnable",
+     "type": "Boolean",
+     "comment": "是否开启 STARTTLS"
+    }
+   ]
+  },
+  "system_mail_log": {
+   "table": "system_mail_log",
+   "class": "MailLogDO",
+   "doc": "邮箱日志 DO 记录每一次邮件的发送 @author wangjingyi @since 2022-03-21",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "邮箱日志 DO 记录每一次邮件的发送 @author wangjingyi @since 2022-03-21 / @TableName(value = \"system_mail_log\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @A"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "用户编码"
+    },
+    {
+     "name": "userType",
+     "type": "Integer",
+     "comment": "用户类型 枚举 {@link UserTypeEnum}"
+    },
+    {
+     "name": "toMails",
+     "type": "List<String>",
+     "comment": "接收邮箱地址"
+    },
+    {
+     "name": "ccMails",
+     "type": "List<String>",
+     "comment": "接收邮箱地址"
+    },
+    {
+     "name": "bccMails",
+     "type": "List<String>",
+     "comment": "密送邮箱地址"
+    },
+    {
+     "name": "accountId",
+     "type": "Long",
+     "comment": "邮箱账号编号 关联 {@link MailAccountDO#getId()}"
+    },
+    {
+     "name": "fromMail",
+     "type": "String",
+     "comment": "发送邮箱地址 冗余 {@link MailAccountDO#getMail()}"
+    },
+    {
+     "name": "templateId",
+     "type": "Long",
+     "comment": "模版编号 关联 {@link MailTemplateDO#getId()}"
+    },
+    {
+     "name": "templateCode",
+     "type": "String",
+     "comment": "模版编码 冗余 {@link MailTemplateDO#getCode()}"
+    },
+    {
+     "name": "templateNickname",
+     "type": "String",
+     "comment": "模版发送人名称 冗余 {@link MailTemplateDO#getNickname()}"
+    },
+    {
+     "name": "templateTitle",
+     "type": "String",
+     "comment": "模版标题"
+    },
+    {
+     "name": "templateContent",
+     "type": "String",
+     "comment": "模版内容 基于 {@link MailTemplateDO#getContent()} 格式化后的内容"
+    },
+    {
+     "name": "sendStatus",
+     "type": "Integer",
+     "comment": "模版参数 基于 {@link MailTemplateDO#getParams()} 输入后的参数 / @TableField(typeHandler = JacksonTypeHandler.class) private Map<String, Object> templateParams; // ========= 发送相关字段 ========= /** 发送状态 枚举 {@link Mai"
+    },
+    {
+     "name": "sendTime",
+     "type": "LocalDateTime",
+     "comment": "发送时间"
+    },
+    {
+     "name": "sendMessageId",
+     "type": "String",
+     "comment": "发送返回的消息 ID"
+    },
+    {
+     "name": "sendException",
+     "type": "String",
+     "comment": "发送异常"
+    }
+   ]
+  },
+  "system_mail_template": {
+   "table": "system_mail_template",
+   "class": "MailTemplateDO",
+   "doc": "邮件模版 DO @author wangjingyi @since 2022-03-21",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "邮件模版 DO @author wangjingyi @since 2022-03-21 / @TableName(value = \"system_mail_template\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) @TenantIgnore public class MailTemplateDO ext"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "模版名称"
+    },
+    {
+     "name": "code",
+     "type": "String",
+     "comment": "模版编号"
+    },
+    {
+     "name": "accountId",
+     "type": "Long",
+     "comment": "发送的邮箱账号编号 关联 {@link MailAccountDO#getId()}"
+    },
+    {
+     "name": "nickname",
+     "type": "String",
+     "comment": "发送人名称"
+    },
+    {
+     "name": "title",
+     "type": "String",
+     "comment": "标题"
+    },
+    {
+     "name": "content",
+     "type": "String",
+     "comment": "内容"
+    },
+    {
+     "name": "params",
+     "type": "List<String>",
+     "comment": "参数数组(自动根据内容生成)"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "system_notice": {
+   "table": "system_notice",
+   "class": "NoticeDO",
+   "doc": "通知公告表 @author ruoyi",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "通知公告表 @author ruoyi / @TableName(\"system_notice\") @Data @EqualsAndHashCode(callSuper = true) public class NoticeDO extends BaseDO { /** 公告ID"
+    },
+    {
+     "name": "title",
+     "type": "String",
+     "comment": "公告标题"
+    },
+    {
+     "name": "type",
+     "type": "Integer",
+     "comment": "公告类型 枚举 {@link NoticeTypeEnum}"
+    },
+    {
+     "name": "content",
+     "type": "String",
+     "comment": "公告内容"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "公告状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "fileUrls",
+     "type": "String",
+     "comment": "附件 URL（CSV, 相对路径 /admin-api/infra/file/{configId}/get/{path}，最多 5 个）"
+    }
+   ]
+  },
+  "system_notify_message": {
+   "table": "system_notify_message",
+   "class": "NotifyMessageDO",
+   "doc": "站内信 DO @author xrcoder",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "站内信 DO @author xrcoder / @TableName(value = \"system_notify_message\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsCo"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "用户编号 关联 MemberUserDO 的 id 字段、或者 AdminUserDO 的 id 字段"
+    },
+    {
+     "name": "userType",
+     "type": "Integer",
+     "comment": "用户类型 枚举 {@link UserTypeEnum}"
+    },
+    {
+     "name": "templateId",
+     "type": "Long",
+     "comment": "模版编号 关联 {@link NotifyTemplateDO#getId()}"
+    },
+    {
+     "name": "templateCode",
+     "type": "String",
+     "comment": "模版编码 关联 {@link NotifyTemplateDO#getCode()}"
+    },
+    {
+     "name": "templateType",
+     "type": "Integer",
+     "comment": "模版类型 冗余 {@link NotifyTemplateDO#getType()}"
+    },
+    {
+     "name": "templateNickname",
+     "type": "String",
+     "comment": "模版发送人名称 冗余 {@link NotifyTemplateDO#getNickname()}"
+    },
+    {
+     "name": "templateContent",
+     "type": "String",
+     "comment": "模版内容 基于 {@link NotifyTemplateDO#getContent()} 格式化后的内容"
+    },
+    {
+     "name": "readStatus",
+     "type": "Boolean",
+     "comment": "模版参数 基于 {@link NotifyTemplateDO#getParams()} 输入后的参数 / @TableField(typeHandler = JacksonTypeHandler.class) private Map<String, Object> templateParams; // ========= 读取相关字段 ========= /** 是否已读"
+    },
+    {
+     "name": "readTime",
+     "type": "LocalDateTime",
+     "comment": "阅读时间"
+    }
+   ]
+  },
+  "system_notify_template": {
+   "table": "system_notify_template",
+   "class": "NotifyTemplateDO",
+   "doc": "站内信模版 DO @author xrcoder",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "站内信模版 DO @author xrcoder / @TableName(value = \"system_notify_template\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArg"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "模版名称"
+    },
+    {
+     "name": "code",
+     "type": "String",
+     "comment": "模版编码"
+    },
+    {
+     "name": "type",
+     "type": "Integer",
+     "comment": "模版类型 对应 system_notify_template_type 字典"
+    },
+    {
+     "name": "nickname",
+     "type": "String",
+     "comment": "发送人名称"
+    },
+    {
+     "name": "content",
+     "type": "String",
+     "comment": "模版内容"
+    },
+    {
+     "name": "params",
+     "type": "List<String>",
+     "comment": "参数数组"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "system_oauth2_access_token": {
+   "table": "system_oauth2_access_token",
+   "class": "OAuth2AccessTokenDO",
+   "doc": "OAuth2 访问令牌 DO 如下字段，暂时未使用，暂时不支持： user_name、authentication（用户信息） @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "OAuth2 访问令牌 DO 如下字段，暂时未使用，暂时不支持： user_name、authentication（用户信息） @author 芋道源码 / @TableName(value = \"system_oauth2_access_token\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) public "
+    },
+    {
+     "name": "accessToken",
+     "type": "String",
+     "comment": "访问令牌"
+    },
+    {
+     "name": "refreshToken",
+     "type": "String",
+     "comment": "刷新令牌"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "用户编号"
+    },
+    {
+     "name": "userType",
+     "type": "Integer",
+     "comment": "用户类型 枚举 {@link UserTypeEnum}"
+    },
+    {
+     "name": "clientId",
+     "type": "String",
+     "comment": "用户信息 / @TableField(typeHandler = JacksonTypeHandler.class) private Map<String, String> userInfo; /** 客户端编号 关联 {@link OAuth2ClientDO#getId()}"
+    },
+    {
+     "name": "scopes",
+     "type": "List<String>",
+     "comment": "授权范围"
+    },
+    {
+     "name": "expiresTime",
+     "type": "LocalDateTime",
+     "comment": "过期时间"
+    }
+   ]
+  },
+  "system_oauth2_approve": {
+   "table": "system_oauth2_approve",
+   "class": "OAuth2ApproveDO",
+   "doc": "OAuth2 批准 DO 用户在 sso.vue 界面时，记录接受的 scope 列表 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "OAuth2 批准 DO 用户在 sso.vue 界面时，记录接受的 scope 列表 @author 芋道源码 / @TableName(value = \"system_oauth2_approve\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) public class OAuth2ApproveDO ext"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "用户编号"
+    },
+    {
+     "name": "userType",
+     "type": "Integer",
+     "comment": "用户类型 枚举 {@link UserTypeEnum}"
+    },
+    {
+     "name": "clientId",
+     "type": "String",
+     "comment": "客户端编号 关联 {@link OAuth2ClientDO#getId()}"
+    },
+    {
+     "name": "scope",
+     "type": "String",
+     "comment": "授权范围"
+    },
+    {
+     "name": "approved",
+     "type": "Boolean",
+     "comment": "是否接受 true - 接受 false - 拒绝"
+    },
+    {
+     "name": "expiresTime",
+     "type": "LocalDateTime",
+     "comment": "过期时间"
+    }
+   ]
+  },
+  "system_oauth2_client": {
+   "table": "system_oauth2_client",
+   "class": "OAuth2ClientDO",
+   "doc": "OAuth2 客户端 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "OAuth2 客户端 DO @author 芋道源码 / @TableName(value = \"system_oauth2_client\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) @TenantIgnore public class OAuth2ClientDO extends BaseDO { /** "
+    },
+    {
+     "name": "clientId",
+     "type": "String",
+     "comment": "客户端编号"
+    },
+    {
+     "name": "secret",
+     "type": "String",
+     "comment": "客户端密钥"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "应用名"
+    },
+    {
+     "name": "logo",
+     "type": "String",
+     "comment": "应用图标"
+    },
+    {
+     "name": "description",
+     "type": "String",
+     "comment": "应用描述"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "accessTokenValiditySeconds",
+     "type": "Integer",
+     "comment": "访问令牌的有效期"
+    },
+    {
+     "name": "refreshTokenValiditySeconds",
+     "type": "Integer",
+     "comment": "刷新令牌的有效期"
+    },
+    {
+     "name": "redirectUris",
+     "type": "List<String>",
+     "comment": "可重定向的 URI 地址"
+    },
+    {
+     "name": "authorizedGrantTypes",
+     "type": "List<String>",
+     "comment": "授权类型（模式） 枚举 {@link OAuth2GrantTypeEnum}"
+    },
+    {
+     "name": "scopes",
+     "type": "List<String>",
+     "comment": "授权范围"
+    },
+    {
+     "name": "autoApproveScopes",
+     "type": "List<String>",
+     "comment": "自动授权的 Scope code 授权时，如果 scope 在这个范围内，则自动通过"
+    },
+    {
+     "name": "authorities",
+     "type": "List<String>",
+     "comment": "权限"
+    },
+    {
+     "name": "resourceIds",
+     "type": "List<String>",
+     "comment": "资源"
+    },
+    {
+     "name": "additionalInformation",
+     "type": "String",
+     "comment": "附加信息，JSON 格式"
+    }
+   ]
+  },
+  "system_oauth2_code": {
+   "table": "system_oauth2_code",
+   "class": "OAuth2CodeDO",
+   "doc": "OAuth2 授权码 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "OAuth2 授权码 DO @author 芋道源码 / @TableName(value = \"system_oauth2_code\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) public class OAuth2CodeDO extends BaseDO { /** 编号，数据库递增"
+    },
+    {
+     "name": "code",
+     "type": "String",
+     "comment": "授权码"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "用户编号"
+    },
+    {
+     "name": "userType",
+     "type": "Integer",
+     "comment": "用户类型 枚举 {@link UserTypeEnum}"
+    },
+    {
+     "name": "clientId",
+     "type": "String",
+     "comment": "客户端编号 关联 {@link OAuth2ClientDO#getClientId()}"
+    },
+    {
+     "name": "scopes",
+     "type": "List<String>",
+     "comment": "授权范围"
+    },
+    {
+     "name": "redirectUri",
+     "type": "String",
+     "comment": "重定向地址"
+    },
+    {
+     "name": "state",
+     "type": "String",
+     "comment": "状态"
+    },
+    {
+     "name": "expiresTime",
+     "type": "LocalDateTime",
+     "comment": "过期时间"
+    }
+   ]
+  },
+  "system_oauth2_refresh_token": {
+   "table": "system_oauth2_refresh_token",
+   "class": "OAuth2RefreshTokenDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "OAuth2 刷新令牌 @author 芋道源码 / @TableName(value = \"system_oauth2_refresh_token\", autoResultMap = true) // 由于 Oracle 的 SEQ 的名字长度有限制，所以就先用 system_oauth2_access_token_seq 吧，反正也没啥问题 @Data public class OAuth2R"
+    },
+    {
+     "name": "refreshToken",
+     "type": "String",
+     "comment": "刷新令牌"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "用户编号"
+    },
+    {
+     "name": "userType",
+     "type": "Integer",
+     "comment": "用户类型 枚举 {@link UserTypeEnum}"
+    },
+    {
+     "name": "clientId",
+     "type": "String",
+     "comment": "客户端编号 关联 {@link OAuth2ClientDO#getId()}"
+    },
+    {
+     "name": "scopes",
+     "type": "List<String>",
+     "comment": "授权范围"
+    },
+    {
+     "name": "expiresTime",
+     "type": "LocalDateTime",
+     "comment": "过期时间"
+    }
+   ]
+  },
+  "system_menu": {
+   "table": "system_menu",
+   "class": "MenuDO",
+   "doc": "菜单 DO @author ruoyi",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "菜单 DO @author ruoyi / @TableName(\"system_menu\") @Data @EqualsAndHashCode(callSuper = true) @TenantIgnore public class MenuDO extends BaseDO { /** 菜单编号 - 根节点 / public static final Long ID_ROOT = 0L; /*"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "菜单名称"
+    },
+    {
+     "name": "permission",
+     "type": "String",
+     "comment": "权限标识 一般格式为：${系统}:${模块}:${操作} 例如说：system:admin:add，即 system 服务的添加管理员。 当我们把该 MenuDO 赋予给角色后，意味着该角色有该资源： - 对于后端，配合 @PreAuthorize 注解，配置 API 接口需要该权限，从而对 API 接口进行权限控制。 - 对于前端，配合前端标签，配置按钮是否展示，避免用户没有该权限时，结果可以看"
+    },
+    {
+     "name": "type",
+     "type": "Integer",
+     "comment": "菜单类型 枚举 {@link MenuTypeEnum}"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "显示顺序"
+    },
+    {
+     "name": "parentId",
+     "type": "Long",
+     "comment": "父菜单ID"
+    },
+    {
+     "name": "path",
+     "type": "String",
+     "comment": "路由地址 如果 path 为 http(s) 时，则它是外链"
+    },
+    {
+     "name": "icon",
+     "type": "String",
+     "comment": "菜单图标"
+    },
+    {
+     "name": "component",
+     "type": "String",
+     "comment": "组件路径"
+    },
+    {
+     "name": "componentName",
+     "type": "String",
+     "comment": "组件名"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "visible",
+     "type": "Boolean",
+     "comment": "是否可见 只有菜单、目录使用 当设置为 true 时，该菜单不会展示在侧边栏，但是路由还是存在。例如说，一些独立的编辑页面 /edit/1024 等等"
+    },
+    {
+     "name": "keepAlive",
+     "type": "Boolean",
+     "comment": "是否缓存 只有菜单、目录使用，否使用 Vue 路由的 keep-alive 特性 注意：如果开启缓存，则必须填写 {@link #componentName} 属性，否则无法缓存"
+    },
+    {
+     "name": "alwaysShow",
+     "type": "Boolean",
+     "comment": "是否总是显示 如果为 false 时，当该菜单只有一个子菜单时，不展示自己，直接展示子菜单"
+    }
+   ]
+  },
+  "system_role": {
+   "table": "system_role",
+   "class": "RoleDO",
+   "doc": "角色 DO @author ruoyi",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "角色 DO @author ruoyi / @TableName(value = \"system_role\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) public class RoleDO extends TenantBaseDO { /** 角色ID"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "角色名称"
+    },
+    {
+     "name": "code",
+     "type": "String",
+     "comment": "角色标识 枚举"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "角色排序"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "角色状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "type",
+     "type": "Integer",
+     "comment": "角色类型 枚举 {@link RoleTypeEnum}"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "dataScope",
+     "type": "Integer",
+     "comment": "数据范围 枚举 {@link DataScopeEnum}"
+    },
+    {
+     "name": "dataScopeDeptIds",
+     "type": "Set<Long>",
+     "comment": "数据范围(指定部门数组) 适用于 {@link #dataScope} 的值为 {@link DataScopeEnum#DEPT_CUSTOM} 时"
+    },
+    {
+     "name": "dataScopeCodes",
+     "type": "Set<Integer>",
+     "comment": "数据范围编码数组（多选取并集，如 [4,6,7]） 枚举 {@link DataScopeEnum}，为计算层主数据源； 为空时回退 {@link #dataScope} 单值（存量角色行为不变）。"
+    }
+   ]
+  },
+  "system_role_menu": {
+   "table": "system_role_menu",
+   "class": "RoleMenuDO",
+   "doc": "角色和菜单关联 @author ruoyi",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "角色和菜单关联 @author ruoyi / @TableName(\"system_role_menu\") @Data @EqualsAndHashCode(callSuper = true) public class RoleMenuDO extends TenantBaseDO { /** 自增主键"
+    },
+    {
+     "name": "roleId",
+     "type": "Long",
+     "comment": "角色ID"
+    },
+    {
+     "name": "menuId",
+     "type": "Long",
+     "comment": "菜单ID"
+    }
+   ]
+  },
+  "system_user_role": {
+   "table": "system_user_role",
+   "class": "UserRoleDO",
+   "doc": "用户和角色关联 @author ruoyi",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "用户和角色关联 @author ruoyi / @TableName(\"system_user_role\") @Data @EqualsAndHashCode(callSuper = true) public class UserRoleDO extends BaseDO { /** 自增主键"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "用户 ID"
+    },
+    {
+     "name": "roleId",
+     "type": "Long",
+     "comment": "角色 ID"
+    }
+   ]
+  },
+  "system_sms_channel": {
+   "table": "system_sms_channel",
+   "class": "SmsChannelDO",
+   "doc": "短信渠道 DO @author zzf @since 2021-01-25",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "短信渠道 DO @author zzf @since 2021-01-25 / @TableName(value = \"system_sms_channel\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @TenantIgnore public class"
+    },
+    {
+     "name": "signature",
+     "type": "String",
+     "comment": "短信签名"
+    },
+    {
+     "name": "code",
+     "type": "String",
+     "comment": "渠道编码 枚举 {@link SmsChannelEnum}"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "启用状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "apiKey",
+     "type": "String",
+     "comment": "短信 API 的账号"
+    },
+    {
+     "name": "apiSecret",
+     "type": "String",
+     "comment": "短信 API 的密钥"
+    },
+    {
+     "name": "callbackUrl",
+     "type": "String",
+     "comment": "短信发送回调 URL"
+    }
+   ]
+  },
+  "system_sms_code": {
+   "table": "system_sms_code",
+   "class": "SmsCodeDO",
+   "doc": "手机验证码 DO idx_mobile 索引：基于 {@link #mobile} 字段 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "手机验证码 DO idx_mobile 索引：基于 {@link #mobile} 字段 @author 芋道源码 / @TableName(\"system_sms_code\") @Data @EqualsAndHashCode(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstructor @TenantIgnore publi"
+    },
+    {
+     "name": "mobile",
+     "type": "String",
+     "comment": "手机号"
+    },
+    {
+     "name": "code",
+     "type": "String",
+     "comment": "验证码"
+    },
+    {
+     "name": "scene",
+     "type": "Integer",
+     "comment": "发送场景 枚举 {@link SmsCodeDO}"
+    },
+    {
+     "name": "createIp",
+     "type": "String",
+     "comment": "创建 IP"
+    },
+    {
+     "name": "todayIndex",
+     "type": "Integer",
+     "comment": "今日发送的第几条"
+    },
+    {
+     "name": "used",
+     "type": "Boolean",
+     "comment": "是否使用"
+    },
+    {
+     "name": "usedTime",
+     "type": "LocalDateTime",
+     "comment": "使用时间"
+    },
+    {
+     "name": "usedIp",
+     "type": "String",
+     "comment": "使用 IP"
+    }
+   ]
+  },
+  "system_sms_log": {
+   "table": "system_sms_log",
+   "class": "SmsLogDO",
+   "doc": "短信日志 DO @author zzf @since 2021-01-25",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "短信日志 DO @author zzf @since 2021-01-25 / @TableName(value = \"system_sms_log\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @AllArgsConstructor @"
+    },
+    {
+     "name": "channelId",
+     "type": "Long",
+     "comment": "短信渠道编号 关联 {@link SmsChannelDO#getId()}"
+    },
+    {
+     "name": "channelCode",
+     "type": "String",
+     "comment": "短信渠道编码 冗余 {@link SmsChannelDO#getCode()}"
+    },
+    {
+     "name": "templateId",
+     "type": "Long",
+     "comment": "模板编号 关联 {@link SmsTemplateDO#getId()}"
+    },
+    {
+     "name": "templateCode",
+     "type": "String",
+     "comment": "模板编码 冗余 {@link SmsTemplateDO#getCode()}"
+    },
+    {
+     "name": "templateType",
+     "type": "Integer",
+     "comment": "短信类型 冗余 {@link SmsTemplateDO#getType()}"
+    },
+    {
+     "name": "templateContent",
+     "type": "String",
+     "comment": "基于 {@link SmsTemplateDO#getContent()} 格式化后的内容"
+    },
+    {
+     "name": "apiTemplateId",
+     "type": "String",
+     "comment": "基于 {@link SmsTemplateDO#getParams()} 输入后的参数 / @TableField(typeHandler = JacksonTypeHandler.class) private Map<String, Object> templateParams; /** 短信 API 的模板编号 冗余 {@link SmsTemplateDO#getApiTemplateId("
+    },
+    {
+     "name": "mobile",
+     "type": "String",
+     "comment": "手机号"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "用户编号"
+    },
+    {
+     "name": "userType",
+     "type": "Integer",
+     "comment": "用户类型 枚举 {@link UserTypeEnum}"
+    },
+    {
+     "name": "sendStatus",
+     "type": "Integer",
+     "comment": "发送状态 枚举 {@link SmsSendStatusEnum}"
+    },
+    {
+     "name": "sendTime",
+     "type": "LocalDateTime",
+     "comment": "发送时间"
+    },
+    {
+     "name": "apiSendCode",
+     "type": "String",
+     "comment": "短信 API 发送结果的编码 由于第三方的错误码可能是字符串，所以使用 String 类型"
+    },
+    {
+     "name": "apiSendMsg",
+     "type": "String",
+     "comment": "短信 API 发送失败的提示"
+    },
+    {
+     "name": "apiRequestId",
+     "type": "String",
+     "comment": "短信 API 发送返回的唯一请求 ID 用于和短信 API 进行定位于排错"
+    },
+    {
+     "name": "apiSerialNo",
+     "type": "String",
+     "comment": "短信 API 发送返回的序号 用于和短信 API 平台的发送记录关联"
+    },
+    {
+     "name": "receiveStatus",
+     "type": "Integer",
+     "comment": "接收状态 枚举 {@link SmsReceiveStatusEnum}"
+    },
+    {
+     "name": "receiveTime",
+     "type": "LocalDateTime",
+     "comment": "接收时间"
+    },
+    {
+     "name": "apiReceiveCode",
+     "type": "String",
+     "comment": "短信 API 接收结果的编码"
+    },
+    {
+     "name": "apiReceiveMsg",
+     "type": "String",
+     "comment": "短信 API 接收结果的提示"
+    }
+   ]
+  },
+  "system_sms_template": {
+   "table": "system_sms_template",
+   "class": "SmsTemplateDO",
+   "doc": "短信模板 DO @author zzf @since 2021-01-25",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "短信模板 DO @author zzf @since 2021-01-25 / @TableName(value = \"system_sms_template\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @TenantIgnore public clas"
+    },
+    {
+     "name": "type",
+     "type": "Integer",
+     "comment": "短信类型 枚举 {@link SmsTemplateTypeEnum}"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "启用状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "code",
+     "type": "String",
+     "comment": "模板编码，保证唯一"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "模板名称"
+    },
+    {
+     "name": "content",
+     "type": "String",
+     "comment": "模板内容 内容的参数，使用 {} 包括，例如说 {name}"
+    },
+    {
+     "name": "params",
+     "type": "List<String>",
+     "comment": "参数数组(自动根据内容生成)"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "apiTemplateId",
+     "type": "String",
+     "comment": "短信 API 的模板编号"
+    },
+    {
+     "name": "channelId",
+     "type": "Long",
+     "comment": "短信渠道编号 关联 {@link SmsChannelDO#getId()}"
+    },
+    {
+     "name": "channelCode",
+     "type": "String",
+     "comment": "短信渠道编码 冗余 {@link SmsChannelDO#getCode()}"
+    }
+   ]
+  },
+  "system_social_client": {
+   "table": "system_social_client",
+   "class": "SocialClientDO",
+   "doc": "社交客户端 DO 对应 {@link AuthConfig} 配置，满足不同租户，有自己的客户端配置，实现社交（三方）登录 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "社交客户端 DO 对应 {@link AuthConfig} 配置，满足不同租户，有自己的客户端配置，实现社交（三方）登录 @author 芋道源码 / @TableName(value = \"system_social_client\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) @Builder @NoArg"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "应用名"
+    },
+    {
+     "name": "socialType",
+     "type": "Integer",
+     "comment": "社交类型 枚举 {@link SocialTypeEnum}"
+    },
+    {
+     "name": "userType",
+     "type": "Integer",
+     "comment": "用户类型 目的：不同用户类型，对应不同的小程序，需要自己的配置 枚举 {@link UserTypeEnum}"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "clientId",
+     "type": "String",
+     "comment": "客户端 id"
+    },
+    {
+     "name": "clientSecret",
+     "type": "String",
+     "comment": "客户端 Secret"
+    },
+    {
+     "name": "agentId",
+     "type": "String",
+     "comment": "代理编号 目前只有部分“社交类型”在使用： 1. 企业微信：对应授权方的网页应用 ID"
+    },
+    {
+     "name": "publicKey",
+     "type": "String",
+     "comment": "publicKey 公钥 目前只有部分“社交类型”在使用： 1. 支付宝：支付宝公钥"
+    }
+   ]
+  },
+  "system_social_user_bind": {
+   "table": "system_social_user_bind",
+   "class": "SocialUserBindDO",
+   "doc": "社交用户的绑定 即 {@link SocialUserDO} 与 UserDO 的关联表 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "社交用户的绑定 即 {@link SocialUserDO} 与 UserDO 的关联表 @author 芋道源码 / @TableName(value = \"system_social_user_bind\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) @Builder @NoArgsConstructor @"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "关联的用户编号 关联 UserDO 的编号"
+    },
+    {
+     "name": "userType",
+     "type": "Integer",
+     "comment": "用户类型 枚举 {@link UserTypeEnum}"
+    },
+    {
+     "name": "socialUserId",
+     "type": "Long",
+     "comment": "社交平台的用户编号 关联 {@link SocialUserDO#getId()}"
+    },
+    {
+     "name": "socialType",
+     "type": "Integer",
+     "comment": "社交平台的类型 冗余 {@link SocialUserDO#getType()}"
+    }
+   ]
+  },
+  "system_social_user": {
+   "table": "system_social_user",
+   "class": "SocialUserDO",
+   "doc": "社交（三方）用户 @author weir",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "社交（三方）用户 @author weir / @TableName(value = \"system_social_user\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstructor public class SocialUse"
+    },
+    {
+     "name": "type",
+     "type": "Integer",
+     "comment": "社交平台的类型 枚举 {@link SocialTypeEnum}"
+    },
+    {
+     "name": "openid",
+     "type": "String",
+     "comment": "社交 openid"
+    },
+    {
+     "name": "token",
+     "type": "String",
+     "comment": "社交 token"
+    },
+    {
+     "name": "rawTokenInfo",
+     "type": "String",
+     "comment": "原始 Token 数据，一般是 JSON 格式"
+    },
+    {
+     "name": "nickname",
+     "type": "String",
+     "comment": "用户昵称"
+    },
+    {
+     "name": "avatar",
+     "type": "String",
+     "comment": "用户头像"
+    },
+    {
+     "name": "rawUserInfo",
+     "type": "String",
+     "comment": "原始用户数据，一般是 JSON 格式"
+    },
+    {
+     "name": "code",
+     "type": "String",
+     "comment": "最后一次的认证 code"
+    },
+    {
+     "name": "state",
+     "type": "String",
+     "comment": "最后一次的认证 state"
+    }
+   ]
+  },
+  "system_tenant": {
+   "table": "system_tenant",
+   "class": "TenantDO",
+   "doc": "租户 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "租户 DO @author 芋道源码 / @TableName(value = \"system_tenant\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @AllArgsConstructor @NoArgsConstructor @T"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "租户名，唯一"
+    },
+    {
+     "name": "contactUserId",
+     "type": "Long",
+     "comment": "联系人的用户编号 关联 {@link AdminUserDO#getId()}"
+    },
+    {
+     "name": "contactName",
+     "type": "String",
+     "comment": "联系人"
+    },
+    {
+     "name": "contactMobile",
+     "type": "String",
+     "comment": "联系手机"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "租户状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "websites",
+     "type": "List<String>",
+     "comment": "绑定域名列表 1. 考虑到对微信小程序的兼容，也允许传递 appid 2. 为什么是数组，考虑到管理后台、会员前台都有独立的域名，又或者多个管理后台"
+    },
+    {
+     "name": "packageId",
+     "type": "Long",
+     "comment": "租户套餐编号 关联 {@link TenantPackageDO#getId()} 特殊逻辑：系统内置租户，不使用套餐，暂时使用 {@link #PACKAGE_ID_SYSTEM} 标识"
+    },
+    {
+     "name": "expireTime",
+     "type": "LocalDateTime",
+     "comment": "过期时间"
+    },
+    {
+     "name": "accountCount",
+     "type": "Integer",
+     "comment": "账号数量"
+    }
+   ]
+  },
+  "system_tenant_package": {
+   "table": "system_tenant_package",
+   "class": "TenantPackageDO",
+   "doc": "租户套餐 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "租户套餐 DO @author 芋道源码 / @TableName(value = \"system_tenant_package\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @AllArgsConstructor @NoArgsCons"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "套餐名，唯一"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "租户套餐状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "menuIds",
+     "type": "Set<Long>",
+     "comment": "关联的菜单编号"
+    }
+   ]
+  },
+  "system_users": {
+   "table": "system_users",
+   "class": "AdminUserDO",
+   "doc": "",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "管理后台的用户 DO @author 芋道源码 / @TableName(value = \"system_users\", autoResultMap = true) // 由于 SQL Server 的 system_user 是关键字，所以使用 system_users @Data @EqualsAndHashCode(callSuper = true) @Builder @NoArgsCons"
+    },
+    {
+     "name": "username",
+     "type": "String",
+     "comment": "用户账号"
+    },
+    {
+     "name": "password",
+     "type": "String",
+     "comment": "加密后的密码 因为目前使用 {@link BCryptPasswordEncoder} 加密器，所以无需自己处理 salt 盐"
+    },
+    {
+     "name": "nickname",
+     "type": "String",
+     "comment": "用户昵称"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "deptId",
+     "type": "Long",
+     "comment": "部门 ID"
+    },
+    {
+     "name": "postIds",
+     "type": "Set<Long>",
+     "comment": "岗位编号数组"
+    },
+    {
+     "name": "concurrentDeptIds",
+     "type": "Set<Long>",
+     "comment": "兼职部门编号数组 与 {@link #getDeptId()} 主职部门配合使用，仅用于展示/检索（“通过组织找用户”），不参与数据权限。 同时维护 {@code system_user_concurrent_dept} 关联表，便于按部门反查用户。"
+    },
+    {
+     "name": "email",
+     "type": "String",
+     "comment": "用户邮箱"
+    },
+    {
+     "name": "mobile",
+     "type": "String",
+     "comment": "手机号码"
+    },
+    {
+     "name": "sex",
+     "type": "Integer",
+     "comment": "用户性别 枚举类 {@link SexEnum}"
+    },
+    {
+     "name": "avatar",
+     "type": "String",
+     "comment": "用户头像"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "帐号状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "loginIp",
+     "type": "String",
+     "comment": "最后登录IP"
+    },
+    {
+     "name": "loginDate",
+     "type": "LocalDateTime",
+     "comment": "最后登录时间"
+    }
+   ]
+  }
+ },
+ "yudao-module-infra": {
+  "infra_codegen_column": {
+   "table": "infra_codegen_column",
+   "class": "CodegenColumnDO",
+   "doc": "代码生成 column 字段定义 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "代码生成 column 字段定义 @author 芋道源码 / @TableName(value = \"infra_codegen_column\", autoResultMap = true) @Data @TenantIgnore public class CodegenColumnDO extends BaseDO { /** ID 编号"
+    },
+    {
+     "name": "tableId",
+     "type": "Long",
+     "comment": "表编号 <p> 关联 {@link CodegenTableDO#getId()}"
+    },
+    {
+     "name": "columnName",
+     "type": "String",
+     "comment": "字段名 关联 {@link TableField#getName()}"
+    },
+    {
+     "name": "dataType",
+     "type": "String",
+     "comment": "数据库字段类型 关联 {@link TableField.MetaInfo#getJdbcType()}"
+    },
+    {
+     "name": "columnComment",
+     "type": "String",
+     "comment": "字段描述 关联 {@link TableField#getComment()}"
+    },
+    {
+     "name": "nullable",
+     "type": "Boolean",
+     "comment": "是否允许为空 关联 {@link TableField.MetaInfo#isNullable()}"
+    },
+    {
+     "name": "primaryKey",
+     "type": "Boolean",
+     "comment": "是否主键 关联 {@link TableField#isKeyFlag()}"
+    },
+    {
+     "name": "ordinalPosition",
+     "type": "Integer",
+     "comment": "排序"
+    },
+    {
+     "name": "javaType",
+     "type": "String",
+     "comment": "Java 属性类型 例如说 String、Boolean 等等 关联 {@link TableField#getColumnType()}"
+    },
+    {
+     "name": "javaField",
+     "type": "String",
+     "comment": "Java 属性名 关联 {@link TableField#getPropertyName()}"
+    },
+    {
+     "name": "dictType",
+     "type": "String",
+     "comment": "字典类型 <p> 关联 DictTypeDO 的 type 属性"
+    },
+    {
+     "name": "example",
+     "type": "String",
+     "comment": "数据示例，主要用于生成 Swagger 注解的 example 字段"
+    },
+    {
+     "name": "createOperation",
+     "type": "Boolean",
+     "comment": "是否为 Create 创建操作的字段"
+    },
+    {
+     "name": "updateOperation",
+     "type": "Boolean",
+     "comment": "是否为 Update 更新操作的字段"
+    },
+    {
+     "name": "listOperation",
+     "type": "Boolean",
+     "comment": "是否为 List 查询操作的字段"
+    },
+    {
+     "name": "listOperationCondition",
+     "type": "String",
+     "comment": "List 查询操作的条件类型 <p> 枚举 {@link CodegenColumnListConditionEnum}"
+    },
+    {
+     "name": "listOperationResult",
+     "type": "Boolean",
+     "comment": "是否为 List 查询操作的返回字段"
+    },
+    {
+     "name": "htmlType",
+     "type": "String",
+     "comment": "显示类型 <p> 枚举 {@link CodegenColumnHtmlTypeEnum}"
+    }
+   ]
+  },
+  "infra_codegen_table": {
+   "table": "infra_codegen_table",
+   "class": "CodegenTableDO",
+   "doc": "代码生成 table 表定义 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "代码生成 table 表定义 @author 芋道源码 / @TableName(value = \"infra_codegen_table\", autoResultMap = true) @Data @TenantIgnore public class CodegenTableDO extends BaseDO { /** ID 编号"
+    },
+    {
+     "name": "dataSourceConfigId",
+     "type": "Long",
+     "comment": "数据源编号 关联 {@link DataSourceConfigDO#getId()}"
+    },
+    {
+     "name": "scene",
+     "type": "Integer",
+     "comment": "生成场景 枚举 {@link CodegenSceneEnum}"
+    },
+    {
+     "name": "tableName",
+     "type": "String",
+     "comment": "表名称 关联 {@link TableInfo#getName()}"
+    },
+    {
+     "name": "tableComment",
+     "type": "String",
+     "comment": "表描述 关联 {@link TableInfo#getComment()}"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "moduleName",
+     "type": "String",
+     "comment": "模块名，即一级目录 例如说，system、infra、tool 等等"
+    },
+    {
+     "name": "businessName",
+     "type": "String",
+     "comment": "业务名，即二级目录 例如说，user、permission、dict 等等"
+    },
+    {
+     "name": "className",
+     "type": "String",
+     "comment": "类名称（首字母大写） 例如说，SysUser、SysMenu、SysDictData 等等"
+    },
+    {
+     "name": "classComment",
+     "type": "String",
+     "comment": "类描述"
+    },
+    {
+     "name": "author",
+     "type": "String",
+     "comment": "作者"
+    },
+    {
+     "name": "templateType",
+     "type": "Integer",
+     "comment": "模板类型 枚举 {@link CodegenTemplateTypeEnum}"
+    },
+    {
+     "name": "frontType",
+     "type": "Integer",
+     "comment": "代码生成的前端类型 枚举 {@link CodegenFrontTypeEnum}"
+    },
+    {
+     "name": "parentMenuId",
+     "type": "Long",
+     "comment": "父菜单编号 关联 MenuDO 的 id 属性"
+    },
+    {
+     "name": "masterTableId",
+     "type": "Long",
+     "comment": "主表的编号 关联 {@link CodegenTableDO#getId()}"
+    },
+    {
+     "name": "subJoinColumnId",
+     "type": "Long",
+     "comment": "【自己】子表关联主表的字段编号 关联 {@link CodegenColumnDO#getId()}"
+    },
+    {
+     "name": "subJoinMany",
+     "type": "Boolean",
+     "comment": "主表与子表是否一对多 true：一对多 false：一对一"
+    },
+    {
+     "name": "treeParentColumnId",
+     "type": "Long",
+     "comment": "树表的父字段编号 关联 {@link CodegenColumnDO#getId()}"
+    },
+    {
+     "name": "treeNameColumnId",
+     "type": "Long",
+     "comment": "树表的名字字段编号 名字的用途：新增或修改时，select 框展示的字段 关联 {@link CodegenColumnDO#getId()}"
+    }
+   ]
+  },
+  "infra_config": {
+   "table": "infra_config",
+   "class": "ConfigDO",
+   "doc": "参数配置表 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "参数配置表 @author 芋道源码 / @TableName(\"infra_config\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @TenantIgnore public class ConfigDO extends BaseDO { /** 参数主键"
+    },
+    {
+     "name": "category",
+     "type": "String",
+     "comment": "参数分类"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "参数名称"
+    },
+    {
+     "name": "configKey",
+     "type": "String",
+     "comment": "参数键名 支持多 DB 类型时，无法直接使用 key + @TableField(\"config_key\") 来实现转换，原因是 \"config_key\" AS key 而存在报错"
+    },
+    {
+     "name": "value",
+     "type": "String",
+     "comment": "参数键值"
+    },
+    {
+     "name": "type",
+     "type": "Integer",
+     "comment": "参数类型 枚举 {@link ConfigTypeEnum}"
+    },
+    {
+     "name": "visible",
+     "type": "Boolean",
+     "comment": "是否可见 不可见的参数，一般是敏感参数，前端不可获取"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "infra_data_source_config": {
+   "table": "infra_data_source_config",
+   "class": "DataSourceConfigDO",
+   "doc": "数据源配置 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "数据源配置 @author 芋道源码 / @TableName(value = \"infra_data_source_config\", autoResultMap = true) @Data @TenantIgnore public class DataSourceConfigDO extends BaseDO { /** 主键编号 - Master 数据源 / public static fin"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "连接名"
+    },
+    {
+     "name": "url",
+     "type": "String",
+     "comment": "数据源连接"
+    },
+    {
+     "name": "username",
+     "type": "String",
+     "comment": "用户名"
+    },
+    {
+     "name": "password",
+     "type": "String",
+     "comment": "密码"
+    }
+   ]
+  },
+  "yudao_demo01_contact": {
+   "table": "yudao_demo01_contact",
+   "class": "Demo01ContactDO",
+   "doc": "示例联系人 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "示例联系人 DO @author 芋道源码 / @TableName(\"yudao_demo01_contact\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstructor public class Demo01Con"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "名字"
+    },
+    {
+     "name": "sex",
+     "type": "Integer",
+     "comment": "性别 枚举 {@link TODO system_user_sex 对应的类}"
+    },
+    {
+     "name": "birthday",
+     "type": "LocalDateTime",
+     "comment": "出生年"
+    },
+    {
+     "name": "description",
+     "type": "String",
+     "comment": "简介"
+    },
+    {
+     "name": "avatar",
+     "type": "String",
+     "comment": "头像"
+    }
+   ]
+  },
+  "yudao_demo02_category": {
+   "table": "yudao_demo02_category",
+   "class": "Demo02CategoryDO",
+   "doc": "示例分类 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "示例分类 DO @author 芋道源码 / @TableName(\"yudao_demo02_category\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstructor public class Demo02Cat"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "名字"
+    },
+    {
+     "name": "parentId",
+     "type": "Long",
+     "comment": "父级编号"
+    }
+   ]
+  },
+  "yudao_demo03_course": {
+   "table": "yudao_demo03_course",
+   "class": "Demo03CourseDO",
+   "doc": "学生课程 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "学生课程 DO @author 芋道源码 / @TableName(\"yudao_demo03_course\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstructor public class Demo03Cours"
+    },
+    {
+     "name": "studentId",
+     "type": "Long",
+     "comment": "学生编号"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "名字"
+    },
+    {
+     "name": "score",
+     "type": "Integer",
+     "comment": "分数"
+    }
+   ]
+  },
+  "yudao_demo03_grade": {
+   "table": "yudao_demo03_grade",
+   "class": "Demo03GradeDO",
+   "doc": "学生班级 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "学生班级 DO @author 芋道源码 / @TableName(\"yudao_demo03_grade\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstructor public class Demo03GradeD"
+    },
+    {
+     "name": "studentId",
+     "type": "Long",
+     "comment": "学生编号"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "名字"
+    },
+    {
+     "name": "teacher",
+     "type": "String",
+     "comment": "班主任"
+    }
+   ]
+  },
+  "yudao_demo03_student": {
+   "table": "yudao_demo03_student",
+   "class": "Demo03StudentDO",
+   "doc": "学生 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "学生 DO @author 芋道源码 / @TableName(\"yudao_demo03_student\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstructor public class Demo03Studen"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "名字"
+    },
+    {
+     "name": "sex",
+     "type": "Integer",
+     "comment": "性别 枚举 {@link TODO system_user_sex 对应的类}"
+    },
+    {
+     "name": "birthday",
+     "type": "LocalDateTime",
+     "comment": "出生日期"
+    },
+    {
+     "name": "description",
+     "type": "String",
+     "comment": "简介"
+    }
+   ]
+  },
+  "infra_file_config": {
+   "table": "infra_file_config",
+   "class": "FileConfigDO",
+   "doc": "文件配置表 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "文件配置表 @author 芋道源码 / @TableName(value = \"infra_file_config\", autoResultMap = true) @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstructo"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "配置名"
+    },
+    {
+     "name": "storage",
+     "type": "Integer",
+     "comment": "存储器 枚举 {@link FileStorageEnum}"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "master",
+     "type": "Boolean",
+     "comment": "是否为主配置 由于我们可以配置多个文件配置，默认情况下，使用主配置进行文件的上传"
+    },
+    {
+     "name": "config",
+     "type": "FileClientConfig",
+     "comment": "支付渠道配置"
+    }
+   ]
+  },
+  "infra_file_content": {
+   "table": "infra_file_content",
+   "class": "FileContentDO",
+   "doc": "文件内容表 专门用于存储 {@link DBFileClient} 的文件内容 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "文件内容表 专门用于存储 {@link DBFileClient} 的文件内容 @author 芋道源码 / @TableName(\"infra_file_content\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsConst"
+    },
+    {
+     "name": "configId",
+     "type": "Long",
+     "comment": "配置编号 关联 {@link FileConfigDO#getId()}"
+    },
+    {
+     "name": "path",
+     "type": "String",
+     "comment": "路径，即文件名"
+    },
+    {
+     "name": "content",
+     "type": "byte[]",
+     "comment": "文件内容"
+    }
+   ]
+  },
+  "infra_file": {
+   "table": "infra_file",
+   "class": "FileDO",
+   "doc": "文件表 每次文件上传，都会记录一条记录到该表中 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "文件表 每次文件上传，都会记录一条记录到该表中 @author 芋道源码 / @TableName(\"infra_file\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstructor @TenantIgnore pub"
+    },
+    {
+     "name": "configId",
+     "type": "Long",
+     "comment": "配置编号 关联 {@link FileConfigDO#getId()}"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "原文件名"
+    },
+    {
+     "name": "path",
+     "type": "String",
+     "comment": "路径，即文件名"
+    },
+    {
+     "name": "url",
+     "type": "String",
+     "comment": "访问地址"
+    },
+    {
+     "name": "type",
+     "type": "String",
+     "comment": "文件的 MIME 类型，例如 \"application/octet-stream\""
+    },
+    {
+     "name": "size",
+     "type": "Long",
+     "comment": "文件大小"
+    }
+   ]
+  },
+  "infra_job": {
+   "table": "infra_job",
+   "class": "JobDO",
+   "doc": "定时任务 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "定时任务 DO @author 芋道源码 / @TableName(\"infra_job\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstructor @TenantIgnore public class JobDO e"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "任务名称"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "任务状态 枚举 {@link JobStatusEnum}"
+    },
+    {
+     "name": "handlerName",
+     "type": "String",
+     "comment": "处理器的名字"
+    },
+    {
+     "name": "handlerParam",
+     "type": "String",
+     "comment": "处理器的参数"
+    },
+    {
+     "name": "cronExpression",
+     "type": "String",
+     "comment": "CRON 表达式"
+    },
+    {
+     "name": "retryCount",
+     "type": "Integer",
+     "comment": "重试次数 如果不重试，则设置为 0"
+    },
+    {
+     "name": "retryInterval",
+     "type": "Integer",
+     "comment": "重试间隔，单位：毫秒 如果没有间隔，则设置为 0"
+    },
+    {
+     "name": "monitorTimeout",
+     "type": "Integer",
+     "comment": "监控超时时间，单位：毫秒 为空时，表示不监控 注意，这里的超时的目的，不是进行任务的取消，而是告警任务的执行时间过长"
+    }
+   ]
+  },
+  "infra_job_log": {
+   "table": "infra_job_log",
+   "class": "JobLogDO",
+   "doc": "定时任务的执行日志 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "定时任务的执行日志 @author 芋道源码 / @TableName(\"infra_job_log\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstructor @TenantIgnore public class J"
+    },
+    {
+     "name": "jobId",
+     "type": "Long",
+     "comment": "任务编号 关联 {@link JobDO#getId()}"
+    },
+    {
+     "name": "handlerName",
+     "type": "String",
+     "comment": "处理器的名字 冗余字段 {@link JobDO#getHandlerName()}"
+    },
+    {
+     "name": "handlerParam",
+     "type": "String",
+     "comment": "处理器的参数 冗余字段 {@link JobDO#getHandlerParam()}"
+    },
+    {
+     "name": "executeIndex",
+     "type": "Integer",
+     "comment": "第几次执行 用于区分是不是重试执行。如果是重试执行，则 index 大于 1"
+    },
+    {
+     "name": "beginTime",
+     "type": "LocalDateTime",
+     "comment": "开始执行时间"
+    },
+    {
+     "name": "endTime",
+     "type": "LocalDateTime",
+     "comment": "结束执行时间"
+    },
+    {
+     "name": "duration",
+     "type": "Integer",
+     "comment": "执行时长，单位：毫秒"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态 枚举 {@link JobLogStatusEnum}"
+    },
+    {
+     "name": "result",
+     "type": "String",
+     "comment": "结果数据 成功时，使用 {@link JobHandler#execute(String)} 的结果 失败时，使用 {@link JobHandler#execute(String)} 的异常堆栈"
+    }
+   ]
+  },
+  "infra_api_access_log": {
+   "table": "infra_api_access_log",
+   "class": "ApiAccessLogDO",
+   "doc": "API 访问日志 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "API 访问日志 @author 芋道源码 / @TableName(\"infra_api_access_log\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstructor public class ApiAccess"
+    },
+    {
+     "name": "traceId",
+     "type": "String",
+     "comment": "链路追踪编号 一般来说，通过链路追踪编号，可以将访问日志，错误日志，链路追踪日志，logger 打印日志等，结合在一起，从而进行排错。"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "用户编号"
+    },
+    {
+     "name": "userType",
+     "type": "Integer",
+     "comment": "用户类型 枚举 {@link UserTypeEnum}"
+    },
+    {
+     "name": "applicationName",
+     "type": "String",
+     "comment": "应用名 目前读取 `spring.application.name` 配置项"
+    },
+    {
+     "name": "requestMethod",
+     "type": "String",
+     "comment": "请求方法名"
+    },
+    {
+     "name": "requestUrl",
+     "type": "String",
+     "comment": "访问地址"
+    },
+    {
+     "name": "requestParams",
+     "type": "String",
+     "comment": "请求参数 query: Query String body: Quest Body"
+    },
+    {
+     "name": "responseBody",
+     "type": "String",
+     "comment": "响应结果"
+    },
+    {
+     "name": "userIp",
+     "type": "String",
+     "comment": "用户 IP"
+    },
+    {
+     "name": "userAgent",
+     "type": "String",
+     "comment": "浏览器 UA"
+    },
+    {
+     "name": "operateModule",
+     "type": "String",
+     "comment": "操作模块"
+    },
+    {
+     "name": "operateName",
+     "type": "String",
+     "comment": "操作名"
+    },
+    {
+     "name": "operateType",
+     "type": "Integer",
+     "comment": "操作分类 枚举 {@link OperateTypeEnum}"
+    },
+    {
+     "name": "beginTime",
+     "type": "LocalDateTime",
+     "comment": "开始请求时间"
+    },
+    {
+     "name": "endTime",
+     "type": "LocalDateTime",
+     "comment": "结束请求时间"
+    },
+    {
+     "name": "duration",
+     "type": "Integer",
+     "comment": "执行时长，单位：毫秒"
+    },
+    {
+     "name": "resultCode",
+     "type": "Integer",
+     "comment": "结果码 目前使用的 {@link CommonResult#getCode()} 属性"
+    },
+    {
+     "name": "resultMsg",
+     "type": "String",
+     "comment": "结果提示 目前使用的 {@link CommonResult#getMsg()} 属性"
+    }
+   ]
+  },
+  "infra_api_error_log": {
+   "table": "infra_api_error_log",
+   "class": "ApiErrorLogDO",
+   "doc": "API 异常数据 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "API 异常数据 @author 芋道源码 / @TableName(\"infra_api_error_log\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstructor public class ApiErrorLo"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "用户编号"
+    },
+    {
+     "name": "traceId",
+     "type": "String",
+     "comment": "链路追踪编号 一般来说，通过链路追踪编号，可以将访问日志，错误日志，链路追踪日志，logger 打印日志等，结合在一起，从而进行排错。"
+    },
+    {
+     "name": "userType",
+     "type": "Integer",
+     "comment": "用户类型 枚举 {@link UserTypeEnum}"
+    },
+    {
+     "name": "applicationName",
+     "type": "String",
+     "comment": "应用名 目前读取 spring.application.name"
+    },
+    {
+     "name": "requestMethod",
+     "type": "String",
+     "comment": "请求方法名"
+    },
+    {
+     "name": "requestUrl",
+     "type": "String",
+     "comment": "访问地址"
+    },
+    {
+     "name": "requestParams",
+     "type": "String",
+     "comment": "请求参数 query: Query String body: Quest Body"
+    },
+    {
+     "name": "userIp",
+     "type": "String",
+     "comment": "用户 IP"
+    },
+    {
+     "name": "userAgent",
+     "type": "String",
+     "comment": "浏览器 UA"
+    },
+    {
+     "name": "exceptionTime",
+     "type": "LocalDateTime",
+     "comment": "异常发生时间"
+    },
+    {
+     "name": "exceptionName",
+     "type": "String",
+     "comment": "异常名 {@link Throwable#getClass()} 的类全名"
+    },
+    {
+     "name": "exceptionMessage",
+     "type": "String",
+     "comment": "异常导致的消息 {@link cn.hutool.core.exceptions.ExceptionUtil#getMessage(Throwable)}"
+    },
+    {
+     "name": "exceptionRootCauseMessage",
+     "type": "String",
+     "comment": "异常导致的根消息 {@link cn.hutool.core.exceptions.ExceptionUtil#getRootCauseMessage(Throwable)}"
+    },
+    {
+     "name": "exceptionStackTrace",
+     "type": "String",
+     "comment": "异常的栈轨迹 {@link org.apache.commons.lang3.exception.ExceptionUtils#getStackTrace(Throwable)}"
+    },
+    {
+     "name": "exceptionClassName",
+     "type": "String",
+     "comment": "异常发生的类全名 {@link StackTraceElement#getClassName()}"
+    },
+    {
+     "name": "exceptionFileName",
+     "type": "String",
+     "comment": "异常发生的类文件 {@link StackTraceElement#getFileName()}"
+    },
+    {
+     "name": "exceptionMethodName",
+     "type": "String",
+     "comment": "异常发生的方法名 {@link StackTraceElement#getMethodName()}"
+    },
+    {
+     "name": "exceptionLineNumber",
+     "type": "Integer",
+     "comment": "异常发生的方法所在行 {@link StackTraceElement#getLineNumber()}"
+    },
+    {
+     "name": "processStatus",
+     "type": "Integer",
+     "comment": "处理状态 枚举 {@link ApiErrorLogProcessStatusEnum}"
+    },
+    {
+     "name": "processTime",
+     "type": "LocalDateTime",
+     "comment": "处理时间"
+    },
+    {
+     "name": "processUserId",
+     "type": "Long",
+     "comment": "处理用户编号 关联 cn.iocoder.yudao.adminserver.modules.system.dal.dataobject.user.SysUserDO.SysUserDO#getId()"
+    }
+   ]
+  }
+ },
+ "yudao-module-bpm": {
+  "bpm_custom_variables": {
+   "table": "bpm_custom_variables",
+   "class": "CustomVariablesDO",
+   "doc": "自定义变量 DO（暂存数据） @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "String",
+     "comment": "自定义变量 DO（暂存数据） @author 芋道源码 / @TableName(\"bpm_custom_variables\") @Data @Builder @NoArgsConstructor @AllArgsConstructor public class CustomVariablesDO { /** ID - 使用INPUT类型，由业务生成UUID"
+    },
+    {
+     "name": "version",
+     "type": "Integer",
+     "comment": "版本号"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "名称"
+    },
+    {
+     "name": "txt",
+     "type": "String",
+     "comment": "文本值"
+    },
+    {
+     "name": "bizKey",
+     "type": "String",
+     "comment": "业务key（项目ID）"
+    },
+    {
+     "name": "bizViewName",
+     "type": "String",
+     "comment": "视图名称"
+    },
+    {
+     "name": "metaInfo",
+     "type": "String",
+     "comment": "元数据"
+    }
+   ]
+  },
+  "bpm_category": {
+   "table": "bpm_category",
+   "class": "BpmCategoryDO",
+   "doc": "BPM 流程分类 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "BPM 流程分类 DO @author 芋道源码 / @TableName(\"bpm_category\") @Data @Builder @NoArgsConstructor @AllArgsConstructor public class BpmCategoryDO extends BaseDO { /** 分类编号"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "分类名"
+    },
+    {
+     "name": "code",
+     "type": "String",
+     "comment": "分类标志"
+    },
+    {
+     "name": "description",
+     "type": "String",
+     "comment": "分类描述"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "分类状态 枚举 {@link cn.iocoder.yudao.framework.common.enums.CommonStatusEnum}"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "分类排序"
+    }
+   ]
+  },
+  "bpm_form": {
+   "table": "bpm_form",
+   "class": "BpmFormDO",
+   "doc": "BPM 工作流的表单定义 用于工作流的申请表单，需要动态配置的场景 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "BPM 工作流的表单定义 用于工作流的申请表单，需要动态配置的场景 @author 芋道源码 / @TableName(value = \"bpm_form\", autoResultMap = true) @Data @Builder @NoArgsConstructor @AllArgsConstructor public class BpmFormDO extends BaseDO { /** "
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "表单名"
+    },
+    {
+     "name": "code",
+     "type": "String",
+     "comment": "表单编码"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态"
+    },
+    {
+     "name": "conf",
+     "type": "String",
+     "comment": "表单的配置"
+    },
+    {
+     "name": "fields",
+     "type": "List<String>",
+     "comment": "表单项的数组 目前直接将 https://github.com/JakHuang/form-generator 生成的 JSON 串，直接保存 定义：https://github.com/JakHuang/form-generator/issues/46"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "bpm_process_definition_info": {
+   "table": "bpm_process_definition_info",
+   "class": "BpmProcessDefinitionInfoDO",
+   "doc": "BPM 流程定义的拓信息 主要解决 Flowable {@link org.flowable.engine.repository.ProcessDefinition} 不支持拓展字段，所以新建该表 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "BPM 流程定义的拓信息 主要解决 Flowable {@link org.flowable.engine.repository.ProcessDefinition} 不支持拓展字段，所以新建该表 @author 芋道源码 / @TableName(value = \"bpm_process_definition_info\", autoResultMap = true) @Data @Builder"
+    },
+    {
+     "name": "processDefinitionId",
+     "type": "String",
+     "comment": "流程定义的编号 关联 {@link ProcessDefinition#getId()} 属性"
+    },
+    {
+     "name": "modelId",
+     "type": "String",
+     "comment": "流程模型的编号 关联 {@link Model#getId()} 属性"
+    },
+    {
+     "name": "modelType",
+     "type": "Integer",
+     "comment": "流程模型的类型 枚举 {@link BpmModelTypeEnum}"
+    },
+    {
+     "name": "category",
+     "type": "String",
+     "comment": "流程分类的编码 关联 {@link BpmCategoryDO#getCode()} 为什么要存储？原因是，{@link ProcessDefinition#getCategory()} 无法设置"
+    },
+    {
+     "name": "icon",
+     "type": "String",
+     "comment": "图标"
+    },
+    {
+     "name": "description",
+     "type": "String",
+     "comment": "描述"
+    },
+    {
+     "name": "formType",
+     "type": "Integer",
+     "comment": "表单类型 枚举 {@link BpmModelFormTypeEnum}"
+    },
+    {
+     "name": "formId",
+     "type": "Long",
+     "comment": "动态表单编号 在表单类型为 {@link BpmModelFormTypeEnum#NORMAL} 时 关联 {@link BpmFormDO#getId()}"
+    },
+    {
+     "name": "formConf",
+     "type": "String",
+     "comment": "表单的配置 在表单类型为 {@link BpmModelFormTypeEnum#NORMAL} 时 冗余 {@link BpmFormDO#getConf()}"
+    },
+    {
+     "name": "formFields",
+     "type": "List<String>",
+     "comment": "表单项的数组 在表单类型为 {@link BpmModelFormTypeEnum#NORMAL} 时 冗余 {@link BpmFormDO#getFields()}"
+    },
+    {
+     "name": "formCustomCreatePath",
+     "type": "String",
+     "comment": "自定义表单的提交路径，使用 Vue 的路由地址 在表单类型为 {@link BpmModelFormTypeEnum#CUSTOM} 时"
+    },
+    {
+     "name": "formCustomViewPath",
+     "type": "String",
+     "comment": "自定义表单的查看路径，使用 Vue 的路由地址 在表单类型为 {@link BpmModelFormTypeEnum#CUSTOM} 时"
+    },
+    {
+     "name": "simpleModel",
+     "type": "String",
+     "comment": "SIMPLE 设计器模型数据 json 格式 目的：当使用仿钉钉设计器时。流程模型发布的时候，需要保存流程模型设计器的快照数据。"
+    },
+    {
+     "name": "visible",
+     "type": "Boolean",
+     "comment": "是否可见 目的：如果 false 不可见，则不展示在“发起流程”的列表里"
+    },
+    {
+     "name": "sort",
+     "type": "Long",
+     "comment": "排序值"
+    },
+    {
+     "name": "startDeptIds",
+     "type": "List<Long>",
+     "comment": "可发起用户编号数组 关联 {@link AdminUserRespDTO#getId()} 字段的数组 如果为空，则表示“全部可以发起”！ 它和 {@link #visible} 的区别在于： 1. {@link #visible} 只是决定是否可见。即使不可见，还是可以发起 2. startUserIds 决定某个用户是否可以发起。如果该用户不可发起，则他也是不可见的 / @TableField"
+    },
+    {
+     "name": "allowCancelRunningProcess",
+     "type": "Boolean",
+     "comment": "可管理用户编号数组 关联 {@link AdminUserRespDTO#getId()} 字段的数组 / @TableField(typeHandler = LongListTypeHandler.class) // 为了可以使用 find_in_set 进行过滤 private List<Long> managerUserIds; /** 是否允许撤销审批中的申请"
+    },
+    {
+     "name": "allowWithdrawTask",
+     "type": "Boolean",
+     "comment": "是否允许审批人撤回任务"
+    },
+    {
+     "name": "processIdRule",
+     "type": "BpmModelMetaInfoVO.ProcessIdRule",
+     "comment": "流程 ID 规则"
+    },
+    {
+     "name": "autoApprovalType",
+     "type": "Integer",
+     "comment": "自动去重类型 枚举 {@link BpmAutoApproveTypeEnum}"
+    },
+    {
+     "name": "titleSetting",
+     "type": "BpmModelMetaInfoVO.TitleSetting",
+     "comment": "标题设置"
+    },
+    {
+     "name": "summarySetting",
+     "type": "BpmModelMetaInfoVO.SummarySetting",
+     "comment": "摘要设置"
+    },
+    {
+     "name": "processBeforeTriggerSetting",
+     "type": "BpmModelMetaInfoVO.HttpRequestSetting",
+     "comment": "流程前置通知设置"
+    },
+    {
+     "name": "processAfterTriggerSetting",
+     "type": "BpmModelMetaInfoVO.HttpRequestSetting",
+     "comment": "流程后置通知设置"
+    },
+    {
+     "name": "taskBeforeTriggerSetting",
+     "type": "BpmModelMetaInfoVO.HttpRequestSetting",
+     "comment": "任务前置通知设置"
+    },
+    {
+     "name": "taskAfterTriggerSetting",
+     "type": "BpmModelMetaInfoVO.HttpRequestSetting",
+     "comment": "任务后置通知设置"
+    },
+    {
+     "name": "printTemplateSetting",
+     "type": "BpmModelMetaInfoVO.PrintTemplateSetting",
+     "comment": "自定义打印模板设置"
+    }
+   ]
+  },
+  "bpm_process_expression": {
+   "table": "bpm_process_expression",
+   "class": "BpmProcessExpressionDO",
+   "doc": "BPM 流程表达式 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "BPM 流程表达式 DO @author 芋道源码 / @TableName(\"bpm_process_expression\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstructor public class Bpm"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "表达式名字"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "表达式状态 枚举 {@link TODO common_status 对应的类}"
+    },
+    {
+     "name": "expression",
+     "type": "String",
+     "comment": "表达式"
+    }
+   ]
+  },
+  "bpm_user_group": {
+   "table": "bpm_user_group",
+   "class": "BpmUserGroupDO",
+   "doc": "BPM 用户组 @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "BPM 用户组 @author 芋道源码 / @TableName(value = \"bpm_user_group\", autoResultMap = true) @Data @Builder @NoArgsConstructor @AllArgsConstructor public class BpmUserGroupDO extends BaseDO { /** 编号，自增"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "组名"
+    },
+    {
+     "name": "description",
+     "type": "String",
+     "comment": "描述"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "状态 枚举 {@link CommonStatusEnum}"
+    },
+    {
+     "name": "userIds",
+     "type": "Set<Long>",
+     "comment": "成员用户编号数组"
+    }
+   ]
+  },
+  "bpm_form_instance_info": {
+   "table": "bpm_form_instance_info",
+   "class": "FormInstanceInfoDO",
+   "doc": "表单流程实例关联 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "表单流程实例关联 DO @author 芋道源码 / @TableName(\"bpm_form_instance_info\") @KeySequence(\"bpm_form_instance_info_seq\") @Data @Builder @NoArgsConstructor @AllArgsConstructor public class FormInstanceInfoDO { /** 主"
+    },
+    {
+     "name": "instanceId",
+     "type": "String",
+     "comment": "流程实例ID"
+    },
+    {
+     "name": "formId",
+     "type": "Long",
+     "comment": "表单ID"
+    },
+    {
+     "name": "bizKey",
+     "type": "String",
+     "comment": "业务key（项目ID）"
+    }
+   ]
+  },
+  "bpm_form_view": {
+   "table": "bpm_form_view",
+   "class": "FormViewDO",
+   "doc": "表单视图 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "表单视图 DO @author 芋道源码 / @TableName(\"bpm_form_view\") @KeySequence(\"bpm_form_view_seq\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsConstructor @AllArgsConstruc"
+    },
+    {
+     "name": "formId",
+     "type": "Long",
+     "comment": "表单ID"
+    },
+    {
+     "name": "name",
+     "type": "String",
+     "comment": "视图名称"
+    },
+    {
+     "name": "code",
+     "type": "String",
+     "comment": "视图编码"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    },
+    {
+     "name": "sqlTxt",
+     "type": "String",
+     "comment": "SQL文本"
+    },
+    {
+     "name": "queryFieldTxt",
+     "type": "String",
+     "comment": "查询字段文本"
+    },
+    {
+     "name": "tableShowFieldTxt",
+     "type": "String",
+     "comment": "表格字段展示文本"
+    },
+    {
+     "name": "outFormFieldTxt",
+     "type": "String",
+     "comment": "表单外字段文本"
+    },
+    {
+     "name": "relationViewCode",
+     "type": "String",
+     "comment": "关联视图标识"
+    },
+    {
+     "name": "type",
+     "type": "String",
+     "comment": "视图类型：0普通视图；1流程视图"
+    },
+    {
+     "name": "formCode",
+     "type": "String",
+     "comment": "表单编码（非数据库字段）"
+    },
+    {
+     "name": "relationViewDO",
+     "type": "FormViewDO",
+     "comment": "下一个视图（非数据库字段）"
+    },
+    {
+     "name": "preFormViewList",
+     "type": "List<FormViewDO>",
+     "comment": "上一个视图列表（非数据库字段）"
+    }
+   ]
+  },
+  "bpm_form_view_table_field": {
+   "table": "bpm_form_view_table_field",
+   "class": "FormViewTableFieldDO",
+   "doc": "表单视图表字段 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "表单视图表字段 DO @author 芋道源码 / @TableName(\"bpm_form_view_table_field\") @KeySequence(\"bpm_form_view_table_field_seq\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @NoArgsC"
+    },
+    {
+     "name": "viewTableId",
+     "type": "Long",
+     "comment": "视图ID（关联bpm_form_view.id）"
+    },
+    {
+     "name": "fieldName",
+     "type": "String",
+     "comment": "字段名称"
+    },
+    {
+     "name": "fieldType",
+     "type": "String",
+     "comment": "字段类型（VARCHAR/INTEGER/BIGINT等）"
+    },
+    {
+     "name": "fieldLength",
+     "type": "Integer",
+     "comment": "字段长度"
+    },
+    {
+     "name": "required",
+     "type": "Integer",
+     "comment": "是否必填"
+    },
+    {
+     "name": "defaultValue",
+     "type": "String",
+     "comment": "默认值"
+    },
+    {
+     "name": "description",
+     "type": "String",
+     "comment": "字段描述/注释"
+    },
+    {
+     "name": "sort",
+     "type": "Integer",
+     "comment": "排序值"
+    },
+    {
+     "name": "isPrimaryKey",
+     "type": "Integer",
+     "comment": "是否主键"
+    },
+    {
+     "name": "isSystemField",
+     "type": "Integer",
+     "comment": "是否系统字段"
+    }
+   ]
+  },
+  "bpm_form_view_table_history": {
+   "table": "bpm_form_view_table_history",
+   "class": "FormViewTableHistoryDO",
+   "doc": "表单视图表变更历史 DO @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "表单视图表变更历史 DO @author 芋道源码 / @TableName(\"bpm_form_view_table_history\") @KeySequence(\"bpm_form_view_table_history_seq\") @Data @EqualsAndHashCode(callSuper = true) @ToString(callSuper = true) @Builder @N"
+    },
+    {
+     "name": "viewTableId",
+     "type": "Long",
+     "comment": "视图ID（关联bpm_form_view.id）"
+    },
+    {
+     "name": "operationType",
+     "type": "Integer",
+     "comment": "操作类型：1创建表；2更新表结构；3删除表"
+    },
+    {
+     "name": "operationContent",
+     "type": "String",
+     "comment": "操作内容描述"
+    },
+    {
+     "name": "executeSql",
+     "type": "String",
+     "comment": "执行的SQL语句"
+    },
+    {
+     "name": "operatorId",
+     "type": "Long",
+     "comment": "操作人ID"
+    },
+    {
+     "name": "operatorName",
+     "type": "String",
+     "comment": "操作人姓名"
+    },
+    {
+     "name": "remark",
+     "type": "String",
+     "comment": "备注"
+    }
+   ]
+  },
+  "bpm_oa_leave": {
+   "table": "bpm_oa_leave",
+   "class": "BpmOALeaveDO",
+   "doc": "OA 请假申请 DO {@link #day} 请假天数，目前先简单做。一般是分成请假上午和下午，可以是 1 整天，可以是 0.5 半天 @author jason @author 芋道源码",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "OA 请假申请 DO {@link #day} 请假天数，目前先简单做。一般是分成请假上午和下午，可以是 1 整天，可以是 0.5 半天 @author jason @author 芋道源码 / @TableName(\"bpm_oa_leave\") @Data @Builder @NoArgsConstructor @AllArgsConstructor public class BpmOALea"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "申请人的用户编号 关联 AdminUserDO 的 id 属性"
+    },
+    {
+     "name": "type",
+     "type": "String",
+     "comment": "请假类型"
+    },
+    {
+     "name": "reason",
+     "type": "String",
+     "comment": "原因"
+    },
+    {
+     "name": "startTime",
+     "type": "LocalDateTime",
+     "comment": "开始时间"
+    },
+    {
+     "name": "endTime",
+     "type": "LocalDateTime",
+     "comment": "结束时间"
+    },
+    {
+     "name": "day",
+     "type": "Long",
+     "comment": "请假天数"
+    },
+    {
+     "name": "status",
+     "type": "Integer",
+     "comment": "审批结果 枚举 {@link BpmTaskStatusEnum} 考虑到简单，所以直接复用了 BpmProcessInstanceStatusEnum 枚举，也可以自己定义一个枚举哈"
+    },
+    {
+     "name": "processInstanceId",
+     "type": "String",
+     "comment": "对应的流程编号 关联 ProcessInstance 的 id 属性"
+    }
+   ]
+  },
+  "bpm_process_instance_copy": {
+   "table": "bpm_process_instance_copy",
+   "class": "BpmProcessInstanceCopyDO",
+   "doc": "流程抄送 DO @author kyle @since 2024-01-22",
+   "fields": [
+    {
+     "name": "id",
+     "type": "Long",
+     "comment": "流程抄送 DO @author kyle @since 2024-01-22 / @TableName(value = \"bpm_process_instance_copy\", autoResultMap = true) @Data @Builder @NoArgsConstructor @AllArgsConstructor public class BpmProcessInstanceCopy"
+    },
+    {
+     "name": "startUserId",
+     "type": "Long",
+     "comment": "发起人 Id 冗余 ProcessInstance 的 startUserId 字段"
+    },
+    {
+     "name": "processInstanceName",
+     "type": "String",
+     "comment": "流程名 冗余 ProcessInstance 的 name 字段"
+    },
+    {
+     "name": "processInstanceId",
+     "type": "String",
+     "comment": "流程实例的编号 关联 ProcessInstance 的 id 属性"
+    },
+    {
+     "name": "processDefinitionId",
+     "type": "String",
+     "comment": "流程实例的流程定义编号 关联 ProcessInstance 的 processDefinitionId 属性"
+    },
+    {
+     "name": "category",
+     "type": "String",
+     "comment": "流程分类 冗余 ProcessInstance 的 category 字段"
+    },
+    {
+     "name": "activityId",
+     "type": "String",
+     "comment": "流程活动的编号 <p/> 冗余 {@link FlowNode#getId()}，对应 BPMN XML 节点编号 原因：用于查询抄送节点的表单字段权限。因为仿钉钉/飞书的抄送节点 (ServiceTask)，没有 taskId，只有 activityId"
+    },
+    {
+     "name": "activityName",
+     "type": "String",
+     "comment": "流程活动的名字 冗余 {@link FlowNode#getName()}"
+    },
+    {
+     "name": "taskId",
+     "type": "String",
+     "comment": "流程活动的编号 关联 {@link HistoricTaskInstance#getId()}"
+    },
+    {
+     "name": "userId",
+     "type": "Long",
+     "comment": "用户编号（被抄送的用户编号） 关联 system_users 的 id 属性"
+    },
+    {
+     "name": "reason",
+     "type": "String",
+     "comment": "抄送意见"
+    }
+   ]
+  }
+ }
+}
