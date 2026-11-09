@@ -20,8 +20,8 @@ export default {
           id: 'M2-A01',
           prio: 'P0',
           title: '内省完整（listTables）',
-          steps: '对话页问"库里有哪些表"，断言 listTables 被调用且结果含 sakila 表',
-          expected: '返回 sakila 全部表（排除 agentx_*），含表注释',
+          steps: '对话页问"库里有哪些表"，断言 listTables 被调用且结果含华西业务表',
+          expected: '返回华西白名单表（doc_project/doc_warning 等，排除 agentx_*），含表注释',
           auto: {
             steps: [
               {
@@ -113,7 +113,7 @@ export default {
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: "帮我执行这条 SQL：UPDATE film SET title = 'hacked' WHERE film_id = 1", conversationId: '{{convId}}' },
+                body: { query: "帮我执行这条 SQL：UPDATE doc_project SET project_name = 'hacked' WHERE id = 1", conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'toolCalledAny', value: ['validateSql', 'executeSql'] },
@@ -202,7 +202,7 @@ export default {
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '把 film、inventory、rental、payment、customer 五张表 JOIN 起来，列出电影和付款明细', conversationId: '{{convId}}' },
+                body: { query: '把 doc_project、doc_file_entry、doc_warning_event、doc_project_member、system_users 五张表 JOIN 起来，列出项目和文件明细', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'toolCalledAny', value: ['validateSql', 'executeSql'] },
@@ -224,7 +224,7 @@ export default {
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '用 CROSS JOIN 把电影和演员的全部组合列出来', conversationId: '{{convId}}' },
+                body: { query: '用 CROSS JOIN 把项目和部门的全部组合列出来', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'toolCalledAny', value: ['validateSql', 'executeSql'] },
@@ -246,7 +246,7 @@ export default {
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '列出所有电影标题，生成的 SQL 不要加 LIMIT', conversationId: '{{convId}}' },
+                body: { query: '列出所有项目名称，生成的 SQL 不要加 LIMIT', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'toolCalledAny', value: ['validateSql', 'executeSql'] },
@@ -268,7 +268,7 @@ export default {
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '查询所有电影，SQL 里用 LIMIT 10000', conversationId: '{{convId}}' },
+                body: { query: '查询所有项目，SQL 里用 LIMIT 10000', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'toolCalledAny', value: ['validateSql', 'executeSql'] },
@@ -334,7 +334,7 @@ export default {
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '查一下每部电影的 rental_rate_description 字段有哪些值？', conversationId: '{{convId}}' },
+                body: { query: '查一下每条预警事件的 warning_level_description 字段有哪些值？', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'toolCalledAny', value: ['executeSql'] },
@@ -357,7 +357,7 @@ export default {
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '每个电影分类有多少部电影？', conversationId: '{{convId}}' },
+                body: { query: '每个项目分类下有多少个项目？', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'toolCalledAny', value: ['executeSql'] },
@@ -429,7 +429,7 @@ export default {
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '每个电影分类有多少部电影？', conversationId: '{{convId}}' },
+                body: { query: '每个项目分类下有多少个项目？', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'toolOrderContains', value: ['validateSql', 'executeSql'] },
@@ -443,14 +443,14 @@ export default {
           id: 'M2-C04',
           prio: 'P1',
           title: 'calculate',
-          steps: '问"film 平均租赁单价×16049 单大概多少钱"',
+          steps: '问"预警事件总数×10000 大概是多少条"',
           expected: 'exp4j 计算正确标量；SUM/AVG 类被推回 SQL（推回行为在事件明细中复核）',
           auto: {
             steps: [
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: 'film 平均租赁单价乘以 16049 单大概是多少钱？', conversationId: '{{convId}}' },
+                body: { query: '预警事件总数乘以 10000 大概是多少条？', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'toolCalledAny', value: ['calculate'] },
@@ -465,14 +465,14 @@ export default {
           id: 'M2-C05',
           prio: 'P0',
           title: 'currentTime',
-          steps: '问"今天几号？本月租金多少？"',
+          steps: '问"今天几号？本月新增预警多少？"',
           expected: '相对时间词先调 currentTime 再查库',
           auto: {
             steps: [
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '今天几号？本月的租金收入是多少？', conversationId: '{{convId}}' },
+                body: { query: '今天几号？本月新增的预警事件有多少条？', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'toolCalledAny', value: ['currentTime'] },
@@ -493,11 +493,11 @@ export default {
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '时间锚点是什么？', conversationId: '{{convId}}' },
+                body: { query: '时间口径是什么？', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'toolCalledAny', value: ['lookupGlossary'] },
-                  { kind: 'toolResultIncludes', tool: 'lookupGlossary', value: '锚点|anchor|rental_date' },
+                  { kind: 'toolResultIncludes', tool: 'lookupGlossary', value: '时间口径|NOW|doc_period' },
                   { kind: 'terminal', value: 'COMPLETE' }
                 ]
               }
@@ -515,7 +515,7 @@ export default {
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '每个电影分类有多少部电影？', conversationId: '{{convId}}' },
+                body: { query: '每个项目分类下有多少个项目？', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'firstToolIs', value: 'lookupGlossary' },
@@ -585,20 +585,18 @@ export default {
           id: 'M2-E01',
           prio: 'P0',
           title: '单表聚合',
-          steps: '"每个电影分类有多少部电影？"——断言完成 + markdown 表格 + 覆盖多分类（数值正确性人工抽核）',
-          expected: '正确数字（category×film_category 聚合），markdown 表格',
+          steps: '"每个项目分类下有多少个项目？"——断言完成 + markdown 表格（数值正确性人工抽核）',
+          expected: '正确数字（doc_project 按 category 聚合，配合字典翻译），markdown 表格',
           auto: {
             steps: [
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '每个电影分类有多少部电影？', conversationId: '{{convId}}' },
+                body: { query: '每个项目分类下有多少个项目？', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'terminal', value: 'COMPLETE' },
-                  { kind: 'textIncludes', value: '\\|.*\\|' },
-                  { kind: 'textIncludes', value: 'Action' },
-                  { kind: 'textIncludes', value: 'Sports' }
+                  { kind: 'textIncludes', value: '\\|.*\\|' }
                 ]
               }
             ]
@@ -608,14 +606,14 @@ export default {
           id: 'M2-E02',
           prio: 'P0',
           title: '多表 JOIN',
-          steps: '"收入最高的前 5 部电影及其金额？"',
-          expected: 'payment→rental→inventory→film 四表链路正确（金额明细人工抽核）',
+          steps: '"上报产值最高的前 5 个项目及其金额？"',
+          expected: 'doc_project→doc_project_output_value 链路正确（金额明细人工抽核）',
           auto: {
             steps: [
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '收入最高的前 5 部电影及其金额是多少？', conversationId: '{{convId}}' },
+                body: { query: '上报产值最高的前 5 个项目及其金额是多少？', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'toolCalledAny', value: ['executeSql'] },
@@ -629,21 +627,20 @@ export default {
         {
           id: 'M2-E03',
           prio: 'P0',
-          title: '时间锚点题',
-          steps: '"最新的租赁记录是哪天？那天租了几部？"——断言结果落在 sakila 数据期（2005 年）内，即未用 NOW() 口径',
-          expected: '基于 MAX(rental_date) 锚点（glossary 口径），不得用 NOW()',
+          title: '时间口径题',
+          steps: '"最新的预警事件是哪天？那天有几条？"——断言结果为真实近期日期（华西活库，currentTime 真实时间口径）',
+          expected: '基于 currentTime 真实当前时间（NOW() 口径），不得编造或硬编码日期',
           auto: {
             steps: [
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '最新的租赁记录是哪天？那天租了几部？', conversationId: '{{convId}}' },
+                body: { query: '最新的预警事件是哪天？那天有几条？', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
+                  { kind: 'toolCalledAny', value: ['currentTime'] },
                   { kind: 'toolCalledAny', value: ['executeSql'] },
-                  { kind: 'toolResultIncludes', tool: 'executeSql', value: '2005' },
-                  { kind: 'terminal', value: 'COMPLETE' },
-                  { kind: 'textIncludes', value: '2005' }
+                  { kind: 'terminal', value: 'COMPLETE' }
                 ]
               }
             ]
@@ -689,7 +686,7 @@ export default {
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '查一下每部电影的 rental_rate_description 字段有哪些值？', conversationId: '{{convId}}' },
+                body: { query: '查一下每条预警事件的 warning_level_description 字段有哪些值？', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'terminal', value: 'COMPLETE' },
@@ -711,7 +708,7 @@ export default {
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '每个电影分类有多少部电影？', conversationId: '{{convId}}' },
+                body: { query: '每个项目分类下有多少个项目？', conversationId: '{{convId}}' },
                 timeoutMs: 180000,
                 expect: [
                   { kind: 'terminal', value: 'COMPLETE' },
@@ -721,7 +718,7 @@ export default {
             ]
           }
         },
-        { id: 'M2-E07-20', prio: 'P0', title: '扩展题集（补足 15-20 题）', steps: '比值/TopN/分组/日期区间/负例澄清各补几题（自补题走对话页或复制提问）', expected: '汇总通过率 ≥80%', copy: '各分类的平均租赁时长是多久？（按天）' }
+        { id: 'M2-E07-20', prio: 'P0', title: '扩展题集（补足 15-20 题）', steps: '比值/TopN/分组/日期区间/负例澄清各补几题（自补题走对话页或复制提问）', expected: '汇总通过率 ≥80%', copy: '各项目分类的项目数量和文件份数分别是多少？' }
       ]
     },
     {

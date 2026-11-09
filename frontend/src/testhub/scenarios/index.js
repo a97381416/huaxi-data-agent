@@ -15,12 +15,12 @@ export const milestones = [m0, m1, m2, m3, m4, m5, m6, m7, m8]
 
 /** 公共测试环境说明（对应 test/M0-测试用例.md 的测试环境表） */
 export const envNotes = [
-  '后端：cd backend && mvn spring-boot:run -pl data-agent-server（端口 8889）',
+  '后端：cd backend && mvn install -DskipTests && mvn -pl data-agent-server spring-boot:run（端口 8889）',
   '前端：cd frontend && npm run dev（端口 5173，被占用时自动 +1）',
-  '数据库：192.168.2.61 / mini_data_agent（已导入 sql/init.sql + sakila）',
-  'Redis：192.168.2.61:6379 db9（Sa-Token 会话）',
-  '测试账号：admin / mgr_test / analyst_test / sh_sales / cross_analyst，密码统一 123456',
-  '自动用例由页面直接发起真实 HTTP/SSE 请求并判分；手工用例按步骤操作后标记结果；结果仅存本机浏览器（localStorage）'
+  '数据库：192.168.2.61 / zrkj-huaxi（华西业务库 public schema，65 张白名单表 + agentx_* 平台表）',
+  'Redis：192.168.2.61:6379 db9（与华西主项目共用，key 前缀 huaxi-data-agent:）',
+  '测试账号：华西 system_users 账号体系（admin 等，BCrypt 校验）；下方用例中 mgr_test/analyst_test/sh_sales 等为上游历史账号，华西版以 M-H5 验收题集为准',
+  '⚠ 本页面题库移植自上游 my-data-agent（M0-M8 验收），业务题已替换为华西等价题；上游专属的账号/数据夹具断言标注后保留，结果仅存本机浏览器（localStorage）'
 ]
 
 export function getMilestone(m) {

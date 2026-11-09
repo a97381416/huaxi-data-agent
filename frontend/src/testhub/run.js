@@ -88,7 +88,7 @@ async function resolveValue(v, ctx) {
   return v
 }
 
-/** 默认带 UI 登录 token（与 axios 封装一致）；步骤自己声明了 satoken/Authorization 则不覆盖 */
+/** 默认带 UI 登录 token（与 axios 封装一致：Authorization Bearer）；步骤自己声明了 Authorization 则不覆盖 */
 async function buildHeaders(rawHeaders, ctx, noToken) {
   const headers = {}
   const entries = Object.entries(rawHeaders || {})
@@ -96,7 +96,7 @@ async function buildHeaders(rawHeaders, ctx, noToken) {
   for (const [k, v] of entries) headers[k] = await resolveValue(v, ctx)
   if (!noToken && !hasAuth) {
     const uiToken = useUserStore().token
-    if (uiToken) headers['satoken'] = uiToken
+    if (uiToken) headers['Authorization'] = `Bearer ${uiToken}`
   }
   return headers
 }

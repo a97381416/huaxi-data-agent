@@ -66,7 +66,7 @@ export default {
           prio: 'P0',
           title: '题型覆盖',
           steps: 'GET /agent/eval/dataset/check',
-          expected: '含多轮题、数据权限题（多账号 run_role）、时间锚点题（MAX(rental_date) 口径）',
+          expected: '含多轮题、数据权限题（多账号 run_role）、时间口径题（currentTime 真实时间口径）',
           auto: {
             steps: [
               {
@@ -114,9 +114,9 @@ export default {
                 url: '/agent/eval/judge',
                 timeoutMs: 130000,
                 body: {
-                  question: '影片库中共有多少部影片？',
-                  goldAnswer: '影片库共有 1000 部影片',
-                  agentAnswer: '经过查询 film 表统计，影片库共有 1000 部影片。'
+                  question: '项目档案库共有多少个项目？',
+                  goldAnswer: '项目档案库共有 28 个项目',
+                  agentAnswer: '经过查询 doc_project 表统计，项目档案库共有 28 个项目。'
                 },
                 expect: [
                   { kind: 'status', value: 200 },

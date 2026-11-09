@@ -58,7 +58,7 @@
         </el-button>
       </el-form>
 
-      <div class="login-tip">默认账号 admin / 123456</div>
+      <div class="login-tip">华西项管平台 · 智能问数</div>
     </el-card>
   </div>
 </template>

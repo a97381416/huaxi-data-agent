@@ -1,31 +1,54 @@
 package com.llmetor.dataagent.dataagent.permission;
 
-import com.llmetor.dataagent.common.enums.DataScope;
-
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 
 /**
- * 数据权限改写的输入上下文：当前用户的生效数据范围与部门集合。
+ * 数据权限改写的输入上下文：当前用户各来源可见范围的<b>并集</b>落点模型。
  *
- * <p>由 {@link DataScopeResolver} 按用户角色解析：多角色取最大范围，
- * 解析失败回落 SELF（最小权限）。DEPT/DEPT_AND_SUB 时携带用户挂载的部门
- * （多部门并集，LinkedHashSet 去重保序）；SELF 时部门集合为空。
+ * <p>与主后端 {@code PermissionServiceImpl#getDeptDataPermission} 的
+ * {@code DeptDataPermissionRespDTO} 对齐（all/self/deptIds；projectIds 成员档已废弃）：
+ * 角色可多选数据范围（data_scope_codes 如 [3,6]）、用户可挂多角色，
+ * 各档位全部折算进本模型后取并集，不再是"单一最大档"。
  *
- * @param userId    当前用户 ID
- * @param dataScope 生效数据范围（ALL 不注入）
- * @param deptIds   用户直接挂载的部门 ID（DEPT 用）；DEPT_AND_SUB 由改写器经 DeptTreeCache 展开后再用
+ * <ul>
+ *   <li>{@code all}：全部数据（任一角色勾选 1-全部），规则层短路不注入权限条件</li>
+ *   <li>{@code deptIds}：部门落点并集——本部门(3)/本部门及以下(4，已展开子孙)/
+ *       指定部门(2，含本部门)/<b>兼职部门(6，system_user_concurrent_dept 镜像表)</b></li>
+ *   <li>{@code self}：仅本人（5），按各表 creator/责任人列注入</li>
+ * </ul>
+ *
+ * @param userId  当前用户 ID
+ * @param all     是否全部数据
+ * @param self    是否含"仅本人"档
+ * @param deptIds 部门 ID 并集（本部门及以下已在解析阶段展开子孙）
  */
-public record DataScopeContext(Long userId, DataScope dataScope, Set<Long> deptIds) {
+public record DataScopeContext(Long userId, boolean all, boolean self, Set<Long> deptIds) {
 
-    public static DataScopeContext all(Long userId) {
-        return new DataScopeContext(userId, DataScope.ALL, Set.of());
+    public static DataScopeContext allOf(Long userId) {
+        return new DataScopeContext(userId, true, false, Set.of());
     }
 
-    public static DataScopeContext self(Long userId) {
-        return new DataScopeContext(userId, DataScope.SELF, Set.of());
+    public static DataScopeContext selfOnly(Long userId) {
+        return new DataScopeContext(userId, false, true, Set.of());
     }
 
-    public boolean injectNothing() {
-        return dataScope == DataScope.ALL;
+    /**
+     * 审计摘要（日志 / RewriteResult 用）：如
+     * {@code ALL}、{@code dept[11,111]∪self}、{@code none}。
+     */
+    public String summary() {
+        if (all) {
+            return "ALL";
+        }
+        List<String> parts = new ArrayList<>();
+        if (deptIds != null && !deptIds.isEmpty()) {
+            parts.add("dept" + deptIds);
+        }
+        if (self) {
+            parts.add("self");
+        }
+        return parts.isEmpty() ? "none" : String.join("∪", parts);
     }
 }

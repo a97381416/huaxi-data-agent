@@ -47,7 +47,7 @@ class ExplainPrecheckServiceTest {
 
     @Test
     void maxFunctionAggregateAllowed() {
-        ExplainVerdict v = service.precheck("SELECT MAX(rental_date) FROM rental");
+        ExplainVerdict v = service.precheck("SELECT MAX(create_time) FROM doc_warning_event");
         assertTrue(v.allowed());
     }
 

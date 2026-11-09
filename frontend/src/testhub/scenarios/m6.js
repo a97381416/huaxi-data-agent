@@ -17,11 +17,11 @@ export default {
       scenarios: [
         { id: 'M6-A01', prio: 'P0', title: '目录→DB 同步', steps: 'skills 目录放合法技能目录，等待同步或重启', expected: 'agentx_skill 表出现记录：name 唯一、description 来自 frontmatter', code: 'SELECT name, description, enabled FROM agentx_skill;' },
         { id: 'M6-A02', prio: 'P1', title: '3 分钟定时同步', steps: '改动目录内容后等待', expected: '定时任务刷新 DB（不重启生效）' },
-        { id: 'M6-A03', prio: 'P0', title: 'zip 上传', steps: 'POST /api/skills/upload 传合法 zip', expected: '解压落目录+DB 入库；SKILL.md 3 层内可定位；frontmatter 提取 name/description', code: 'curl -X POST -H "satoken: $TOKEN" -F "file=@my-skill.zip" http://localhost:8889/api/skills/upload' },
+        { id: 'M6-A03', prio: 'P0', title: 'zip 上传', steps: 'POST /api/skills/upload 传合法 zip', expected: '解压落目录+DB 入库；SKILL.md 3 层内可定位；frontmatter 提取 name/description', code: 'curl -X POST -H "Authorization: Bearer $TOKEN" -F "file=@my-skill.zip" http://localhost:8889/api/skills/upload' },
         { id: 'M6-A04', prio: 'P0', title: 'Zip Slip 防护', steps: '构造含 ../../evil.zip 路径的 zip 上传', expected: '拒绝，不写出 skills 目录外' },
         { id: 'M6-A05', prio: 'P0', title: '路径穿越校验', steps: 'name 含 ../ 或 : 等', expected: 'validateSkillName 拒绝' },
         { id: 'M6-A06', prio: 'P1', title: '覆盖上传保状态', steps: '上传同名 zip', expected: '覆盖更新，enabled 状态保留；新技能默认 enabled=1' },
-        { id: 'M6-A07', prio: 'P0', title: '启停', steps: 'PUT /api/skills/{name}/toggle', expected: '状态翻转并影响 Agent 可见性（见 B 组）', code: 'curl -X PUT -H "satoken: $TOKEN" http://localhost:8889/api/skills/data-analysis/toggle' },
+        { id: 'M6-A07', prio: 'P0', title: '启停', steps: 'PUT /api/skills/{name}/toggle', expected: '状态翻转并影响 Agent 可见性（见 B 组）', code: 'curl -X PUT -H "Authorization: Bearer $TOKEN" http://localhost:8889/api/skills/data-analysis/toggle' },
         { id: 'M6-A08', prio: 'P0', title: '删除', steps: 'DELETE /api/skills/{name}', expected: '目录+DB 删除；孤儿记录被同步清理' },
         {
           id: 'M6-A09',
@@ -31,7 +31,7 @@ export default {
           expected: '403',
           auto: {
             steps: [
-              { method: 'POST', url: '/api/skills/upload', headers: { satoken: '{{token:sh_sales}}' }, expect: [{ kind: 'status', value: 403 }] }
+              { method: 'POST', url: '/api/skills/upload', headers: { Authorization: 'Bearer {{token:sh_sales}}' }, expect: [{ kind: 'status', value: 403 }] }
             ]
           }
         },
@@ -43,7 +43,7 @@ export default {
           expected: '返回内置三技能（data-analysis / domain-name-brainstormer / skill-creator），enabled 状态正确',
           auto: {
             steps: [
-              { method: 'GET', url: '/api/skills', headers: { satoken: '{{token:admin}}' }, expect: [{ kind: 'bodyCode', value: 200 }] }
+              { method: 'GET', url: '/api/skills', headers: { Authorization: 'Bearer {{token:admin}}' }, expect: [{ kind: 'bodyCode', value: 200 }] }
             ]
           },
           note: '上线后端 SkillController（GET /api/skills）已交付，本用例真实判分'

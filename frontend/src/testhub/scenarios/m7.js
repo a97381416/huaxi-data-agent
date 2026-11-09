@@ -54,7 +54,7 @@ export default {
                 kind: 'sse',
                 url: '/agent/stream',
                 timeoutMs: 240000,
-                body: { query: '每个电影分类有多少部电影？', conversationId: '{{convId}}' },
+                body: { query: '每个项目分类下有多少个项目？', conversationId: '{{convId}}' },
                 expect: [
                   { kind: 'terminal', value: 'COMPLETE' },
                   { kind: 'toolNameCalled', value: 'tool_search' },

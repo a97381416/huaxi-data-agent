@@ -23,8 +23,8 @@ export default {
         { id: 'M5-A06', prio: 'P1', title: '单轮文件数上限', steps: '一轮传 4 个文件', expected: '第 4 个被拒（max-count=3）' },
         { id: 'M5-A07', prio: 'P1', title: '大小限制', steps: '>100MB 文件', expected: '拒绝' },
         { id: 'M5-A08', prio: 'P2', title: '表自动建', steps: '首次启动观察 agentx_file', expected: '自动建表（幂等补列补索引）' },
-        { id: 'M5-A09', prio: 'P1', title: '预览', steps: 'GET /api/files/{id}/preview', expected: '原始字节正确；图片 MIME 按扩展名映射；缓存 7 天头', code: 'curl -i -H "satoken: $TOKEN" "http://localhost:8889/api/files/<id>/preview" -o preview.bin' },
-        { id: 'M5-A10', prio: 'P1', title: '删除', steps: 'DELETE /api/files/{id}', expected: 'MinIO+DB 先后删；MinIO 失败仅 warn 不 500', code: 'curl -X DELETE -H "satoken: $TOKEN" "http://localhost:8889/api/files/<id>"' },
+        { id: 'M5-A09', prio: 'P1', title: '预览', steps: 'GET /api/files/{id}/preview', expected: '原始字节正确；图片 MIME 按扩展名映射；缓存 7 天头', code: 'curl -i -H "Authorization: Bearer $TOKEN" "http://localhost:8889/api/files/<id>/preview" -o preview.bin' },
+        { id: 'M5-A10', prio: 'P1', title: '删除', steps: 'DELETE /api/files/{id}', expected: 'MinIO+DB 先后删；MinIO 失败仅 warn 不 500', code: 'curl -X DELETE -H "Authorization: Bearer $TOKEN" "http://localhost:8889/api/files/<id>"' },
         {
           id: 'M5-A-PROBE',
           prio: 'P0',

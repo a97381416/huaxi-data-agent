@@ -98,7 +98,7 @@ public class MschemaIntrospector {
         }
     }
 
-    /** 读表 + 视图清单（sakila 的 customer_list 等预聚合视图对分析同样有价值） */
+    /** 读表 + 视图清单（预聚合视图对分析同样有价值） */
     private Map<String, TableDef> readTables(DatabaseMetaData meta, String catalog,
                                              String schema, List<Pattern> excludePatterns,
                                              Set<String> includes) throws SQLException {

@@ -1,10 +1,10 @@
 # 本地开发环境连接（来自 项目基础环境.md，环境在远程，不要自动执行任何库变更脚本）
 spring:
   datasource:
-    # M-H1：华西 PG 库（同库同 schema：业务表 + system_* + agentx_*×7；账号/库名联调时按实际填）
-    url: jdbc:postgresql://192.168.2.61:5432/huaxi?currentSchema=public
-    username: postgres
-    password: postgres
+    # M-H1：华西 PG 库（同库同 schema：业务表 + system_* + agentx_*×7；账号/库名对齐主项目 application-local.yaml）
+    url: jdbc:postgresql://192.168.2.61:5432/zrkj-huaxi?currentSchema=public
+    username: pgvector
+    password: pgvector
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 5
@@ -29,7 +29,7 @@ spring:
 
 # ── M6 技能目录（绝对路径：spring-boot:run -pl 的 CWD 是模块目录，相对路径会解析错） ──
 skills:
-  directory: D:/work/llmetor-manage/my-data-agent/backend/skills
+  directory: D:/work/zrkj-huaxi/code/huaxi-data-agent/backend/skills
 
 
 # ── M6 Tavily 联网搜索（项目基础环境.md；mcp-url 保持默认 https://mcp.tavily.com/mcp/，Bearer 认证） ──

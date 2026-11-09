@@ -28,9 +28,9 @@ public final class LookupGlossaryTool {
             查询业务术语的标准口径（含定义 + 可复用 SQL 片段 + 同义词）。
 
             何时使用本工具：
-            - 用户问题涉及"活跃客户""VIP""热门影片""高消费客户""租金"等业务指标术语时
+            - 用户问题涉及"备案率""预警处理率""产值口径""形象进度""缺口"等业务指标术语时
             - 用户问题涉及"近 N 个月""最近""本月""上月""今年"等相对时间时
-              （sakila 是历史样本库，所有相对时间必须基于 MAX(rental_date) 而非 NOW()）
+              （华西库为在用生产库，相对时间直接用 currentTime 的真实当前时间即可）
 
             <可用术语列表>
             %s
@@ -42,7 +42,7 @@ public final class LookupGlossaryTool {
 
     /** 工具入参 */
     public record GlossaryInput(
-            @ToolParam(description = "要查的术语名或同义词，必传，如 \"活跃客户\"、\"VIP\"、\"近3个月\"、\"最近\"",
+            @ToolParam(description = "要查的术语名或同义词，必传，如 \"备案率\"、\"产值口径\"、\"近3个月\"、\"最近\"",
                     required = true)
             String term) {
     }

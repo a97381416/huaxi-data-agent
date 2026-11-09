@@ -1,6 +1,6 @@
 /**
  * /api/mcp/servers MCP 服务管理接口（admin 专用，对应后端 McpController）。
- * request 封装已处理 satoken 头 / R<T> 解包 / 401 跳转，此处只声明端点。
+ * request 封装已处理 Authorization Bearer 头 / R<T> 解包 / 401 跳转，此处只声明端点。
  *
  * 凭据契约：后端脱敏回传（token → sk-***b4 形态；env 值对疑似密钥键脱敏）；
  * 编辑时原样回传含 "***" 的值 = 保持库中原值不修改。

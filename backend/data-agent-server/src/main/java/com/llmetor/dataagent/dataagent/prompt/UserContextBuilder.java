@@ -2,20 +2,25 @@ package com.llmetor.dataagent.dataagent.prompt;
 
 import com.llmetor.dataagent.auth.service.HuaxiAuthService;
 import com.llmetor.dataagent.auth.service.HuaxiAuthService.HuaxiUserInfo;
+import com.llmetor.dataagent.dataagent.permission.DataScopeContext;
+import com.llmetor.dataagent.dataagent.permission.DataScopeResolver;
 import com.llmetor.dataagent.dataagent.safety.SensitiveFilter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
+import java.util.Map;
+import java.util.StringJoiner;
 
 /**
- * 用户上下文构建器（M-H2 华西版）：把"当前登录人是谁、能看多大范围"写进
- * system prompt 尾部——用户信息与数据范围均来自华西 yudao 表
- * （system_users/system_role/system_user_role/system_dept）。
- * 原 sakila 版的个人档案段（user_profile）华西无此表，已移除。
+ * 用户上下文构建器（M-H4 对齐版）：把"当前登录人是谁、能看多大范围"写进
+ * system prompt 尾部——用户信息来自华西 yudao 表（system_users/system_role/
+ * system_user_role/system_dept），数据范围由 {@link DataScopeResolver} 按
+ * 主后端并集口径解析（角色多档 ∪ 兼职部门 ∪ 项目成员）。
+ * 上游版的个人档案段（user_profile）华西无此表，已移除。
  */
 @Slf4j
 @Service
@@ -23,6 +28,7 @@ import java.util.Locale;
 public class UserContextBuilder {
 
     private final HuaxiAuthService authService;
+    private final DataScopeResolver dataScopeResolver;
     private final SensitiveFilter sensitiveFilter;
 
     @Value("${data-agent.data-permission.enabled:false}")
@@ -50,13 +56,26 @@ public class UserContextBuilder {
         sb.append("- 昵称：").append(nullSafe(user.nickname())).append("\n");
         appendRoles(sb, user);
         appendDept(sb, user);
+        appendRoleScopes(sb, user);
         appendDataScope(sb, user);
+        appendReferenceRules(sb, user);
         appendExecutionMode(sb);
-        sb.append("\n### 用户问\"我的 xxx\"时的指代\n");
-        sb.append("- 指当前用户（ID=").append(user.id()).append("，")
-                .append(nullSafe(user.nickname())).append("）参与的数据：项目按 doc_project_member 成员关系，")
-                .append("预警按责任人 responsible_user_id，通用数据按 creator。\n");
         return sb.toString();
+    }
+
+    /** 逐角色数据范围明细：如 "申报人员（本人、兼职部门）"——用户能看多大范围的判定依据 */
+    private void appendRoleScopes(StringBuilder sb, HuaxiUserInfo user) {
+        List<String> roleScopes;
+        try {
+            roleScopes = dataScopeResolver.describeRoleScopes(user.id());
+        } catch (Exception e) {
+            log.warn("[UserContext] 角色数据范围加载失败 userId={}: {}", user.id(), e.getMessage());
+            return;
+        }
+        if (roleScopes == null || roleScopes.isEmpty()) {
+            return;
+        }
+        sb.append("- 角色数据范围：").append(String.join("；", roleScopes)).append("\n");
     }
 
     private void appendRoles(StringBuilder sb, HuaxiUserInfo user) {
@@ -72,17 +91,54 @@ public class UserContextBuilder {
         sb.append("- 主部门：").append(nullSafe(user.deptName()).isEmpty() ? "未挂载" : user.deptName()).append("\n");
     }
 
-    /** 生效数据范围：让 LLM 知道可见范围，范围类问题（"我的部门""全部"）不再靠猜 */
+    /**
+     * 生效数据范围：按主后端并集口径如实输出（部门并集含兼职部门 ∪ 本人创建），
+     * 让 LLM 知道可见范围，范围类问题（"我能看到哪些项目""全部"）不再靠猜。
+     */
     private void appendDataScope(StringBuilder sb, HuaxiUserInfo user) {
-        String scope = nullSafe(user.dataScope()).toUpperCase(Locale.ROOT);
-        String desc = switch (scope) {
-            case "ALL" -> "ALL——全部数据";
-            case "DEPT_AND_SUB" -> "DEPT_AND_SUB——本部门及全部子部门";
-            case "DEPT" -> "DEPT——仅本部门（不含子部门）";
-            case "CUSTOM" -> "CUSTOM——角色配置的指定部门集合";
-            default -> "SELF——仅本人的数据（默认最小范围）";
-        };
-        sb.append("- 生效数据范围：").append(desc).append("\n");
+        DataScopeContext ctx;
+        try {
+            ctx = dataScopeResolver.resolve(user.id());
+        } catch (Exception e) {
+            log.warn("[UserContext] 数据范围解析失败 userId={}: {}", user.id(), e.getMessage());
+            sb.append("- 生效数据范围：解析失败（按最小范围仅本人对待）\n");
+            return;
+        }
+        if (ctx.all()) {
+            sb.append("- 生效数据范围：ALL——全部数据\n");
+            return;
+        }
+        List<String> parts = new ArrayList<>();
+        if (!ctx.deptIds().isEmpty()) {
+            Map<Long, String> names = dataScopeResolver.getDeptNames(ctx.deptIds());
+            StringJoiner deptDesc = new StringJoiner("、");
+            ctx.deptIds().forEach(id -> deptDesc.add(names.getOrDefault(id, "部门#" + id)));
+            parts.add("部门数据（" + deptDesc + "）");
+        }
+        if (ctx.self()) {
+            parts.add("本人创建的数据");
+        }
+        if (parts.isEmpty()) {
+            sb.append("- 生效数据范围：无（业务数据均不可见）\n");
+        } else {
+            sb.append("- 生效数据范围（多来源并集）：").append(String.join(" ∪ ", parts)).append("\n");
+        }
+    }
+
+    /** "项目"类问法的指代与口径：可见范围严格按角色数据权限档位叠加，回答区分本人创建/非本人创建 */
+    private void appendReferenceRules(StringBuilder sb, HuaxiUserInfo user) {
+        sb.append("\n### 用户问\"项目\"时的指代与口径\n");
+        sb.append("- **可见范围的构成（严格按档位叠加，无默认组合）**：")
+                .append("按上方\"角色数据范围\"逐角色并集计算（六种档位：全部/指定部门+本部门/本部门/本部门及以下/本人/兼职部门）；")
+                .append("**\"本人创建\"仅当角色含\"本人\"档时才生效**，不存在默认的\"本人+兼职部门\"之类的组合。\n");
+        sb.append("- \"我能看到哪些项目 / 我能看多少项目 / 项目清单 / 全部项目\"（问可见范围）：直接查 doc_project，")
+                .append("**不要手写任何范围过滤**（creator=、dept_id= 等）——系统按上面的数据范围自动注入，")
+                .append("默认即按角色数据权限过滤，无需用户在问题里说明。\n");
+        sb.append("- \"我的 / 我创建的项目\"（问个人关系）：可见范围内加 creator=当前用户 过滤（同样受数据权限约束）。\n");
+        sb.append("- **清单/数量类回答必须区分归属**：查询 SELECT 带上 creator 列，先展示/统计\"本人创建\"")
+                .append("（creator=当前用户），再展示/统计\"权限范围内其他\"（creator≠当前用户，来自部门/兼职部门等档位）。\n");
+        sb.append("- 草稿项目（status=0）仅创建者本人可见，系统已自动注入 (status <> 0 OR creator=当前用户)，不要手写该条件。\n");
+        sb.append("- 预警按责任人 responsible_user_id；通用数据按 creator。\n");
     }
 
     private void appendExecutionMode(StringBuilder sb) {
@@ -94,6 +150,9 @@ public class UserContextBuilder {
             sb.append("- **数据权限已开启**：SQL 执行前系统会按上面的数据范围自动注入 WHERE/ON ")
                     .append("过滤条件（executeSql 返回的 executedSql 可能包含你未编写的条件，那是权限注入，属正常现象）。")
                     .append("你不需要（也不应该）在 SQL 里手写权限过滤；不要尝试用子查询/JOIN 绕过——绕不过去。\n");
+            sb.append("- **无权限＝查不到**：对不在数据范围内的对象，只回答\"未在您的数据范围内找到\"，")
+                    .append("不透露其存在性与任何字段值；严禁用 OR 连接等方式构造可能放大可见范围的查询，")
+                    .append("也不要在思考或回答里分析注入的条件与内部 ID。\n");
         }
         if (sensitiveFilter.isEnabled()) {
             sb.append("- **敏感字段脱敏已开启**：查询结果里值为 `********` 的单元格是系统脱敏后的展示，")

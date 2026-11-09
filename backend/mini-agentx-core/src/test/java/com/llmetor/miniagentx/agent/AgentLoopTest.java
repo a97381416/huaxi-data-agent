@@ -110,7 +110,12 @@ class AgentLoopTest {
 
         List<AgentStreamEvent.Type> t = types(events);
         assertTrue(t.contains(AgentStreamEvent.Type.TOOL_START), "应有 TOOL_START: " + t);
-        assertFalse(t.contains(AgentStreamEvent.Type.TOOL_END), "失败不发 TOOL_END: " + t);
+        // 失败也发 TOOL_END（success=false），前端徽章才能落地为失败态而不是永远转圈
+        AgentStreamEvent failedEnd = events.stream()
+                .filter(e -> e.getType() == AgentStreamEvent.Type.TOOL_END).findFirst().orElseThrow();
+        assertEquals("boom", failedEnd.getToolName(), "失败 TOOL_END 应带工具名");
+        assertEquals(Boolean.FALSE, failedEnd.getSuccess(), "失败 TOOL_END 应带 success=false");
+        assertTrue(failedEnd.getResult().contains("error"), "失败 TOOL_END 的 result 应为错误 JSON: " + failedEnd.getResult());
         assertTrue(t.contains(AgentStreamEvent.Type.COMPLETE), "循环未终止: " + t);
 
         // 第二轮请求里应包含错误 JSON 回灌

@@ -23,8 +23,8 @@ public class TimeTool {
             description = "获取当前日期、时间、星期、时区、Unix 时间戳等基础时间信息。" +
                     "当用户问题涉及「今天/现在/当前/最近/本月/本年/本周/上个月/下周一」等相对时间概念时必须调用，" +
                     "确保后续日期计算、时间范围圈定、时间差推理都基于真实当前时间，避免幻觉日期。" +
-                    "注意：sakila 是历史样本库，查库时相对时间必须基于数据最大时间（见 lookupGlossary 时间锚点），" +
-                    "本工具返回的是真实世界当前时间，用于回答\"今天几号\"这类问题。")
+                    "注意：华西业务库为在用生产库，查库时的时间条件直接基于本工具返回的真实当前时间，" +
+                    "不要猜测或硬编码日期。")
     public String currentTime() {
         ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Asia/Shanghai"));
         ZoneId zone = now.getZone();

@@ -27,7 +27,7 @@ export function openAgentStream(body, onEvent, handlers = {}) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          satoken: userStore.token || ''
+          Authorization: `Bearer ${userStore.token || ''}`
         },
         body: JSON.stringify(body),
         signal: ctrl.signal

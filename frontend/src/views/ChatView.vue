@@ -1,5 +1,5 @@
 <template>
-  <div class="flex h-[calc(100vh-56px)] w-full bg-gray-50">
+  <div class="flex h-full w-full bg-gray-50">
     <!-- 左侧：历史会话 Sidebar（280px 固定宽） -->
     <aside class="flex w-[280px] shrink-0 flex-col border-r border-gray-100 bg-white">
       <div class="p-3">
@@ -108,52 +108,108 @@
             <!-- 助手消息：白色卡片 + 微阴影，timeline 驱动（thinking / tool / todo / text / error）：靠左 -->
             <div v-else class="flex justify-start">
               <div class="chat-timeline w-full rounded-2xl rounded-tl-sm border border-gray-100 bg-white px-5 py-4 shadow-sm">
-                <template v-for="(item, ti) in msg.timeline" :key="ti">
-                  <!-- 思考折叠区：轻盈的文字级折叠 -->
-                  <div v-if="item.type === 'thinking' && item.content">
-                    <button
-                      type="button"
-                      class="flex items-center gap-1.5 text-xs text-gray-400 transition-colors duration-200 hover:text-gray-600"
-                      @click="item.open = !item.open"
-                    >
-                      <el-icon v-if="msg.streaming && !hasTextAfter(msg, ti)" :size="13" class="is-loading"><Loading /></el-icon>
-                      <el-icon v-else :size="13"><View /></el-icon>
-                      <span>思考过程</span>
-                      <el-icon :size="11" class="transition-transform duration-200" :class="item.open ? 'rotate-180' : ''">
+                <template v-for="(block, bi) in groupedTimeline(msg)" :key="bi">
+                  <!-- 执行过程聚合组：连续 thinking/tool 压成一条，流式自动展开徽章流，结束后自动收起 -->
+                  <div v-if="block.group">
+                    <button type="button" class="pg-header" @click="toggleGroup(msg, block)">
+                      <el-icon v-if="pgIsRunning(msg, block)" :size="13" class="pg-icon running"><Loading /></el-icon>
+                      <el-icon v-else-if="pgIssueCount(block)" :size="13" class="pg-icon issue"><CircleCloseFilled /></el-icon>
+                      <el-icon v-else :size="13" class="pg-icon done"><CircleCheckFilled /></el-icon>
+                      <span>执行过程</span>
+                      <span class="pg-meta">{{ pgMetaText(msg, block) }}</span>
+                      <div v-if="pgIsRunning(msg, block) && pgTools(block).length" class="pg-bar">
+                        <i :style="{ width: pgProgress(block) + '%' }"></i>
+                      </div>
+                      <el-icon :size="11" class="transition-transform duration-200" :class="pgExpanded(msg, block) ? 'rotate-180' : ''">
                         <ArrowDown />
                       </el-icon>
                     </button>
-                    <div v-show="item.open" class="think-body thin-scroll">{{ item.content }}</div>
-                  </div>
-
-                  <!-- 工具条目：名称 + 状态 + 结果展开 -->
-                  <div v-else-if="item.type === 'tool'" class="w-fit cursor-pointer" @click="item.showResult = !item.showResult">
-                    <div class="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-1.5 text-xs transition-colors duration-200 hover:bg-gray-100">
-                      <el-icon :size="13" class="tool-icon" :class="item.status">
-                        <Loading v-if="item.status === 'running'" />
-                        <CircleCheckFilled v-else-if="item.status === 'completed'" />
-                        <CircleCloseFilled v-else />
-                      </el-icon>
-                      <span class="font-mono text-gray-600">{{ item.toolName }}</span>
-                      <span class="text-gray-400">{{ toolStatusText(item.status) }}</span>
-                      <el-icon v-if="item.result" :size="11" class="text-gray-300">
-                        <ArrowDown v-if="!item.showResult" />
-                        <ArrowUp v-else />
-                      </el-icon>
+                    <div v-if="pgExpanded(msg, block)" class="pg-body">
+                      <!-- 流式自动模式：极简单行 = 已完成计数 + 异常计数 + 当前运行中/思考中 -->
+                      <div v-if="pgCompact(msg, block)" class="pg-badges">
+                        <button v-if="pgDoneCount(block)" type="button" class="pg-badge" title="展开全部步骤" @click="openGroup(block)">
+                          <el-icon :size="12" class="tool-icon completed"><CircleCheckFilled /></el-icon>
+                          <span>已完成 {{ pgDoneCount(block) }} 步</span>
+                        </button>
+                        <button v-if="pgIssueCount(block)" type="button" class="pg-badge issue" title="展开查看异常步骤" @click="openGroup(block)">
+                          <el-icon :size="12" class="tool-icon failed"><CircleCloseFilled /></el-icon>
+                          <span>{{ pgIssueCount(block) }} 项异常</span>
+                        </button>
+                        <span v-if="pgRunningTool(block)" class="pg-badge running">
+                          <el-icon :size="12" class="tool-icon running"><Loading /></el-icon>
+                          <span class="font-mono">{{ pgRunningTool(block).toolName }}</span>
+                        </span>
+                        <span v-else-if="pgIsRunning(msg, block)" class="pg-badge">
+                          <el-icon :size="12" class="pg-think-icon is-loading"><Loading /></el-icon>
+                          <span>思考中…</span>
+                        </span>
+                      </div>
+                      <!-- 手动展开：全量徽章流（可换行，点击看单步结果/思考） -->
+                      <template v-else>
+                        <div class="pg-badges">
+                          <button
+                            v-for="(step, si) in block.items"
+                            :key="si"
+                            type="button"
+                            class="pg-badge"
+                            :class="{ sel: pgState(block.lead).selected === step, running: step.type === 'tool' && step.status === 'running' }"
+                            @click="toggleStep(block, step)"
+                          >
+                            <template v-if="step.type === 'thinking'">
+                              <el-icon
+                                :size="12"
+                                class="pg-think-icon"
+                                :class="{ 'is-loading': msg.streaming && msg.timeline[msg.timeline.length - 1] === step }"
+                              >
+                                <Loading v-if="msg.streaming && msg.timeline[msg.timeline.length - 1] === step" />
+                                <View v-else />
+                              </el-icon>
+                              <span>思考过程</span>
+                            </template>
+                            <template v-else>
+                              <el-icon :size="12" class="tool-icon" :class="step.status">
+                                <Loading v-if="step.status === 'running'" />
+                                <CircleCheckFilled v-else-if="step.status === 'completed'" />
+                                <CircleCloseFilled v-else />
+                              </el-icon>
+                              <span class="font-mono">{{ step.toolName }}</span>
+                            </template>
+                          </button>
+                        </div>
+                        <!-- 选中步骤详情：工具结果（markdown 渲染 / 原文切换）/ 思考内容 -->
+                        <template v-if="pgSelectedDetail(block) === 'result'">
+                          <div class="tool-detail-bar">
+                            <button
+                              v-if="isMarkdownish(formatToolResult(pgState(block.lead).selected.result))"
+                              type="button"
+                              class="tool-view-toggle"
+                              @click="pgState(block.lead).rawView = !pgState(block.lead).rawView"
+                            >
+                              {{ pgState(block.lead).rawView ? '渲染视图' : '查看原文' }}
+                            </button>
+                          </div>
+                          <div
+                            v-if="!pgState(block.lead).rawView && isMarkdownish(formatToolResult(pgState(block.lead).selected.result))"
+                            class="chat-md tool-md thin-scroll"
+                            v-html="renderMd(formatToolResult(pgState(block.lead).selected.result))"
+                          ></div>
+                          <pre v-else class="tool-result thin-scroll">{{ formatToolResult(pgState(block.lead).selected.result) }}</pre>
+                        </template>
+                        <div v-else-if="pgSelectedDetail(block) === 'thinking'" class="think-body">{{ pgState(block.lead).selected.content }}</div>
+                      </template>
                     </div>
-                    <pre v-if="item.showResult && item.result" class="tool-result thin-scroll">{{ item.result }}</pre>
                   </div>
 
                   <!-- todo 执行计划面板（TodoWrite 参数侧信道） -->
-                  <div v-else-if="item.type === 'todo'" class="rounded-xl border border-gray-100 bg-gray-50/70 px-3.5 py-3">
+                  <div v-else-if="block.item.type === 'todo'" class="rounded-xl border border-gray-100 bg-gray-50/70 px-3.5 py-3">
                     <div class="mb-2 flex items-center gap-1.5 text-xs font-semibold text-gray-600">
                       <el-icon :size="12"><List /></el-icon>
                       执行计划
                       <span class="ml-auto font-normal text-gray-400">
-                        {{ completedCount(item.items) }}/{{ item.items.length }}
+                        {{ completedCount(block.item.items) }}/{{ block.item.items.length }}
                       </span>
                     </div>
-                    <div v-for="(t, idx) in item.items" :key="idx" class="flex items-center gap-2 py-[3px] text-xs text-gray-600">
+                    <div v-for="(t, idx) in block.item.items" :key="idx" class="flex items-center gap-2 py-[3px] text-xs text-gray-600">
                       <el-icon :size="12" class="todo-icon" :class="t.status">
                         <CircleCheckFilled v-if="t.status === 'completed'" />
                         <Loading v-else-if="t.status === 'in_progress'" class="is-loading" />
@@ -170,14 +226,14 @@
 
                   <!-- 错误 -->
                   <el-alert
-                    v-else-if="item.type === 'error'"
-                    :title="item.message"
+                    v-else-if="block.item.type === 'error'"
+                    :title="block.item.message"
                     type="error"
                     :closable="false"
                   />
 
                   <!-- 正文 markdown -->
-                  <div v-else-if="item.type === 'text' && item.content" class="chat-md" v-html="renderMd(item.content)"></div>
+                  <div v-else-if="block.item.type === 'text' && block.item.content" class="chat-md" v-html="renderMd(block.item.content)"></div>
                 </template>
 
                 <span v-if="msg.streaming && !hasTailText(msg)" class="chat-cursor">▍</span>
@@ -196,7 +252,7 @@
             <span class="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-500">
               <el-icon :size="22"><MagicStick /></el-icon>
             </span>
-            <p class="text-sm text-gray-400">问点什么吧，比如：每个电影分类有多少部电影？</p>
+            <p class="text-sm text-gray-400">问点什么吧，比如：各片区的项目数量和投资完成率？</p>
           </div>
         </div>
       </div>
@@ -320,7 +376,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  ArrowDown, ArrowUp, CircleCheckFilled, CircleCloseFilled, Close, Delete, Document, Connection, List, Loading,
+  ArrowDown, CircleCheckFilled, CircleCloseFilled, Close, Delete, Document, Connection, List, Loading,
   MoreFilled, Paperclip, Plus, Top, VideoPause, MagicStick, View
 } from '@element-plus/icons-vue'
 import {
@@ -587,7 +643,8 @@ function onStreamEvent(cid, entry) {
           (it) => it.type === 'tool' && it.toolCallId === data.toolCallId && it.status === 'running'
         ) || timeline.filter((it) => it.type === 'tool' && it.toolName === data.toolName && it.status === 'running').at(-1)
         if (item) {
-          item.status = 'completed'
+          // success=false：工具失败也发 TOOL_END（result 为错误 JSON），徽章标红不再空转
+          item.status = data.success === false ? 'failed' : 'completed'
           item.result = data.result || ''
         }
         break
@@ -604,6 +661,9 @@ function onStreamEvent(cid, entry) {
       }
       case 'COMPLETE': {
         msg.streaming = false
+        // 总耗时/轮次（COMPLETE 终态事件带回，整条消息一份）；历史回放的消息没有该字段
+        if (data.elapsedMs != null) msg.elapsedMs = data.elapsedMs
+        if (data.rounds != null) msg.rounds = data.rounds
         const sDone = sessions[cid]
         if (sDone && liveStreams.get(cid) === entry && !entry.paused) sDone.interrupted = false
         break
@@ -923,13 +983,6 @@ function renderMd(text) {
   return md.render(text)
 }
 
-function toolStatusText(status) {
-  if (status === 'running') return '执行中…'
-  if (status === 'completed') return '完成'
-  if (status === 'interrupted') return '已中断'
-  return '失败'
-}
-
 function completedCount(items) {
   return (items || []).filter((t) => t.status === 'completed').length
 }
@@ -939,8 +992,161 @@ function hasTailText(msg) {
   return (last && (last.type === 'text' || last.type === 'error')) || msg.interrupted
 }
 
-function hasTextAfter(msg, ti) {
-  return msg.timeline.slice(ti + 1).some((it) => it.type === 'text')
+// ── 执行过程聚合组：连续 thinking/tool 压成一条折叠条，避免多轮工具把消息拉得过长 ──
+
+/** 组状态挂 WeakMap（键=组首项）：timeline 增长重算分组时，用户展开态/选中态不丢 */
+const pgStates = new WeakMap()
+
+function pgState(lead) {
+  let st = pgStates.get(lead)
+  if (!st) {
+    st = reactive({ userOpen: null, selected: null, rawView: false })
+    pgStates.set(lead, st)
+  }
+  return st
+}
+
+/** timeline 分块：连续 thinking/tool 归为一个执行过程组，text/todo/error 独立成块并断开分组 */
+function groupedTimeline(msg) {
+  const blocks = []
+  let cur = null
+  for (const it of msg.timeline) {
+    if (it.type === 'thinking' || it.type === 'tool') {
+      if (!cur) {
+        cur = { group: true, lead: it, items: [] }
+        blocks.push(cur)
+      }
+      cur.items.push(it)
+    } else {
+      cur = null
+      blocks.push({ group: false, item: it })
+    }
+  }
+  return blocks
+}
+
+function pgTools(block) {
+  return block.items.filter((it) => it.type === 'tool')
+}
+
+function pgDoneCount(block) {
+  return pgTools(block).filter((t) => t.status === 'completed').length
+}
+
+function pgRunningTool(block) {
+  return pgTools(block).find((t) => t.status === 'running')
+}
+
+/** 流式自动模式（极简单行）；用户点过展开/收起后进入手动模式，不再自动切换 */
+function pgCompact(msg, block) {
+  return pgState(block.lead).userOpen === null && pgIsRunning(msg, block)
+}
+
+/** 极简行里点"已完成 N 步/异常"：展开全量徽章流 */
+function openGroup(block) {
+  pgState(block.lead).userOpen = true
+}
+
+/** 组是否仍在执行：有 running 工具，或整条流的最后一个事件还停在组内（思考进行中） */
+function pgIsRunning(msg, block) {
+  if (!msg.streaming) return false
+  if (pgTools(block).some((t) => t.status === 'running')) return true
+  const last = msg.timeline[msg.timeline.length - 1]
+  return block.items.includes(last)
+}
+
+/** 组展开态：用户点过的以用户为准；否则只在执行中自动展开（正文开始输出/流结束即自动收起） */
+function pgExpanded(msg, block) {
+  const st = pgState(block.lead)
+  if (st.userOpen !== null) return st.userOpen
+  return pgIsRunning(msg, block)
+}
+
+function toggleGroup(msg, block) {
+  const st = pgState(block.lead)
+  st.userOpen = !pgExpanded(msg, block)
+  if (!st.userOpen) st.selected = null
+}
+
+/** 点击徽章：切换选中步骤（工具结果 / 思考内容在徽章流下方展示） */
+function toggleStep(block, step) {
+  const st = pgState(block.lead)
+  st.selected = st.selected === step ? null : step
+}
+
+function pgIssueCount(block) {
+  return pgTools(block).filter((t) => t.status === 'interrupted' || t.status === 'failed').length
+}
+
+/**
+ * 工具结果格式化（仅展示层，不改后端数据）：
+ * 1) 还原双重转义——后端序列化把换行/引号转成字面转义序列，SSE 解析一次后仍残留 \n、\"
+ * 2) JSON 内容美化缩进（tool_search / executeSql 的 resultSchema 等结构化返回）
+ */
+function formatToolResult(raw) {
+  if (raw == null) return ''
+  let text = String(raw)
+  if (text.includes('\\n') || text.includes('\\"')) {
+    text = text
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '  ')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\')
+  }
+  const trimmed = text.trim()
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      text = JSON.stringify(JSON.parse(trimmed), null, 2)
+    } catch {
+      /* 非 JSON 原样展示 */
+    }
+  }
+  return text
+}
+
+/**
+ * markdown 特征检测（宽松）：命中任一特征即按渲染视图展示，可切"原文"回退。
+ * JSON 美化结果不含这些特征，自然走纯文本分支。
+ */
+function isMarkdownish(text) {
+  if (!text) return false
+  return (
+    /^#{1,6}\s/m.test(text) || // 标题
+    /^\s*[-*]\s+\S/m.test(text) || // 无序列表
+    /^\s*\d+\.\s+\S/m.test(text) || // 有序列表
+    /^```/m.test(text) || // 代码围栏
+    /\n\|.+\|\s*\n\|?[\s:|-]+\|/m.test(text) || // 表格
+    /\*\*[^*\n]+\*\*/.test(text) // 加粗
+  )
+}
+
+function pgMetaText(msg, block) {
+  const tools = pgTools(block)
+  const run = tools.find((t) => t.status === 'running')
+  const done = tools.filter((t) => t.status === 'completed').length
+  if (run) return `${done}/${tools.length} · 正在 ${run.toolName}`
+  if (!tools.length) return pgIsRunning(msg, block) ? '思考中…' : '思考'
+  const issues = pgIssueCount(block)
+  const base = issues ? `${tools.length} 步 · ${issues} 项异常` : `${tools.length} 步`
+  // 回答结束后展示总耗时（COMPLETE 事件带回；正在跑时不显示）
+  if (msg.elapsedMs != null && !pgIsRunning(msg, block)) {
+    return `${base} · 耗时 ${(msg.elapsedMs / 1000).toFixed(1)}s`
+  }
+  return base
+}
+
+function pgProgress(block) {
+  const tools = pgTools(block)
+  return tools.length ? Math.round((tools.filter((t) => t.status === 'completed').length / tools.length) * 100) : 0
+}
+
+function pgSelectedDetail(block) {
+  const sel = pgState(block.lead).selected
+  if (!sel) return null
+  if (sel.type === 'thinking' && sel.content) return 'thinking'
+  if (sel.type === 'tool' && sel.result) return 'result'
+  return null
 }
 
 function onListScroll() {
@@ -1021,6 +1227,155 @@ onMounted(async () => {
   white-space: pre-wrap;
   word-break: break-all;
   cursor: default;
+}
+
+/* 工具结果的 markdown 渲染视图：复用 .chat-md 内容样式，容器限高滚动 */
+.tool-md {
+  max-height: 320px;
+  overflow: auto;
+  margin-top: 6px;
+  padding: 10px 12px;
+  background: #f9fafb;
+  border: 1px solid #f3f4f6;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.tool-detail-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.tool-view-toggle {
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #6b7280;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tool-view-toggle:hover {
+  color: #2563eb;
+  border-color: #93c5fd;
+}
+
+/* ── 执行过程聚合组（方案A） ── */
+.pg-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  margin-left: -8px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #9ca3af;
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.pg-header:hover {
+  background-color: #f9fafb;
+  color: #6b7280;
+}
+
+.pg-icon.done {
+  color: #10b981;
+}
+
+.pg-icon.running {
+  color: #f59e0b;
+  animation: spin 1s linear infinite;
+}
+
+.pg-icon.issue {
+  color: #ef4444;
+}
+
+.pg-meta {
+  color: #b3bac1;
+}
+
+/* 执行中头部右侧的细进度条 */
+.pg-bar {
+  width: 88px;
+  height: 3px;
+  overflow: hidden;
+  background: #e5e7eb;
+  border-radius: 2px;
+}
+
+.pg-bar i {
+  display: block;
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+/* 徽章流：横向流式换行，点击看该步结果/思考 */
+.pg-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.pg-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: #f9fafb;
+  font-size: 11px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.pg-badge:hover {
+  background: #f3f4f6;
+}
+
+.pg-badge.running {
+  background: #fffbeb;
+  color: #d97706;
+}
+
+/* 极简行的异常计数徽章 */
+.pg-badge.issue {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+/* 非交互徽章（运行中/思考中/异常计数中不可点的）：不显示手型 */
+span.pg-badge {
+  cursor: default;
+}
+
+.pg-badge.sel {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.pg-think-icon {
+  color: #a78bfa;
+}
+
+.pg-think-icon.is-loading {
+  color: #f59e0b;
+}
+
+/* 选中步骤详情与徽章流的间距 */
+.pg-body .tool-result,
+.pg-body .think-body {
+  margin-top: 8px;
 }
 
 /* ── todo 面板 ── */

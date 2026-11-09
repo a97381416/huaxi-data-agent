@@ -69,12 +69,12 @@ data-agent:
     provider: mschema        # 只实现 A 轨（实时内省）；B 轨 yml 字典不做，留接口抽象
     mschema:
       exclude-tables: agentx_*,QRTZ_*,infra_*,bpm_*   # 排除表（支持 * 通配）；白名单模式下仅作兜底
-      # M-H3 华西白名单（65 张，方案 §5 终版；include 非空即只放行名单内表）
+      # M-H3 华西白名单（include 非空即只放行名单内表；doc_project_member 已随 7 档项目成员权限废弃移除）
       include-tables: >-
         doc_project,doc_phase,doc_node,doc_phase_node,doc_node_category,doc_node_relation,
         doc_file_category,doc_phase_template,doc_template_phase,
         doc_project_annotation,doc_project_annotation_item,doc_project_annotation_attachment,
-        doc_project_member,doc_project_payment_progress,
+        doc_project_payment_progress,
         doc_project_invest_completion,doc_project_budget_estimate,
         doc_project_fee_audit,doc_project_advance,doc_project_output_value,
         doc_ledger,doc_file_entry,doc_file_entry_history,doc_sub_phase_stats,

@@ -53,7 +53,10 @@
       </el-dropdown>
     </header>
 
-    <el-main class="layout-main" :class="{ 'layout-main--flush': isFlushRoute }">
+    <el-main
+      class="layout-main"
+      :class="{ 'layout-main--flush': isFlushRoute, 'layout-main--chat': route.path === '/chat' }"
+    >
       <router-view />
     </el-main>
   </div>
@@ -75,14 +78,14 @@ const avatarText = computed(
   () => (userStore.user?.nickname || userStore.user?.username || '?').slice(0, 1)
 )
 
-/** 顶栏 Tab：admin 专属管理页仅 admin 可见 */
+/** 顶栏 Tab：admin 专属管理页仅 admin 可见（用户管理/评测报告暂不进菜单，URL 仍可达） */
 const navTabs = computed(() => {
   const tabs = [{ path: '/chat', label: '智能对话' }]
   if (userStore.isAdmin) {
-    tabs.push({ path: '/users', label: '用户管理' })
+    // tabs.push({ path: '/users', label: '用户管理' })
     tabs.push({ path: '/skills', label: '技能管理' })
     tabs.push({ path: '/mcp', label: 'MCP 服务' })
-    tabs.push({ path: '/eval', label: '评测报告' })
+    // tabs.push({ path: '/eval', label: '评测报告' })
   }
   return tabs
 })
@@ -90,8 +93,10 @@ const navTabs = computed(() => {
 /** 全出血页面（去外边距铺满）：对话工作台 + 三个管理页表格 */
 const isFlushRoute = computed(() => ['/chat', '/mcp', '/skills'].includes(route.path))
 
-// 进入主框架时刷新一次用户信息（M0 验收：/auth/me 返回角色/部门/档案）
+// 进入主框架时刷新一次用户信息（M0 验收：/auth/me 返回角色/部门/档案）；
+// 无 token（未登录被守卫重定向前的短暂挂载）不发请求，避免 401 toast 噪音
 onMounted(async () => {
+  if (!userStore.token) return
   try {
     const vo = await fetchMe()
     userStore.setUser(vo)
@@ -129,6 +134,11 @@ async function onCommand(cmd) {
 /* 智能对话页：去外边距全出血铺满（页面内部自带留白与侧栏） */
 .layout-main--flush {
   padding: 0;
+}
+
+/* 智能对话页：外层禁止滚动（高度由 flex 精确分配，滚动发生在页面内部消息流/侧栏） */
+.layout-main--chat {
+  overflow: hidden;
 }
 
 /* 用户下拉（popper 挂 body，但元素由本组件渲染，scoped 属性可命中） */

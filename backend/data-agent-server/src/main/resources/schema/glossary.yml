@@ -44,8 +44,23 @@ glossary:
     description: >-
       doc_project.status：0-草稿 / 1-进行中 / 2-已完结 / 99-预警（派生维度=存在未完结预警，非真实存储值）。
       领导口径映射：在建中=进行中(status=1)，竣工=已完结(status=2)。历史改名：1 原叫"已发布"。
+      可见性口径：草稿(0)仅创建者本人可见——系统会自动注入 (status <> 0 OR creator=当前用户)，无需手写；
+      统计口径仍按词条（如六指标限 status IN (1,2)）。
     sqlFragment: "status = 1   -- 在建中（进行中，原'已发布'）；竣工用 status = 2"
     synonyms: [在建, 在建中, 竣工, 已完结, 进行中, 已发布, 草稿, 预警项目]
+
+  - term: 可见项目
+    description: >-
+      口径词条："我能看到哪些项目/我能看多少项目/项目清单"＝按当前用户数据权限可见的范围，
+      构成严格按"用户→角色→数据权限档位"叠加（六种档位并集：全部/指定部门+本部门/本部门/
+      本部门及以下/本人/兼职部门）；"本人创建"仅当角色含"本人"档才生效，无默认组合。
+      直接查 doc_project 本体即可——数据权限与草稿过滤系统都会自动注入，默认即按角色数据权限过滤、
+      无需用户在问题里说明，严禁手写 creator=/dept_id= 范围条件（手写会窄于真实可见范围）。
+      "我的/我创建的项目"＝可见范围内 creator=当前用户。
+      清单/数量回答必须区分归属：SELECT 带 creator 列，先"本人创建"（creator=当前用户）、
+      再"权限范围内其他"（creator≠当前用户）。
+    sqlFragment: "SELECT id, name, status, creator FROM doc_project   -- 不要手写范围条件；展示按 creator=当前用户 区分本人创建"
+    synonyms: [我能看到的项目, 全部项目, 项目清单, 可见范围, 我的项目, 我能看多少项目]
 
   - term: 文件状态
     description: doc_file_entry.not_applicable：-1待上传 / 0已取得 / 1空缺 / 2不涉及 / 3其他。"漏报"= -1 或 1。
@@ -242,14 +257,9 @@ glossary:
     synonyms: [批次, 提交批次, 报审批次, 子阶段台账]
 
   - term: 项目档案
-    description: doc_project 是一切问数的锚：基本信息/分类/状态/大阶段/金额（8 列万元）/开复工/部门/成员（member_user_ids 与 doc_project_member 双载体）。项目名模糊匹配 name LIKE。
+    description: doc_project 是一切问数的锚：基本信息/分类/状态/大阶段/金额（8 列万元）/开复工/部门。项目名模糊匹配 name LIKE。问"我能看到哪些项目"直接查它本体，数据权限与草稿可见性系统自动注入。
     sqlFragment: "SELECT id, name FROM doc_project WHERE name LIKE '%关键词%'"
     synonyms: [项目, 项目信息, 全周期档案]
-
-  - term: 项目成员
-    description: doc_project_member(project_id, user_id) 是"某人在哪些项目/谁参与某项目"的查询入口；主表 member_user_ids 为 JSON 镜像。人名转译 JOIN system_users。
-    sqlFragment: "SELECT p.name FROM doc_project_member m JOIN doc_project p ON m.project_id = p.id JOIN system_users u ON m.user_id = u.id WHERE u.nickname LIKE '%张三%'"
-    synonyms: [我的项目, 参与项目, 负责人, 团队]
 
   - term: 待办
     description: 运行中审批任务=ru_task（assignee_id 处理人，冗余 instance_title/node_name/category_label 免 JOIN）；历史=hi_task。

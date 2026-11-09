@@ -1,6 +1,6 @@
 /**
- * axios 统一封装（对齐后端 R<T> 契约与原版 common.js 行为）：
- * - 请求自动带 satoken header
+ * axios 统一封装（对齐后端 R<T> 契约）：
+ * - 请求自动带 Authorization: Bearer header（yudao 协议，HuaxiAuthFilter 校验）
  * - 响应拦截器解包 R<T>：code=200 直接返回 data；业务失败弹错并 reject
  * - 401（HTTP 或业务码）统一清 token 跳登录页
  */
@@ -17,7 +17,7 @@ const request = axios.create({
 request.interceptors.request.use((config) => {
   const userStore = useUserStore()
   if (userStore.token) {
-    config.headers['satoken'] = userStore.token
+    config.headers['Authorization'] = `Bearer ${userStore.token}`
   }
   return config
 })

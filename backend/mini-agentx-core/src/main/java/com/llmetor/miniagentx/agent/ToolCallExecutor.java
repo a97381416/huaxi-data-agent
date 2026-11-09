@@ -23,7 +23,7 @@ import java.util.function.Consumer;
 
 /**
  * 工具执行器：每个 toolCall 并行执行（boundedElastic），结果按原始顺序回灌；
- * 全部完成后按顺序统一发 ToolEnd（失败不发 ToolEnd 但错误 JSON 照回灌，循环不终止）。
+ * 全部完成后按顺序统一发 ToolEnd（失败也发、success=false，错误 JSON 照回灌，循环不终止）。
  *
  * <p>单工具流程：args 空→"{}" → toolMap 查找（找不到返回错误 JSON 不抛异常）→
  * toolParams 白名单注入（按工具 inputSchema properties，强制覆盖：漏填补、乱填盖）→
@@ -74,11 +74,11 @@ public class ToolCallExecutor {
                         sink, emitLock);
                 outcomes.set(index, outcome);
                 if (remaining.decrementAndGet() == 0) {
-                    // 全部完成：按原始顺序统一发 ToolEnd（仅成功项）
+                    // 全部完成：按原始顺序统一发 ToolEnd（失败也发，success=false，前端徽章才能落地不再空转）
                     for (int k = 0; k < n; k++) {
                         ToolExecutionOutcome o = outcomes.get(k);
-                        if (o != null && o.success()) {
-                            emit(sink, emitLock, AgentStreamEvent.toolEnd(o.name(), o.id(), o.result()));
+                        if (o != null) {
+                            emit(sink, emitLock, AgentStreamEvent.toolEnd(o.name(), o.id(), o.result(), o.success()));
                         }
                     }
                     List<ToolExecutionOutcome> ordered = new ArrayList<>(n);

@@ -25,7 +25,7 @@ export default {
               {
                 kind: 'sse',
                 url: '/agent/stream',
-                body: { query: '每个电影分类有多少部电影？', conversationId: '{{convId}}' },
+                body: { query: '每个项目分类下有多少个项目？', conversationId: '{{convId}}' },
                 timeoutMs: 90000,
                 expect: [
                   { kind: 'contentTypeIncludes', value: 'text/event-stream' },

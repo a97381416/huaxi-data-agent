@@ -130,6 +130,8 @@ public class AgentLoopExecutor {
     private int retries = 0;
     private long totalPromptTokens = 0;
     private long totalCompletionTokens = 0;
+    /** 首轮开始时间戳（毫秒）；0 = 尚未开跑。COMPLETE 事件据此带总耗时 */
+    private long startAtMs = 0L;
     private String sessionId = SnowflakeIdGenerator.nextIdStr();
     private volatile RoundState current;
 
@@ -399,9 +401,8 @@ public class AgentLoopExecutor {
                         ptc.id(), ptc.name(), ptc.arguments());
                 ToolCallExecutor.ToolExecutionOutcome o = toolExecutor.executeSync(
                         call, replayMap, params, conversationId(), sink, emitLock);
-                if (o.success()) {
-                    emit(AgentStreamEvent.toolEnd(o.name(), o.id(), o.result()));
-                }
+                // 失败也发 ToolEnd（success=false），与批量通道契约一致
+                emit(AgentStreamEvent.toolEnd(o.name(), o.id(), o.result(), o.success()));
                 responses.add(new ToolResponseMessage.ToolResponse(ptc.id(), ptc.name(), o.result()));
                 log.info("恢复重放工具: convId={}, tool={}, success={}", conversationId(), ptc.name(), o.success());
             } else {
@@ -420,6 +421,9 @@ public class AgentLoopExecutor {
             return;
         }
         round++;
+        if (startAtMs == 0L) {
+            startAtMs = System.currentTimeMillis();
+        }
         // M7：每轮 LLM 调用前尝试上下文压缩（超阈值才进策略链；内联实现，不做 Hook）
         compactIfNeeded();
         // M7：每轮重建工具清单 = 常驻 + 已发现（延迟）+ tool_search + context_reload
@@ -876,7 +880,8 @@ public class AgentLoopExecutor {
         // 非暂停终态：中断快照已消费/失效，删除防僵尸恢复
         discardSnapshot();
 
-        emit(AgentStreamEvent.complete(totalPromptTokens, totalCompletionTokens,conversationId(), sessionId));
+        emit(AgentStreamEvent.complete(totalPromptTokens, totalCompletionTokens,
+                elapsedMs(), round, conversationId(), sessionId));
 
         resultRef.set(AgentResult.completed(answer, think));
 
@@ -890,9 +895,14 @@ public class AgentLoopExecutor {
         persistTerminal("error");
         discardSnapshot();
         emit(AgentStreamEvent.complete(totalPromptTokens, totalCompletionTokens,
-                conversationId(), sessionId));
+                elapsedMs(), round, conversationId(), sessionId));
         resultRef.set(AgentResult.failed("LLM_ERROR", err.getMessage()));
         finishSink();
+    }
+
+    /** 本次执行累计耗时（毫秒）；尚未开跑返回 null（序列化时省略） */
+    private Long elapsedMs() {
+        return startAtMs == 0L ? null : System.currentTimeMillis() - startAtMs;
     }
 
     /** 删除该会话的中断快照（非 Paused 终态时调用；写失败仅告警不影响主流程） */

@@ -23,9 +23,10 @@ export const useUserStore = defineStore('user', {
 
   getters: {
     isLoggedIn: (state) => !!state.token,
+    // 华西 yudao 超管角色 code 为 super_admin（上游 my-data-agent 为 admin，两者都认）
     isAdmin: (state) =>
       Array.isArray(state.user?.roles) &&
-      state.user.roles.some((r) => r?.code === 'admin')
+      state.user.roles.some((r) => ['admin', 'super_admin'].includes(r?.code))
   },
 
   actions: {
