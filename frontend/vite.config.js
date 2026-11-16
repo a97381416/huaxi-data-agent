@@ -19,7 +19,12 @@ export default defineConfig({
       '/sys': { target: 'http://localhost:8889', changeOrigin: true },
       '/agent': { target: 'http://localhost:8889', changeOrigin: true },
       '/session': { target: 'http://localhost:8889', changeOrigin: true },
-      '/api': { target: 'http://localhost:8889', changeOrigin: true }
+      '/api': { target: 'http://localhost:8889', changeOrigin: true },
+      // M-E1：业务文件直传主平台（/infra/file/upload 等 /admin-api/*）。
+      // 默认指向联调主后端（与 agent 后端 local profile 的 action base-url 一致）；
+      // 本地起主后端时用环境变量覆盖：MAIN_API_TARGET=http://127.0.0.1:9031 pnpm dev。
+      // 生产由 nginx 同域转发（M-H4 规划内）。
+      '/admin-api': { target: process.env.MAIN_API_TARGET || 'http://192.168.2.77:9031', changeOrigin: true }
     }
   }
 })

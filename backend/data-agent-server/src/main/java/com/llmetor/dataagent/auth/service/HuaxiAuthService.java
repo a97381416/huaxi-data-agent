@@ -49,9 +49,10 @@ public class HuaxiAuthService {
             throw new HuaxiAuthException("账号或密码错误");
         }
         java.util.List<Object[]> rows = jdbc.query(
-                "SELECT id, password, nickname, dept_id FROM system_users "
+                "SELECT id, password, nickname, dept_id, tenant_id FROM system_users "
                         + "WHERE username = ? AND deleted = 0 AND status = 0",
-                (rs, i) -> new Object[]{rs.getLong(1), rs.getString(2), rs.getString(3), rs.getLong(4)}, username);
+                (rs, i) -> new Object[]{rs.getLong(1), rs.getString(2), rs.getString(3), rs.getLong(4),
+                        rs.getLong(5)}, username);
         if (rows.isEmpty() || !ENCODER.matches(password, (String) rows.get(0)[1])) {
             log.warn("[huaxi-auth] 登录失败: username={}", username);
             throw new HuaxiAuthException("账号或密码错误");
@@ -59,7 +60,8 @@ public class HuaxiAuthService {
         long userId = (Long) rows.get(0)[0];
         String nickname = (String) rows.get(0)[2];
         long deptId = (Long) rows.get(0)[3];
-        String accessToken = issueAccessToken(userId, nickname, deptId);
+        long tenantId = (Long) rows.get(0)[4];
+        String accessToken = issueAccessToken(userId, nickname, deptId, tenantId);
         log.info("[huaxi-auth] 登录成功: userId={}, nickname={}", userId, nickname);
         return buildLoginUser(userId, accessToken);
     }
@@ -194,19 +196,20 @@ public class HuaxiAuthService {
      * 华西库该表 id/user_info 均 NOT NULL 且无默认值：id 用雪花（同主项目 MP ASSIGN_ID），
      * user_info 复刻主项目格式 {"nickname":"..","deptId":".."}（Map&lt;String,String&gt; JSON）。
      */
-    private String issueAccessToken(long userId, String nickname, long deptId) {
+    private String issueAccessToken(long userId, String nickname, long deptId, long tenantId) {
         String accessToken = java.util.UUID.randomUUID().toString().replace("-", "");
         String refreshToken = java.util.UUID.randomUUID().toString().replace("-", "");
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime expires = now.plusDays(tokenValidDays);
         String userInfo = "{\"nickname\":" + jsonStr(nickname) + ",\"deptId\":\"" + deptId + "\"}";
+        // M-E0：tenant_id 落用户租户（此前缺省 0，写通道转发 tenant-id 头时兜不住）
         jdbc.update("INSERT INTO system_oauth2_access_token "
                         + "(id, user_id, user_type, user_info, access_token, refresh_token, client_id, scopes, "
-                        + "expires_time, creator, updater) "
-                        + "VALUES (?, ?, 2, ?, ?, ?, 'huaxi-data-agent', '[]', ?, ?, ?)",
+                        + "expires_time, creator, updater, tenant_id) "
+                        + "VALUES (?, ?, 2, ?, ?, ?, 'huaxi-data-agent', '[]', ?, ?, ?, ?)",
                 com.baomidou.mybatisplus.core.toolkit.IdWorker.getId(),
                 userId, userInfo, accessToken, refreshToken, Timestamp.valueOf(expires),
-                String.valueOf(userId), String.valueOf(userId));
+                String.valueOf(userId), String.valueOf(userId), tenantId);
         // 可选：刷新最后登录信息（与 yudao 行为一致；失败不阻断登录）
         try {
             jdbc.update("UPDATE system_users SET login_date = ? WHERE id = ?",

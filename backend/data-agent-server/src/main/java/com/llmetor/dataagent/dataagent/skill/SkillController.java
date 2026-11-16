@@ -104,7 +104,7 @@ public class SkillController {
         }
     }
 
-    /** 编辑技能内容（内置技能拒绝，手动/上传技能可编辑） */
+    /** 编辑技能内容（所有来源技能均可编辑） */
     @PutMapping("/{name}/content")
     public R<SkillInfo> updateContent(@PathVariable String name, @RequestBody SkillUpsertRequest request) {
         try {

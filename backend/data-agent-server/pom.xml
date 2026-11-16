@@ -26,7 +26,7 @@
             <artifactId>spring-ai-starter-model-openai</artifactId>
         </dependency>
 
-        <!-- M6 MCP 客户端（mcp-echarts 图表 / Tavily 联网搜索，streamable 模式） -->
+        <!-- M6 MCP 客户端（Tavily 联网搜索，streamable 模式） -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-mcp-client</artifactId>

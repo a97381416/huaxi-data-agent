@@ -1,5 +1,6 @@
 /**
- * 测试功能区场景注册表：M0–M8 与 test/Mx-测试用例.md 一一对应。
+ * 测试功能区场景注册表：M0–M8 与 test/Mx-测试用例.md 一一对应；
+ * M-E1/M-E2 业务里程碑（declarant-workflow / declarant-fill）以字符串里程碑号挂在后面。
  */
 import m0 from './m0'
 import m1 from './m1'
@@ -10,8 +11,9 @@ import m5 from './m5'
 import m6 from './m6'
 import m7 from './m7'
 import m8 from './m8'
+import me2 from './m-e2'
 
-export const milestones = [m0, m1, m2, m3, m4, m5, m6, m7, m8]
+export const milestones = [m0, m1, m2, m3, m4, m5, m6, m7, m8, me2]
 
 /** 公共测试环境说明（对应 test/M0-测试用例.md 的测试环境表） */
 export const envNotes = [
@@ -24,15 +26,15 @@ export const envNotes = [
 ]
 
 export function getMilestone(m) {
-  const found = milestones.find((x) => x.m === Number(m))
+  const found = milestones.find((x) => String(x.m) === String(m) || x.m === Number(m))
   if (!found) throw new Error(`未知里程碑 M${m}`)
   return found
 }
 
-/** 侧边栏"测试功能"二级菜单 */
+/** 侧边栏"测试功能"二级菜单（数字里程碑 M0-M8；E 系列业务里程碑 M-E1/M-E2…） */
 export const testMenus = milestones.map((x) => ({
   path: `/test/m${x.m}`,
   m: x.m,
-  label: `M${x.m} · ${x.short}`,
+  label: `${/^\d+$/.test(String(x.m)) ? 'M' + x.m : 'M-' + x.m} · ${x.short}`,
   delivered: x.delivered
 }))

@@ -138,6 +138,32 @@ public class DeferredToolRegistry {
         }
 
         /**
+         * 恢复登记（Fix B）：把历史消息中出现过的工具名并入本请求发现集——
+         * 让"系统账本"追上模型认知（历史里看得见的延迟工具重新真正可调用）。
+         * 仅登记注册表中仍存在的名字（已下线/改名静默跳过），返回实际新登记数。
+         */
+        public synchronized int restore(Collection<String> names) {
+            if (names == null || names.isEmpty()) {
+                return 0;
+            }
+            int restored = 0;
+            for (String name : names) {
+                if (name == null || name.isBlank() || discoveredNames.contains(name)) {
+                    continue;
+                }
+                if (DeferredToolRegistry.this.get(name) != null) {
+                    discoveredNames.add(name);
+                    restored++;
+                }
+            }
+            if (restored > 0) {
+                log.info("[tool_search] 从历史恢复延迟工具发现态: {} 个 {}",
+                        restored, discoveredNames);
+            }
+            return restored;
+        }
+
+        /**
          * KEYWORD 搜索 + 登记发现：返回得分 >0 的 Top maxResults（已并入 discovered）。
          */
         public synchronized List<KeywordToolSearcher.SearchHit> search(String query) {

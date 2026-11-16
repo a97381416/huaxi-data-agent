@@ -10,10 +10,11 @@ import java.util.List;
  * @param answer      最终回答（实质性判定：倒序第一个 ≥100 字符或含 markdown 结构的 AssistantMessage）
  * @param timeline    前端时间线 JSON（thinking/text/tool/todo 四类事件按序重构）
  * @param createdAt   提问时间
+ * @param elapsedMs   该轮总耗时（completed_at - created_at；未完成/被中断为 null，前端折叠摘要头用）
  * @param attachments 附件元数据（M5 文件问答交付，当前恒为空列表）
  */
 public record SessionMessageVO(Long id, String question, String answer, String timeline,
-                               String createdAt, List<AttachmentInfo> attachments) {
+                               String createdAt, Long elapsedMs, List<AttachmentInfo> attachments) {
 
     /** 附件元数据（M5 起填充） */
     public record AttachmentInfo(String fileId, String fileName, String fileType, Long fileSize) {

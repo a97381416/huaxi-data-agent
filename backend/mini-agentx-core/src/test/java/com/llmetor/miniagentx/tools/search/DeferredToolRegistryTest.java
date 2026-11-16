@@ -220,4 +220,39 @@ class DeferredToolRegistryTest {
         // 非法 maxResults 回落默认 5
         assertEquals(5, new ToolSearchConfig(ToolSearchConfig.Mode.KEYWORD, 0).maxResults());
     }
+
+    // ==================== Fix B 恢复登记 ====================
+
+    @Test
+    void restoreRegistersOnlyNamesPresentInRegistry() {
+        DeferredToolRegistry r = registry();
+        DeferredToolRegistry.Session session = r.newSession();
+        int n = session.restore(List.of("executeSql", "generate_chart", "notExistTool"));
+        assertEquals(2, n, "只登记注册表中仍存在的名字");
+        assertTrue(session.isDiscovered("executeSql"));
+        assertTrue(session.isDiscovered("generate_chart"));
+        assertFalse(session.isDiscovered("notExistTool"));
+        assertEquals(2, session.discoveredTools().size());
+    }
+
+    @Test
+    void restoreIsIdempotentAndInteroperableWithSearch() {
+        DeferredToolRegistry r = registry();
+        DeferredToolRegistry.Session session = r.newSession();
+        assertEquals(1, session.restore(List.of("executeSql")));
+        assertEquals(0, session.restore(List.of("executeSql")), "重复恢复不再计数");
+        assertTrue(session.isDiscovered("executeSql"));
+        // 恢复与 search 发现互通：恢复过的无需再发现
+        session.search("SQL 查询 数据库 表");
+        assertTrue(session.isDiscovered("executeSql"), "search 不应重复登记已恢复工具");
+    }
+
+    @Test
+    void restoreNullAndBlankAreNoop() {
+        DeferredToolRegistry r = registry();
+        DeferredToolRegistry.Session session = r.newSession();
+        assertEquals(0, session.restore(null));
+        assertEquals(0, session.restore(List.of("", "   ")));
+        assertTrue(session.discoveredTools().isEmpty());
+    }
 }

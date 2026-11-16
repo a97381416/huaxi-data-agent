@@ -18,6 +18,7 @@ import com.llmetor.miniagentx.tools.search.DeferredToolRegistry;
 import com.llmetor.miniagentx.tools.search.ToolSearchTool;
 import com.llmetor.miniagentx.trace.TraceManager;
 import com.llmetor.miniagentx.utils.JsonRepairUtil;
+import com.llmetor.miniagentx.utils.MessageTextRenderer;
 import com.llmetor.miniagentx.utils.SnowflakeIdGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -83,6 +84,8 @@ public class AgentLoopExecutor {
     private final int maxRetries;
     private final long retryIntervalMs;
     private final ThinkingMode thinkingMode;
+    /** 非空 = 用户关"深度思考"：按模型把该 JSON 注入请求体 extra_body（null = 思考走模型默认） */
+    private final String thinkingOffParam;
     private final AgentTaskManager taskManager;
     private final AgentxSessionStore sessionStore;   // null=不落库
     private final TraceManager traceManager;         // null=不审计
@@ -108,6 +111,10 @@ public class AgentLoopExecutor {
     private final ToolCallback toolSearchTool;
     /** 上下文压缩器（null = 不压缩） */
     private final ContextCompactor compactor;
+    /** 循环熔断器（null = 未启用；Fix A，每请求一个实例、纯内存计数） */
+    private final LoopGuard loopGuard;
+    /** 执行计划同步提醒（TodoWrite 节奏护栏，每请求一个实例；无 TodoWrite 的会话零开销） */
+    private final PlanSyncReminder planSyncReminder = new PlanSyncReminder();
     /** offload 存取（压缩启用时非空；context_reload 与取回共用） */
     private final OffloadStore offloadStore;
     /** context_reload 工具（压缩启用时非空） */
@@ -143,7 +150,7 @@ public class AgentLoopExecutor {
                              String query, RunnableParams params) {
         this(chatModel, instructions, tools, maxRounds, maxRetries, retryIntervalMs, thinkingMode,
                 taskManager, sessionStore, traceManager, stateStore, query, params, null, null,
-                null, null, null);
+                null, null, null, null, null);
     }
 
     /** 恢复执行通道：resumeState 非空时从快照续跑（ReactAgent.resumeStream 专用） */
@@ -156,12 +163,15 @@ public class AgentLoopExecutor {
                              PauseState resumeState, String resumeQuery) {
         this(chatModel, instructions, tools, maxRounds, maxRetries, retryIntervalMs, thinkingMode,
                 taskManager, sessionStore, traceManager, stateStore, query, params,
-                resumeState, resumeQuery, null, null, null);
+                resumeState, resumeQuery, null, null, null, null, null);
     }
 
     /**
      * M7 全参构造：deferredRegistry 非空启用 tool_search 延迟发现；
      * compactor 非空启用上下文压缩（+ context_reload 取回工具）。
+     *
+     * @param thinkingOffParam 用户关"深度思考"时注入请求体 extra_body 的 JSON 对象
+     *                         （按模型可配，如 {"enable_thinking":false}）；null = 思考走模型默认
      */
     public AgentLoopExecutor(ChatModel chatModel, String instructions, List<ToolCallback> tools,
                              int maxRounds, int maxRetries, long retryIntervalMs,
@@ -172,7 +182,9 @@ public class AgentLoopExecutor {
                              PauseState resumeState, String resumeQuery,
                              DeferredToolRegistry deferredRegistry,
                              ContextCompactor compactor,
-                             OffloadStore offloadStore) {
+                             OffloadStore offloadStore,
+                             LoopGuardConfig loopGuardConfig,
+                             String thinkingOffParam) {
         this.chatModel = chatModel;
         this.instructions = instructions == null ? "" : instructions;
         this.tools = List.copyOf(tools);
@@ -185,6 +197,7 @@ public class AgentLoopExecutor {
         this.maxRetries = maxRetries;
         this.retryIntervalMs = retryIntervalMs;
         this.thinkingMode = thinkingMode;
+        this.thinkingOffParam = thinkingOffParam == null || thinkingOffParam.isBlank() ? null : thinkingOffParam.trim();
         this.taskManager = taskManager;
         this.sessionStore = sessionStore;
         this.traceManager = traceManager;
@@ -201,6 +214,9 @@ public class AgentLoopExecutor {
                 : (compactor != null ? new InMemoryOffloadStore() : null);
         this.contextReloadTool = this.offloadStore != null
                 ? ContextReloadTool.build(this.offloadStore, conversationId())
+                : null;
+        this.loopGuard = loopGuardConfig != null && loopGuardConfig.enabled()
+                ? new LoopGuard(loopGuardConfig)
                 : null;
         this.outputConverter = params.getOutputType() != null
                 ? new BeanOutputConverter<>(params.getOutputType())
@@ -262,6 +278,8 @@ public class AgentLoopExecutor {
             // 存对话表agentx_conversation
             sessionStore.initConversation(SnowflakeIdGenerator.nextId(),conversationId(), sessionId, params.getUserId(), query);
         }
+        // Fix B：从历史恢复延迟工具发现态（多轮续问与 resume 同样适用）
+        restoreDiscoveredToolsFromHistory();
     }
 
     private String buildSystemPrompt() {
@@ -290,6 +308,8 @@ public class AgentLoopExecutor {
 
             用户消息：
             %s
+
+            注意：工具发现状态已重置，历史中用过的延迟工具已自动恢复可用；若仍缺少某工具，请先用 tool_search 重新发现。
             """;
 
     /** 带新消息恢复时，被跳过工具的占位响应（不重放，让模型按新指示自决策） */
@@ -341,6 +361,45 @@ public class AgentLoopExecutor {
         log.info("恢复执行初始化: convId={}, round={}, pending={}, resumeQuery={}",
                 conversationId(), round, resumeState.getPendingToolCalls().size(),
                 resumeQuery == null ? "" : resumeQuery);
+        // Fix B：从快照链恢复延迟工具发现态（发现态按请求隔离，快照历史里的工具需重登记）
+        restoreDiscoveredToolsFromHistory();
+    }
+
+    /**
+     * Fix B：从历史消息恢复延迟工具发现态——让"系统账本"追上模型认知
+     * （历史里看得见的延迟工具重新真正可调用，消除 resume/多轮续问的发现态断裂）。
+     *
+     * <p>扫描口径 = 有限名单（延迟注册表全部工具名）× 每条消息可见文本 contains 匹配
+     * （覆盖 L1 压缩标记、L4 摘要提及、context_reload 取回原文等无结构化字段的形态），
+     * 由 {@link MessageTextRenderer} 按消息类型展开（含结构化 toolCalls/tool 响应名）。
+     * 恢复不变量：名字在模型可见内容里出现过才恢复；过度恢复无害、漏恢复才危险。
+     */
+    private void restoreDiscoveredToolsFromHistory() {
+        if (deferredRegistry == null || deferredSession == null || deferredRegistry.size() == 0) {
+            return;
+        }
+        Set<String> hit = scanDeferredToolNames(messages, deferredRegistry.names());
+        deferredSession.restore(hit);
+    }
+
+    /** 扫描消息链中出现的延迟工具名（含渲染文本匹配；包可见便于单测） */
+    static Set<String> scanDeferredToolNames(List<Message> messages, List<String> candidates) {
+        Set<String> hit = new LinkedHashSet<>();
+        if (messages == null || candidates == null || candidates.isEmpty()) {
+            return hit;
+        }
+        for (Message m : messages) {
+            String text = MessageTextRenderer.renderMessage(m);
+            if (text.isEmpty()) {
+                continue;
+            }
+            for (String name : candidates) {
+                if (text.contains(name)) {
+                    hit.add(name);
+                }
+            }
+        }
+        return hit;
     }
 
     /**
@@ -429,14 +488,13 @@ public class AgentLoopExecutor {
         // M7：每轮重建工具清单 = 常驻 + 已发现（延迟）+ tool_search + context_reload
         List<ToolCallback> roundTools = buildRoundTools(noTools);
         interruptCtx.enterLlmStreaming();
+
+
         RoundState rs = new RoundState(new ArrayList<>(messages), toolMapOf(roundTools));
         current = rs;
 
         // 注册工具
-        ToolCallingChatOptions options = ToolCallingChatOptions.builder()
-                .toolCallbacks(noTools ? List.of() : roundTools)
-                .internalToolExecutionEnabled(false)
-                .build();
+        ToolCallingChatOptions options = buildRoundOptions(noTools, roundTools);
 
         // 调用llm
         Disposable d = chatModelStream(new Prompt(rs.inputSnapshot, options))
@@ -460,6 +518,41 @@ public class AgentLoopExecutor {
     /** 可覆写：测试注入 scripted 模型响应 */
     protected Flux<org.springframework.ai.chat.model.ChatResponse> chatModelStream(Prompt prompt) {
         return Flux.from(chatModel.stream(prompt));
+    }
+
+    /**
+     * 每轮 LLM 调用选项：默认通用工具选项（保持既有行为）；用户关"深度思考"且模型配了
+     * 关思考参数时，改用 OpenAiChatOptions 把该 JSON 注入请求体 extra_body
+     * （OpenAI 兼容端点通用透传，Spring AI 1.1+ 支持）。
+     */
+    private ToolCallingChatOptions buildRoundOptions(boolean noTools, List<ToolCallback> roundTools) {
+        Map<String, Object> extraBody = parseThinkingOffParam();
+        if (extraBody != null) {
+            return org.springframework.ai.openai.OpenAiChatOptions.builder()
+                    .toolCallbacks(noTools ? List.of() : roundTools)
+                    .internalToolExecutionEnabled(false)
+                    .extraBody(extraBody)
+                    .build();
+        }
+        return ToolCallingChatOptions.builder()
+                .toolCallbacks(noTools ? List.of() : roundTools)
+                .internalToolExecutionEnabled(false)
+                .build();
+    }
+
+    /** 关思考参数 JSON → Map；解析失败仅告警并回退模型默认（不阻断对话） */
+    private Map<String, Object> parseThinkingOffParam() {
+        if (thinkingOffParam == null) {
+            return null;
+        }
+        try {
+            Map<String, Object> parsed = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readValue(thinkingOffParam, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
+            return parsed == null || parsed.isEmpty() ? null : parsed;
+        } catch (Exception e) {
+            log.warn("[AgentLoop] 关思考参数非法，忽略并走模型默认: {}", thinkingOffParam);
+            return null;
+        }
     }
 
     // ==================== M7：压缩与每轮工具重建 ====================
@@ -566,6 +659,7 @@ public class AgentLoopExecutor {
             if (thinkingMode == ThinkingMode.REASONING_CONTENT) {
                 String reasoning = reasoningOf(msg);
                 if (!reasoning.isEmpty()) {
+                    markThinkChunk(rs);
                     rs.reasoningBuffer.append(reasoning);
                     emit(AgentStreamEvent.thinking(reasoning));
                 }
@@ -589,6 +683,7 @@ public class AgentLoopExecutor {
             case THINK_TAG -> {
                 ThinkTagParser.Output out = rs.parser.feed(content);
                 if (out.thinkingDelta() != null) {
+                    markThinkChunk(rs);
                     rs.reasoningBuffer.append(out.thinkingDelta());
                     emit(AgentStreamEvent.thinking(out.thinkingDelta()));
                 }
@@ -704,6 +799,25 @@ public class AgentLoopExecutor {
         // 记录trace
         traceRound(rs, toolCallsJson(merged), rs.reasoningBuffer.toString(), true, null);
 
+        // Fix A 循环熔断评估（forceFinal 轮不再评估）：纯单工具轮按工具名累计，穿插不重置
+        final LoopGuard.Decision guard = (!noTools && loopGuard != null)
+                ? loopGuard.evaluate(merged)
+                : LoopGuard.Decision.NONE;
+        if (guard.action() == LoopGuard.Action.BREAK) {
+            synchronized (this) {
+                List<ToolResponseMessage.ToolResponse> breakResponses = new ArrayList<>();
+                for (ToolCall tc : merged) {
+                    breakResponses.add(new ToolResponseMessage.ToolResponse(
+                            tc.id(), tc.name(), LoopGuard.breakText(guard)));
+                }
+                appendToolResponses(breakResponses);
+            }
+            log.warn("[loop-guard] 熔断: convId={}, tool={}, 纯单工具轮累计 {} 次，进入 forceFinal",
+                    conversationId(), guard.toolName(), guard.count());
+            scheduleRound(true);
+            return;
+        }
+
         if (noTools) {
             // forceFinal 轮模型仍幻觉 tool call：按文本终止
             String answer = rs.textBuffer.isEmpty()
@@ -726,6 +840,8 @@ public class AgentLoopExecutor {
         }
 
         // 正常：并发执行工具 → 全部完成后按序回灌 → 下一轮
+        // 计划同步提醒评估（主线程做，计数严格按轮次顺序；有 TodoWrite 的会话才可能产出文本）
+        final String syncReminder = planSyncReminder.evaluate(merged);
         List<PauseState.PendingToolCall> pending = merged.stream()
                 .map(tc -> new PauseState.PendingToolCall(tc.id(), tc.name(), tc.arguments()))
                 .toList();
@@ -742,8 +858,19 @@ public class AgentLoopExecutor {
                             return; // 中断处理器已收尾
                         }
                         List<ToolResponseMessage.ToolResponse> responses = new ArrayList<>();
-                        for (ToolCallExecutor.ToolExecutionOutcome o : outcomes) {
-                            responses.add(new ToolResponseMessage.ToolResponse(o.id(), o.name(), o.result()));
+                        for (int ci = 0; ci < outcomes.size(); ci++) {
+                            ToolCallExecutor.ToolExecutionOutcome o = outcomes.get(ci);
+                            String resultText = o.result();
+                            // Fix A：WARN/ESCALATE 时对触发工具的结果追加系统提示
+                            if (guard.hasNote() && guard.toolName() != null
+                                    && guard.toolName().equals(o.name())) {
+                                resultText = resultText + LoopGuard.noteText(guard);
+                            }
+                            // 计划同步提醒：追加到本轮最后一个工具结果末尾（滞后攒批的过程性纠正）
+                            if (syncReminder != null && ci == outcomes.size() - 1) {
+                                resultText = resultText + syncReminder;
+                            }
+                            responses.add(new ToolResponseMessage.ToolResponse(o.id(), o.name(), resultText));
                         }
                         appendToolResponses(responses);
                     }
@@ -1027,6 +1154,7 @@ public class AgentLoopExecutor {
     private void flushParser(RoundState rs) {
         ThinkTagParser.Output out = rs.parser.flush();
         if (out.thinkingDelta() != null) {
+            markThinkChunk(rs);
             rs.reasoningBuffer.append(out.thinkingDelta());
             if (thinkingMode == ThinkingMode.THINK_TAG) {
                 emit(AgentStreamEvent.thinking(out.thinkingDelta()));
@@ -1042,10 +1170,21 @@ public class AgentLoopExecutor {
         if (traceManager == null) {
             return;
         }
+        long thinkDurationMs = rs.thinkStartAtMs > 0L
+                ? Math.max(0L, rs.thinkEndAtMs - rs.thinkStartAtMs) : 0L;
         traceManager.trace(sessionId, conversationId(), round,
                 rs.inputSnapshot, output, think,
                 rs.roundPromptTokens, rs.roundCompletionTokens,
-                System.currentTimeMillis() - rs.startedAt, success, error);
+                System.currentTimeMillis() - rs.startedAt, thinkDurationMs, success, error);
+    }
+
+    /** 记录本轮 reasoning chunk 的首末时刻（trace 的 think_duration_ms 数据源） */
+    private static void markThinkChunk(RoundState rs) {
+        long now = System.currentTimeMillis();
+        if (rs.thinkStartAtMs == 0L) {
+            rs.thinkStartAtMs = now;
+        }
+        rs.thinkEndAtMs = now;
     }
 
     private void emit(AgentStreamEvent event) {
@@ -1071,6 +1210,9 @@ public class AgentLoopExecutor {
         final long startedAt = System.currentTimeMillis();
         long roundPromptTokens;
         long roundCompletionTokens;
+        /** 本轮首/末 reasoning chunk 时刻（毫秒；0 = 本轮无思考），trace 落 think_duration_ms */
+        long thinkStartAtMs;
+        long thinkEndAtMs;
         volatile boolean sawToolCall;
 
         RoundState(List<Message> inputSnapshot, Map<String, ToolCallback> toolMap) {

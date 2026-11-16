@@ -2,7 +2,7 @@
 
 > 从「只读问数 Agent」到「申报人工作台 Agent」：为申报人员扩展业务动作（写）工具。
 >
-> 版本 v1.2 ｜ 起草 2026-11-09 ｜ M-E1 交互设计定稿 2026-11-09 ｜ PatchMerger 规则定稿（D5，含全流程场景模拟）2026-11-09 ｜ 状态：**M-E1 设计定稿，M-E0 待开工**
+> 版本 v1.3 ｜ 起草 2026-11-09 ｜ M-E1 交互设计定稿 2026-11-09 ｜ PatchMerger 规则定稿（D5，含全流程场景模拟）2026-11-09 ｜ M-E0 完成 2026-11-09 ｜ M-E1 开发完成 2026-11-09 ｜ 状态：**M-E0 ✅ 完成，M-E1 ✅ 开发完成（单测 244 绿 + 真实环境读路径 IT 通过；写路径联调验收待做）**
 >
 > 读能力走既有 `executeSql` 六步安全管线（不动）；写能力走**主后端 REST 转发 + 功能权限校验 + 确认令牌**三件套（新建）。
 
@@ -255,41 +255,53 @@ patch {category, node?, entryId?, field, value}
 
 > 编号 M-E*（Extension），独立于 README 中 M-H*（移植主线，M-H4/M-H5 未完）。每期独立可交付、可验收，"一步一步来"。
 
-### M-E0 写通道地基（先修路，无业务工具）⬜
+### M-E0 写通道地基（先修路，无业务工具）✅ 完成（2026-11-09）
 
 **目标**：ActionGateway 三件套就绪，端到端打通"agent→主后端 REST"。
 
-- [ ] `RestActionClient`：RestClient 封装；透传 `Authorization: Bearer` + `tenant-id`；配置 `data-agent.action.base-url`（本地联调 `http://127.0.0.1:9031/admin-api`，部署走 nginx 同域）；写不重试、读可重试；`CommonResult` 错误结构化映射给 LLM
-- [ ] `HuaxiAuthContext` 扩展携带 tenantId（取自 system_users / token 表）
-- [ ] `FunctionPermissionChecker`：按当前用户角色查 `system_role_menu`（type=3 按钮权限），30s 缓存；无权限时返回话术（对齐"数据披露红线"风格：不泄露权限机制细节）
-- [ ] `ConfirmTokenService`：TTL 5min、一次性、绑定 userId+action+payload 哈希（附录 B）
-- [ ] `ActionAuditLogger`：结构化动作日志（userId/工具/业务对象/确认令牌id/结果），与 agentx_trace round 关联
-- [ ] 系统提示词补「写操作红线」段：高危必须先出计划再确认；未获用户明确同意严禁携带令牌执行；确认令牌不得由 agent 自行构造
-- [ ] 单测：权限缓存、令牌生命周期（过期/复用/参数篡改各 case）、错误映射
+- [x] `RestActionClient`：RestClient 封装；透传 `Authorization: Bearer` + `tenant-id`；配置 `data-agent.action.base-url`（本地联调默认 `http://127.0.0.1:9031/admin-api`，local profile 覆盖为 `http://192.168.2.77:9031/admin-api`）；写不重试、读可重试（默认 1 次，仅网络异常/5xx）；`CommonResult` 错误结构化映射给 LLM（401 过期引导 / 403 无权限话术 / 业务错误透出 msg / 不可达降级）
+- [x] `HuaxiAuthContext` 扩展携带 tenantId（取自 system_users / token 表，用户表优先）+ 原始 token；登录签发 INSERT 补写 tenant_id
+- [x] `FunctionPermissionChecker`：按当前用户角色查 `system_role_menu`（type=3 按钮权限，四表 JOIN），30s 缓存；无权限话术不泄露机制细节；`evict` 预留主动失效
+- [x] `ConfirmTokenService`：TTL 5min（可配）、一次性（compute 原子消费）、绑定 userId+action+payload SHA-256 哈希（canonical JSON 键排序）、revoke 即时作废；消费结果 7 态枚举
+- [x] `ActionAuditLogger`：新表 `agentx_action_log`（启动自动建表 + agentx_pg.sql 同步 DDL），按 conversation_id 关联 agentx_trace 回放；写失败降级为日志双轨
+- [x] 系统提示词补「写操作红线」段（工作原则 8：高危先计划/明确同意/令牌只认服务端/参数变则重出/如实回报）
+- [x] 单测 29 个全绿：权限缓存（H2 四表 JOIN + TTL/evict）、令牌生命周期 10 case（过期/复用/篡改/用户/动作不匹配/取消/键序无关哈希）、错误映射 11 case（MockRestServiceServer：401/403/业务码/5xx 重试/写不重试/缺 token）；全量回归 221 + 内核全绿
 - [ ] （需协调，不阻塞）为 executeSql 换**PG 只读账号**——当前 pgvector 库级可写，应用层只读单薄；192.168.2.61 为共享远程库，找 DBA 建号
-- [ ] 验收：demo 工具 `myPermissions`（查本人功能权限清单）端到端跑通 REST 通道 + 权限校验
+- [x] 验收：demo 工具 `myPermissions`（延迟层经 tool_search 发现）端到端跑通——同表铸 token → agent 对话链（LLM → tool_search → myPermissions → REST 转发）→ `get-permission-info` 返回 28 项权限（含 doc:project:file:fill）→ `agentx_action_log` 落库（restVerified=true）→ 同会话 4 轮 trace 可回放；另附集成验收 `ActionChannelIT`（显式执行，铸 token 用后即删）
 
-**交付物**：action 包（client/permission/confirm/audit）+ 单测 + 配置项 + 提示词红线段。
+**M-E0 实测发现（联调 192.168.2.77 / 库 192.168.2.61）**：
+1. 77 与 61 **同库**（system_oauth2_access_token 同表校验通过，M-H2「同表同校验」前提成立）；
+2. 该部署 `system_users.tenant_id` 全为 **0**（多租户未启用形态）——agent 侧 tenant 解析必须原样透传 0，不能假设默认租户 1（否则被启用租户校验的环境 403）；
+3. 77 **未启用 yudao 租户校验**（错误 tenant-id 也放行）——租户防御依赖主后端环境配置，agent 侧不做二次假设；
+4. agent 本地权限口径（type=3 按钮 28 项）与主后端 `get-permission-info`（29 项）差 1——主后端口径含目录/菜单型 permission；`myPermissions` 以 REST 返回为准、DB 兜底，两侧一致性已够 M-E1 用。
 
-### M-E1 任务处理组（P1，一个读组 + 两个写）⬜
+**交付物**：`dataagent/action` 包（RestActionClient/FunctionPermissionChecker/ConfirmTokenService/ActionAuditLogger/MyPermissionsTool）+ 单测/IT + 配置项 + 提示词红线段 + agentx_action_log DDL。
+
+### M-E1 任务处理组（P1，一个读组 + 两个写）✅ 开发完成（2026-11-09，写路径联调验收待做）
 
 **目标**：申报人最高频闭环「被驳了什么 → 改 → 重提」全对话完成。
 
-- [ ] `listMyTasks` / `getTaskDetail`（读，聚合驳回意见+被驳清单）
-- [ ] `stageDraft`（W1）/ `resubmitLedger`（W2，确认令牌）
-- [ ] **PatchMerger**（增量合并核心，规则见 §3.5 D5）：定位双轨（category 主定位 + node/entryId 消歧）→ 匹配阶梯（精确/归一化→包含唯一命中）→ 歧义/零命中双协议 → 三道闸（锁定/冲突/白名单）→ 攒批后组装全量 `LedgerResubmitReqVO`；单测用例直接采用 D5 场景模拟的 9 个场景（单条/模糊/零命中/歧义放弃/批量展开/锁定闸/竞态哈希失效）
-- [ ] **前端：确认卡组件**——渲染 W2 计划卡（diff 表 + 影响面 + [确认执行/取消]）；按钮点击=注入用户消息「确认执行 ct_xxx」，**经 LLM 单路径**执行（§3.5 D2），与手打"确认"等效
-- [ ] **前端：上传槽位卡片（引导式）**——entry 缺/被驳文件时渲染槽位；业务文件**直传主平台** `POST /admin-api/infra/file/upload`（复用现有附件控件加 target 开关，不走 agent MinIO）；上传完成注入结构化消息 `[文件已上传] {name} → {url}（待绑定：{category}）`（§3.5 D4）
-- [ ] 技能 `backend/skills/declarant-workflow/SKILL.md` v1：SOP=先查任务→展示被驳明细与修改计划→用户确认→执行→回报结果；明确"改哪条、改成什么、影响哪个流程实例"的展示格式
-- [ ] 工具描述与参数 schema（防 LLM 传错参数名）
-- [ ] 单测（MockRestServiceServer：含 PatchMerger 白名单/锁定行/合并 case；确认令牌生命周期）+ 联调冒烟
+- [x] `listMyTasks` / `getTaskDetail`（读，聚合驳回意见+被驳清单）
+- [x] `stageDraft`（W1）/ `resubmitLedger`（W2，确认令牌）+ `cancelConfirm`（取消按钮配套：令牌即时作废，通用 W2 基建）
+- [x] **PatchMerger**（增量合并核心，规则见 §3.5 D5）：定位双轨（category 主定位 + node/entryId 消歧）→ 匹配阶梯（精确/归一化→包含唯一命中）→ 歧义/零命中双协议 → 三道闸（锁定/冲突/白名单）→ 攒批后组装全量 `LedgerResubmitReqVO`；全批 all-or-nothing；单测直接采用 D5 场景模拟的 9 个场景
+- [x] **前端：确认卡组件**——TOOL_END 拦截工具结果尾部 ```json {"__card":...}``` 提取渲染（历史回放确定性重建）；W2 计划卡（diff 表 + 影响面 + [确认执行/取消]）；按钮点击=`sendText("确认执行 ct_xxx")` 注入用户消息，**经 LLM 单路径**执行（§3.5 D2），与手打"确认"等效
+- [x] **前端：上传槽位卡片（引导式）**——getTaskDetail 对被驳/待传条目产出 `__card:"uploadSlots"`；槽位上传**直传主平台** `POST /admin-api/infra/file/upload`（新 `api/mainPlatform.js`，Bearer 用户 token，走 vite `/admin-api` 代理，不走 agent MinIO）；上传完成注入结构化消息 `[文件已上传] {name} → {url}（待绑定：{category}）`（§3.5 D4）
+- [x] 技能 `backend/skills/declarant-workflow/SKILL.md` v1：SOP=先查任务→展示被驳明细与修改计划→用户确认→执行→回报结果；明确"改哪条、改成什么、影响哪个流程实例"的展示格式；含攒批语义/二调只带 taskId+confirmToken/"不改了"合法出口/上传绑定消息格式
+- [x] 工具描述与参数 schema（防 LLM 传错参数名；taskId/entryId 全链路字符串）
+- [x] 单测：`PatchMergerTest`（11 case：D5 九场景+值校验+空批防御）+ `TaskActionToolsTest`（12 case：MockRestServiceServer 全链路——任务定位/越权、detail 聚合+槽位卡、stageDraft 全量组装请求体、resubmit 首轮**零写请求**、二轮 stage-draft→resubmit 顺序与请求体、令牌一次性/现状漂移重出卡/取消作废、权限拒绝短路、状态守卫）；全量回归 **244 绿**
+- [x] 集成 IT `TaskReadIT`（@Tag integration，显式执行）：真实环境读路径冒烟通过（192.168.2.61 铸 token → 77 主后端）
+
+**M-E1 实测发现（真实数据，TaskReadIT 输出核验）**：
+1. 验收 1/2 条的读路径已在线验证：shenbao1 待办 3 条（400006-002 部分通过被驳 2/4、100001-002 已驳回 14/14、100001-001 部分通过被驳 1/4），批次号/被驳条数富化正常；getTaskDetail 逐条清单 + 🔒锁定行标注 + 审批轨迹 + 上传槽位卡齐活；
+2. 关键实现决策：**resubmit 二轮先 PUT stage-draft 刷最终版再 PUT resubmit**——主后端"已有 STAGE 暂存时 resubmit 忽略 fileEntries"（DocLedgerServiceImpl 三分支），不刷的话历史暂存会吞掉本轮新改动（单测已固化该顺序）；
+3. 令牌哈希绑定**重拉现状后的重新解析结果**（entryId+field+value+taskId），二轮 patch 从服务端 ActionPlanCache 取（LLM 不复述，防失真）；现状漂移 → PAYLOAD_MISMATCH → 自动重出计划新令牌，一轮交互闭环。
 
 **验收**（真实数据，shenbao1 的 3 条待办）：
-1. 「我有哪些被驳回的任务？」→ 3 条，含批次号/子阶段/被驳条数；
-2. 「100001-002 里哪条被驳、什么意见？」→ 14 条清单 + pm_opinion；
-3. 演练：对一条待办暂存修改 →（确认后）重提 → 返回 status=1 审批中 + 任务完成；
-4. 交互验收：W2 卡片按钮点击后消息链完整可回放（按钮→注入消息→LLM 携令牌→执行→回报）；上传槽位传文件落库后**主平台文件预览可用**（相对路径/预签名正确）；
-5. 陷阱验收：改已通过行被拒；白名单外字段（如 pmOpinion）被拒且提示人话；确认后偷改参数令牌失效。
+1. [x]（读路径 IT 已验）「我有哪些被驳回的任务？」→ 3 条，含批次号/子阶段/被驳条数；
+2. [x]（读路径 IT 已验，LLM 对话链待联调）「100001-002 里哪条被驳、什么意见？」→ 14 条清单 + pm_opinion；
+3. [ ] 演练：对一条待办暂存修改 →（确认后）重提 → 返回 status=1 审批中 + 任务完成；
+4. [ ] 交互验收：W2 卡片按钮点击后消息链完整可回放（按钮→注入消息→LLM 携令牌→执行→回报）；上传槽位传文件落库后**主平台文件预览可用**（相对路径/预签名正确）；
+5. [ ] 陷阱验收：改已通过行被拒；白名单外字段（如 pmOpinion）被拒且提示人话；确认后偷改参数令牌失效。（3/5 的单测层已覆盖，验收指对话链端到端）
    *重提会真实推进审批流，验收在演练项目上做，或与 PM 约定即时驳回回来。*
 
 ### M-E2 资料填报组（P2）⬜

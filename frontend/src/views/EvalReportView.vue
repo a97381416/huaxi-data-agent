@@ -173,12 +173,16 @@ onMounted(loadList)
   max-width: 100%;
   box-sizing: border-box;
 }
+/* 宽表横向滚动由 markdown.js 包的 .md-table-wrap 承担；table 保持原生 display:table，
+   width:100% 为「最小宽度」语义——窄表撑满容器，宽表自动变宽由 wrap 滚动 */
+.markdown-body :deep(.md-table-wrap) {
+  overflow-x: auto;
+}
+
 .markdown-body :deep(table) {
+  width: 100%;
   border-collapse: collapse;
   font-size: 12px;
-  display: block;
-  overflow-x: auto;
-  max-width: 100%;
 }
 .markdown-body :deep(th),
 .markdown-body :deep(td) {

@@ -3,12 +3,14 @@ package com.llmetor.dataagent.dataagent.agent;
 import com.llmetor.dataagent.dataagent.file.FileManageService;
 import com.llmetor.dataagent.dataagent.mcp.McpClientRegistry;
 import com.llmetor.dataagent.dataagent.mcp.McpServerManager;
+import com.llmetor.dataagent.dataagent.model.ChatModelManager;
 import com.llmetor.dataagent.dataagent.prompt.SessionFilesPromptBuilder;
 import com.llmetor.dataagent.dataagent.prompt.SystemPrompt;
 import com.llmetor.dataagent.dataagent.prompt.UserContextBuilder;
 import com.llmetor.dataagent.dataagent.skill.SkillManager;
 import com.llmetor.miniagentx.agent.AgentTaskManager;
 import com.llmetor.miniagentx.agent.ReactAgent;
+import com.llmetor.miniagentx.agent.LoopGuardConfig;
 import com.llmetor.miniagentx.interrupt.PauseStateStore;
 import com.llmetor.miniagentx.memory.AgentxSessionStore;
 import com.llmetor.miniagentx.model.AgentStreamEvent;
@@ -50,7 +52,7 @@ import java.util.Set;
  * <p>M6 补充：MCP 工具改为动态——{@link McpClientRegistry} 持有已连通服务的工具回调，
  * 本类每请求入口调 {@link #syncMcpToolsIfNeeded()} 按注册表 version 热同步：
  * ALWAYS 型反注册旧实例再注册新实例进延迟层；ONLINE_TOGGLE 型进常驻层随 online 开关注入。
- * （此前 mcp-echarts/Tavily 为构造期一次性装配的硬编码 bean，增删需改 yml 重启。）
+ * （此前 Tavily 为构造期一次性装配的硬编码 bean，增删需改 yml 重启。）
  *
  * <p>每请求按 userId 重建 ReactAgent（instructions 含用户上下文 + 会话文件段）。
  */
@@ -58,7 +60,20 @@ import java.util.Set;
 @Component
 public class DodoAgent {
 
+    /** 斜杠指定技能时追加到 system prompt 末尾的优先加载指令（%s = 技能名） */
+    private static final String USER_SKILL_DIRECTIVE = """
+            <用户指定技能>
+            用户已通过斜杠命令显式指定本次任务使用技能「%s」。你必须：
+            1. 第一步立即调用 Skill 工具加载该技能（不要先自行作答）；
+            2. 严格按技能提示词的流程执行任务；
+            3. 若该技能与本轮问题明显不匹配，先简要向用户说明，再按更合理的方式继续。
+            </用户指定技能>
+            """;
+
+    /** yml 兜底 ChatModel（spring-ai 自动装配 bean）：库空/无可用模型时 resolve 的落点 */
     private final ChatModel chatModel;
+    /** 对话模型管理器（agentx_chat_model）：每请求按前端传的 code 解析实际 ChatModel */
+    private final ChatModelManager chatModelManager;
     private final AgentTaskManager taskManager;
     private final DataSource dataSource;
     private final AgentxSessionStore sessionStore;
@@ -91,8 +106,11 @@ public class DodoAgent {
     private final ThinkingMode thinkingMode;
     /** 压缩策略（yml 可配；联调时调小阈值可真实触发） */
     private final com.llmetor.miniagentx.context.ContextPolicy contextPolicy;
+    /** 循环熔断配置（Fix A，yml 可配；豁免 executeSql 等合法高频工具） */
+    private final LoopGuardConfig loopGuardConfig;
 
     public DodoAgent(ChatModel chatModel,
+                     ChatModelManager chatModelManager,
                      AgentTaskManager taskManager,
                      DataSource dataSource,
                      PauseStateStore pauseStateStore,
@@ -108,8 +126,14 @@ public class DodoAgent {
                      @Value("${data-agent.agent.max-rounds:100}") int maxRounds,
                      @Value("${data-agent.agent.retry-interval-ms:3000}") long retryIntervalMs,
                      @Value("${data-agent.agent.thinking-mode:REASONING_CONTENT}") ThinkingMode thinkingMode,
-                     @Value("${data-agent.agent.tool-search-max-results:8}") int toolSearchMaxResults) {
+                     @Value("${data-agent.agent.tool-search-max-results:8}") int toolSearchMaxResults,
+                     @Value("${data-agent.agent.loop-guard.enabled:true}") boolean loopGuardEnabled,
+                     @Value("${data-agent.agent.loop-guard.warn-after:3}") int loopGuardWarnAfter,
+                     @Value("${data-agent.agent.loop-guard.escalate-after:5}") int loopGuardEscalateAfter,
+                     @Value("${data-agent.agent.loop-guard.break-after:7}") int loopGuardBreakAfter,
+                     @Value("${data-agent.agent.loop-guard.ignore-tools:executeSql}") String loopGuardIgnoreTools) {
         this.chatModel = chatModel;
+        this.chatModelManager = chatModelManager;
         this.taskManager = taskManager;
         this.dataSource = dataSource;
         // 共享持久化设施：每请求重建 Agent 时不再重复包装/建表；中断快照 JDBC 落库（M3）
@@ -132,6 +156,9 @@ public class DodoAgent {
         this.retryIntervalMs = retryIntervalMs;
         this.thinkingMode = thinkingMode;
         this.contextPolicy = contextPolicy;
+        this.loopGuardConfig = new LoopGuardConfig(loopGuardEnabled,
+                loopGuardWarnAfter, loopGuardEscalateAfter, loopGuardBreakAfter,
+                parseIgnoreTools(loopGuardIgnoreTools));
         log.info("[data-agent] 三层工具装配完成: 常驻={}个 {}, 延迟={}个 {}（MCP 工具按注册表版本动态同步）",
                 residentTools.size(), toolNames(residentTools),
                 deferredRegistry.size(), deferredRegistry.names());
@@ -171,24 +198,29 @@ public class DodoAgent {
      * @param userId         当前登录用户 ID（进 ToolContext + toolParams 注入 + 用户上下文）
      * @param fileIds        本次上传的文件 ID（启动时立即 link 到会话，结束后按轮补 link）
      * @param online         是否注入 Tavily 联网工具（前端联网开关）
+     * @param skillName      用户斜杠指定的技能名（可空）：非空时 SkillsTool 仅装该技能并注入优先加载指令
+     * @param modelCode      用户选择的对话模型 code（可空）：空/失效回退默认模型（库空回退 yml 兜底 bean）
+     * @param thinking       深度思考开关（null/true = 走模型默认；false = 按模型注入关思考请求参数）
      */
     public Flux<AgentStreamEvent> stream(String query, String conversationId, Long userId,
-                                         List<String> fileIds, boolean online) {
+                                         List<String> fileIds, boolean online, String skillName,
+                                         String modelCode, boolean thinking) {
         // 阶段一关联：本轮 system prompt 反查立即生效
         if (hasFiles(fileIds)) {
             fileManageService.linkToConversation(fileIds, conversationId);
         }
-        ReactAgent agent = buildAgent(userId, conversationId, fileIds, online);
+        ReactAgent agent = buildAgent(userId, conversationId, fileIds, online, skillName, modelCode, thinking);
         RunnableParams params = RunnableParams.builder()
                 .conversationId(conversationId)
                 .userId(userId == null ? "" : userId.toString())
                 // executeSql 的 inputSchema 有 userId 参数 → 内核执行前强制覆盖为真实值，不暴露给 LLM
-                .toolParams(userId == null ? Map.of() : Map.of("userId", userId.toString()))
+                // M-E0 写通道：token/tenantId 同机制注入（写工具以当前用户身份转发主后端 REST）
+                .toolParams(buildToolParams(userId, conversationId))
                 .build();
-        log.info("[data-agent] 收到查询: convId={}, userId={}, query={}, fileIds={}, online={}",
-                conversationId, userId, query, fileIds == null ? 0 : fileIds.size(), online);
+        log.info("[data-agent] 收到查询: convId={}, userId={}, query={}, fileIds={}, online={}, skill={}, model={}",
+                conversationId, userId, query, fileIds == null ? 0 : fileIds.size(), online, skillName, modelCode);
         // M7-A01 观测点：首轮工具清单（延迟层不下发，tool_search 按需发现）
-        List<ToolCallback> firstRound = availableTools(conversationId, online);
+        List<ToolCallback> firstRound = availableTools(conversationId, online, skillName);
         log.info("[data-agent] 首轮工具清单({}个): {} + tool_search + context_reload | 延迟层({}个)经 tool_search 发现",
                 firstRound.size() + 2, toolNames(firstRound), deferredRegistry.size());
         // 阶段二关联：Complete/Paused 事件携带 sessionId 后补写（历史回放按轮取附件）
@@ -199,6 +231,32 @@ public class DodoAgent {
     /** 打断运行中任务（→ Paused + 快照落库） */
     public boolean interrupt(String conversationId, String message) {
         return taskManager.interrupt(conversationId, message);
+    }
+
+    /**
+     * M-E0 写通道 toolParams：userId（既有）+ token/tenantId（REST 转发凭证）+
+     * conversationId（动作审计关联）。工具 inputSchema 声明同名参数即被内核强制注入，
+     * LLM 传什么都无效。token/tenantId 取自当前请求线程的登录态（Filter 已解析）。
+     */
+    private Map<String, Object> buildToolParams(Long userId, String conversationId) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        if (userId != null) {
+            params.put("userId", userId.toString());
+        }
+        if (conversationId != null) {
+            params.put("conversationId", conversationId);
+        }
+        com.llmetor.dataagent.auth.HuaxiAuthContext.AuthInfo auth =
+                com.llmetor.dataagent.auth.HuaxiAuthContext.getOrNull();
+        if (auth != null) {
+            if (auth.token() != null) {
+                params.put("token", auth.token());
+            }
+            if (auth.tenantId() != null) {
+                params.put("tenantId", auth.tenantId().toString());
+            }
+        }
+        return Map.copyOf(params);
     }
 
     /**
@@ -225,23 +283,27 @@ public class DodoAgent {
     }
 
     /**
-     * 从中断快照恢复执行（M3；M5 增加 fileIds，M6 增加 online）。
+     * 从中断快照恢复执行（M3；M5 增加 fileIds，M6 增加 online；斜杠技能增加 skillName）。
      *
      * @param conversationId 会话窗口 ID
      * @param userId         当前登录用户 ID（重建 Agent 的用户上下文 + toolParams 注入）
      * @param resumeQuery    用户中断后补充的消息（空 = 纯恢复，本地工具重放续跑）
      * @param fileIds        本次恢复请求新上传的文件 ID（可空）
      * @param online         是否注入 Tavily 联网工具（前端联网开关）
+     * @param skillName      用户斜杠指定的技能名（可空，语义同 {@link #stream}）
+     * @param modelCode      用户选择的对话模型 code（可空，语义同 {@link #stream}）
+     * @param thinking       深度思考开关（可空 = 默认开启，语义同 {@link #stream}）
      */
     public Flux<AgentStreamEvent> resumeStream(String conversationId, Long userId, String resumeQuery,
-                                               List<String> fileIds, boolean online) {
+                                               List<String> fileIds, boolean online, String skillName,
+                                               String modelCode, Boolean thinking) {
         if (hasFiles(fileIds)) {
             fileManageService.linkToConversation(fileIds, conversationId);
         }
-        ReactAgent agent = buildAgent(userId, conversationId, fileIds, online);
+        ReactAgent agent = buildAgent(userId, conversationId, fileIds, online, skillName, modelCode, thinking);
         String effective = (resumeQuery == null || resumeQuery.isBlank()) ? null : resumeQuery;
-        log.info("[data-agent] 恢复中断会话: convId={}, userId={}, resumeQuery={}, fileIds={}, online={}",
-                conversationId, userId, effective, fileIds == null ? 0 : fileIds.size(), online);
+        log.info("[data-agent] 恢复中断会话: convId={}, userId={}, resumeQuery={}, fileIds={}, online={}, model={}",
+                conversationId, userId, effective, fileIds == null ? 0 : fileIds.size(), online, modelCode);
         Flux<AgentStreamEvent> baseFlux = agent.resumeStream(conversationId, effective);
         return hasFiles(fileIds) ? baseFlux.doOnNext(evt -> linkFilesFromEvent(fileIds, evt)) : baseFlux;
     }
@@ -272,21 +334,44 @@ public class DodoAgent {
         }
     }
 
-    private ReactAgent buildAgent(Long userId, String conversationId, List<String> fileIds, boolean online) {
+    private ReactAgent buildAgent(Long userId, String conversationId, List<String> fileIds,
+                                  boolean online, String skillName, String modelCode, Boolean thinking) {
         syncMcpToolsIfNeeded();
         // 系统提示词（身份 + Skills 优先 + 工具发现引导 + 原则 + 输出规范）+ 用户上下文 + 会话文件段
         String instructions = SystemPrompt.build(userContextBuilder.build(userId))
                 + "\n\n---\n\n"
                 + sessionFilesPromptBuilder.build(conversationId, fileIds);
+        // 斜杠指定技能：追加优先加载指令段（放末尾，recency 最强）
+        if (skillName != null) {
+            instructions = instructions + "\n\n---\n\n" + USER_SKILL_DIRECTIVE.formatted(skillName);
+        }
+        // 关"深度思考"：按实际生效模型行取关思考请求参数（与 resolve 同一套挑选逻辑）；
+        // 显式 false 才关（null/true 走模型默认）；库空（yml 兜底 bean）不支持请求级关闭
+        String thinkingOffParam = null;
+        if (Boolean.FALSE.equals(thinking)) {
+            com.llmetor.dataagent.dataagent.model.AgentxChatModel pickedRow = chatModelManager.pickRow(modelCode);
+            if (pickedRow != null) {
+                String param = pickedRow.getThinkingOffParam();
+                if (param != null && !param.isBlank()) {
+                    thinkingOffParam = param;
+                    log.info("[data-agent] 深度思考已关闭: model={} 注入关思考参数", pickedRow.getCode());
+                }
+            }
+        }
         return ReactAgent.builder()
-                .chatModel(chatModel)
+                // 对话模型按请求解析：前端选的 code → agentx_chat_model 实例；
+                // 空/失效回退默认，库空回退 yml 兜底 bean（老请求零破坏）
+                .chatModel(chatModelManager.resolve(modelCode, chatModel))
                 .instructions(instructions)
-                .tools(availableTools(conversationId, online))
+                .tools(availableTools(conversationId, online, skillName))
                 // M7 延迟工具发现：SQL 六工具 + 图表工具经 tool_search 按需发现
                 .deferredTools(deferredRegistry)
                 // M7 上下文压缩：策略 yml 可配（默认 100 条/90K token 触发）
                 .contextPolicy(contextPolicy)
                 .thinkingMode(thinkingMode)
+                // 关"深度思考"：非空时每轮 LLM 调用注入 extra_body（null = 思考走模型默认）
+                .thinkingOffParam(thinkingOffParam)
+                .loopGuard(loopGuardConfig)
                 .maxRounds(maxRounds)
                 .maxRetries(3)
                 .retryIntervalMs(retryIntervalMs)
@@ -307,16 +392,26 @@ public class DodoAgent {
 
     /**
      * 组装本次请求的<b>非延迟</b>工具：常驻层 + 条件注入层——
-     * Skill（每请求按 DB 启用状态重建）+ analyzeFile（会话有文件）+
-     * MCP 联网工具（online 且 ONLINE_TOGGLE 型已连通）。
+     * Skill（每请求按 DB 启用状态重建；斜杠指定技能时仅装该技能）+
+     * analyzeFile（会话有文件）+ MCP 联网工具（online 且 ONLINE_TOGGLE 型已连通）。
      * SQL 六工具与 MCP ALWAYS 型工具已入延迟层（deferredRegistry），首轮不下发，由 tool_search 发现。
      */
-    private List<ToolCallback> availableTools(String conversationId, boolean online) {
+    private List<ToolCallback> availableTools(String conversationId, boolean online, String skillName) {
         syncMcpToolsIfNeeded();
         List<ToolCallback> merged = new ArrayList<>(residentTools);
 
-        // SkillsTool 每请求重建：getEnabledSkillDirs 实时查，停用立即生效；无启用技能不注册
+        // SkillsTool 每请求重建：getEnabledSkillDirs 实时查，停用立即生效；无启用技能不注册。
+        // 斜杠指定技能时只装该技能（LLM 可见清单只剩它，无从跑偏）；
+        // 目录缺失（选择后被并发停用）回退全量清单，仅靠指令段引导
         List<String> enabledDirs = skillManager.getEnabledSkillDirs();
+        if (skillName != null) {
+            String dir = skillManager.getEnabledSkillDir(skillName);
+            if (dir != null) {
+                enabledDirs = List.of(dir);
+            } else {
+                log.warn("[data-agent] 指定技能目录不可用，回退全量技能清单: {}", skillName);
+            }
+        }
         if (!enabledDirs.isEmpty()) {
             merged.add(SkillsTool.builder().addSkillsDirectories(enabledDirs).build());
         }
@@ -351,6 +446,17 @@ public class DodoAgent {
 
     private static List<String> toolNames(List<ToolCallback> tools) {
         return tools.stream().map(t -> t.getToolDefinition().name()).toList();
+    }
+
+    /** 熔断豁免名单解析：逗号分隔 → 去空白去空项（解析失败不阻断装配） */
+    private static Set<String> parseIgnoreTools(String csv) {
+        if (csv == null || csv.isBlank()) {
+            return Set.of();
+        }
+        return java.util.Arrays.stream(csv.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(java.util.stream.Collectors.toSet());
     }
 
     private static boolean hasFiles(List<String> fileIds) {

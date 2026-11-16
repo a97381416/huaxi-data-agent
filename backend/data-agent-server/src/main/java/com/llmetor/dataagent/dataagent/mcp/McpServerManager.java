@@ -41,7 +41,7 @@ import java.util.Set;
  *
  * <p>三型传输（mcp-core 1.1.0）：
  * <ul>
- *   <li>STREAMABLE：{@link HttpClientStreamableHttpTransport}（存量 mcp-echarts/Tavily 形态）</li>
+ *   <li>STREAMABLE：{@link HttpClientStreamableHttpTransport}（存量 Tavily 形态）</li>
  *   <li>SSE：{@link HttpClientSseClientTransport}（旧版远程服务，Base URL + sseEndpoint）</li>
  *   <li>STDIO：{@link StdioClientTransport}（本地子进程，command/args/env；
  *       Windows 下填 npx.cmd；凭据走 env，接口层脱敏）</li>
@@ -83,7 +83,6 @@ public class McpServerManager {
     private static final int MAX_LAST_ERROR_LENGTH = 1500;
 
     /** 默认服务名占位（种子行） */
-    private static final String SEED_CHART_NAME = "mcp-echarts";
     private static final String SEED_TAVILY_NAME = "tavily";
 
     private final JdbcTemplate jdbcTemplate;
@@ -92,21 +91,18 @@ public class McpServerManager {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** yml 种子配置（仅首次启动空表时种入，此后以表为准） */
-    private final String seedChartUrl;
     private final String seedTavilyApiKey;
     private final String seedTavilyUrl;
 
     public McpServerManager(javax.sql.DataSource dataSource,
                             AgentxMcpServerMapper mapper,
                             McpClientRegistry registry,
-                            @Value("${data-agent.chart.mcp-url:http://localhost:3033/mcp}") String seedChartUrl,
                             @Value("${tavily.api-key:}") String seedTavilyApiKey,
                             @Value("${tavily.mcp-url:https://mcp.tavily.com/mcp/}") String seedTavilyUrl) {
         // M5 踩坑固化的纪律：主库注入点一律拿 DataSource 自建 JdbcTemplate（见 README M5 不变量 6）
         this.jdbcTemplate = new JdbcTemplate(dataSource);
         this.mapper = mapper;
         this.registry = registry;
-        this.seedChartUrl = seedChartUrl;
         this.seedTavilyApiKey = seedTavilyApiKey;
         this.seedTavilyUrl = seedTavilyUrl;
     }
@@ -160,8 +156,8 @@ public class McpServerManager {
     }
 
     /**
-     * 首次启动（表空）把 yml 存量两条 MCP 配置种入（source=yml，enabled=1）：
-     * mcp-echarts（ALWAYS）+ tavily（ONLINE_TOGGLE，key 未配也种入，管理页补配即可用）。
+     * 首次启动（表空）把 yml 存量 MCP 配置种入（source=yml，enabled=1）：
+     * tavily（ONLINE_TOGGLE，key 未配也种入，管理页补配即可用）。
      * 此后 DB 为权威源，yml 配置仅作种子。
      */
     private void seedFromYmlIfNeeded() {
@@ -169,12 +165,10 @@ public class McpServerManager {
         if (count != null && count > 0) {
             return;
         }
-        insertRow(seedRow(SEED_CHART_NAME, TRANSPORT_STREAMABLE, seedChartUrl,
-                AUTH_NONE, null, INJECT_ALWAYS));
         insertRow(seedRow(SEED_TAVILY_NAME, TRANSPORT_STREAMABLE, seedTavilyUrl,
                 AUTH_BEARER, seedTavilyApiKey == null ? "" : seedTavilyApiKey.trim(), INJECT_ONLINE_TOGGLE));
-        log.info("[McpServerManager] 首次启动：yml 存量 MCP 配置种子入库（{}, {}），此后以表为准",
-                SEED_CHART_NAME, SEED_TAVILY_NAME);
+        log.info("[McpServerManager] 首次启动：yml 存量 MCP 配置种子入库（{}），此后以表为准",
+                SEED_TAVILY_NAME);
     }
 
     private AgentxMcpServer seedRow(String name, String transport, String url,

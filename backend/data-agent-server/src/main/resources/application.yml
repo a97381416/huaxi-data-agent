@@ -38,6 +38,13 @@ mybatis-plus:
       id-type: assign_id
 
 data-agent:
+  action:                      # M-E0 写通道地基：agent 进程内以当前用户身份转发主后端 /admin-api/*
+    base-url: http://127.0.0.1:9031/admin-api   # 本地联调直连主后端；部署走 nginx 同域（M-H4）
+    connect-timeout-ms: 3000
+    read-timeout-ms: 15000
+    read-retry-times: 1        # 读（GET）网络异常/5xx 重试次数；写（POST/PUT/DELETE）一律不重试（幂等性未知）
+    permission-cache-ttl-ms: 30000   # 功能权限本地缓存（口径对齐 HuaxiAuthFilter token 缓存 30s）
+    confirm-token-ttl-seconds: 300   # 高危操作确认令牌有效期（一次性，绑定 userId+action+payload 哈希）
   agent-eval:
     # M8 评测体系：裁判/诊断模型名（默认跟主模型同款；temperature 固定 0 保证可复现，
     # 读超时 judge 120s / diagnose 300s 写死在 EvalChatModels）
@@ -53,7 +60,7 @@ data-agent:
     # model: MiniMax-M3.1-Flash
     # max-rounds: 50   # 单题 ReAct 轮次上限（原版默认 50）
   agent:
-    max-rounds: 100          # ReAct 最大轮次（对齐原版 DodoAgent）
+    max-rounds: 50           # ReAct 最大轮次（原版默认 50；2026-11-12 死循环事故后 100→50）
     retry-interval-ms: 3000  # LLM 调用失败重试间隔
     # 思考回流形态：REASONING_CONTENT（模型独立 reasoning_content 字段，MiniMax M3.1-Flash 路线）
     #                THINK_TAG（思考以 <think> 标签嵌在 content 里，MiniMax M3 路线）
@@ -61,6 +68,14 @@ data-agent:
     thinking-mode: REASONING_CONTENT
     # M7 tool_search 延迟工具发现：单次搜索返回的工具数上限（SQL 六工具建议 ≥6 一网打尽）
     tool-search-max-results: 8
+    # Fix A 循环熔断（2026-11-12 TodoWrite 死循环事故）：仅"纯单工具轮"按工具名累计，
+    # 其他工具穿插不重置；WARN 注入提示 → ESCALATE 强警告 → BREAK 跳过执行进 forceFinal
+    loop-guard:
+      enabled: true
+      warn-after: 3          # 累计第 N 次注入系统提示
+      escalate-after: 5      # 累计第 N 次注入强警告
+      break-after: 7         # 累计第 N 次熔断
+      ignore-tools: executeSql   # 豁免名单（逗号分隔）：合法高频工具不计数
     # M7 上下文压缩（内核 ReactAgent 默认开启，阈值用内核默认值）：
     #   消息数 ≥100 或估算 token ≥90000 触发 → L1 历史工具段 offload → L2 大消息 offload → L4 轮次 LLM 摘要
     #   offload 原文存 agentx_session.offload_context，LLM 用 context_reload 按 uuid 取回
@@ -127,10 +142,6 @@ data-agent:
     model: qwen3-vl-plus
     temperature: 0.2
     timeout-seconds: 60
-  chart:                     # mcp-echarts（本地 Node 服务，streamable 模式；
-                             #  Node 进程经 MINIO_* 环境变量直传 MinIO 返回图片 URL）
-                             # M6 补充：仅作 agentx_mcp_server 空表时的种子，此后以管理页（/mcp）为准
-    mcp-url: http://localhost:3033/mcp
 
 skills:                      # M6 技能目录（standalone 本地目录为权威源，启动/定时同步进 agentx_skill）
   directory: ./skills        # 相对后端工作目录（backend/skills，内置三技能随仓库分发）

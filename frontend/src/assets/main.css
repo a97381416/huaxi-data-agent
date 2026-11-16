@@ -5,6 +5,13 @@
 
 /* base 层：仅重置原生 button 的默认外观（utilities 可覆盖；el-button 由自身类名样式接管，不受影响） */
 @layer base {
+  /* Tailwind 尺寸类（w-full、px-* 等）按 border-box 语义设计；不启用 preflight 时必须补这条，
+     否则 width:100% 会在 padding/border 之外再加宽，导致卡片/气泡/输入栏超出容器错位 */
+  *,
+  ::before,
+  ::after {
+    box-sizing: border-box;
+  }
   button {
     border: none;
     background: none;

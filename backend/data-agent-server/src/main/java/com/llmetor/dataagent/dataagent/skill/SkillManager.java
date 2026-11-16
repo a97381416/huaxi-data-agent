@@ -27,8 +27,8 @@ import java.util.Map;
  *
  * <p>职责分界：内容存取与目录↔DB 同步委托 {@link SkillContentStore}（standalone 本地目录版）；
  * 本类负责 agentx_skill 表生命周期（启动建表）、上传编排（zip 校验→解压→SKILL.md 定位→
- * frontmatter 提取→内容存储→DB upsert）、手动新建/编辑/详情/导出（内置技能只读且不可删除，
- * 手动/上传可编辑删除）、启停/删除、以及给 DodoAgent 的
+ * frontmatter 提取→内容存储→DB upsert）、手动新建/编辑/详情/导出（任何技能均可编辑；
+ * 内置技能不可删除，如需失效请停用）、启停/删除、以及给 DodoAgent 的
  * {@link #getEnabledSkillDirs()}（每请求实时查，停用立即生效，M6-B03）。
  */
 @Slf4j
@@ -37,7 +37,7 @@ public class SkillManager {
 
     private static final String SKILL_FILE = "SKILL.md";
 
-    /** 技能来源：builtin=仓库目录同步入库 / upload=zip 上传 / manual=管理界面手动创建（仅 manual 可编辑内容） */
+    /** 技能来源：builtin=仓库目录同步入库 / upload=zip 上传 / manual=管理界面手动创建（均可编辑内容） */
     public static final String SOURCE_BUILTIN = "builtin";
     public static final String SOURCE_UPLOAD = "upload";
     public static final String SOURCE_MANUAL = "manual";
@@ -136,6 +136,37 @@ public class SkillManager {
             }
         }
         return dirs;
+    }
+
+    /**
+     * 技能是否处于启用状态（按 agentx_skill.name 精确匹配）——聊天斜杠命令指定技能时的校验入口。
+     */
+    public boolean isEnabled(String name) {
+        if (name == null || name.isBlank()) {
+            return false;
+        }
+        return skillMapper.selectCount(new LambdaQueryWrapper<AgentxSkill>()
+                .eq(AgentxSkill::getName, name.trim())
+                .eq(AgentxSkill::getEnabled, 1)) > 0;
+    }
+
+    /**
+     * 按名取单个启用技能的目录绝对路径（查无/停用/目录缺失返回 null）——
+     * 用户斜杠指定技能时 DodoAgent 只装这一个技能进 SkillsTool。
+     */
+    public String getEnabledSkillDir(String name) {
+        if (name == null || name.isBlank()) {
+            return null;
+        }
+        AgentxSkill skill = skillMapper.selectOne(new LambdaQueryWrapper<AgentxSkill>()
+                .eq(AgentxSkill::getName, name.trim())
+                .eq(AgentxSkill::getEnabled, 1)
+                .last("LIMIT 1"));
+        if (skill == null) {
+            return null;
+        }
+        String path = skillsDirectory.resolve(skill.getName()).toAbsolutePath().toString();
+        return Files.isDirectory(Path.of(path)) ? path : null;
     }
 
     /**
@@ -272,17 +303,14 @@ public class SkillManager {
     }
 
     /**
-     * 编辑技能内容（描述 + 正文）：内置技能（source=builtin，含历史空值回退）拒绝，手动/上传可编辑；
-     * enabled 不动。正文可携带完整 frontmatter 头（编辑界面展示完整文件）——带了就以提交的头为准
+     * 编辑技能内容（描述 + 正文）：任何来源（builtin/upload/manual）均可编辑，enabled 不动。
+     * 正文可携带完整 frontmatter 头（编辑界面展示完整文件）——带了就以提交的头为准
      * （含用户增删的其他键；name 仍强制为 path name），description 缺失时回退表单字段；
      * 未带头时回退既有文件头的其他键 + 表单 description，头永远不会丢。
      */
     public SkillInfo updateContent(String name, String description, String content) throws IOException {
         validateSkillName(name);
         AgentxSkill skill = requireSkill(name);
-        if (SOURCE_BUILTIN.equals(skill.getSource() == null ? SOURCE_BUILTIN : skill.getSource())) {
-            throw new IllegalArgumentException("内置技能不支持编辑");
-        }
         String body = boundedContent(content);
         Map<String, Object> submitted = FrontmatterUtils.parseAll(body);
 
@@ -306,10 +334,11 @@ public class SkillManager {
                 .eq(AgentxSkill::getName, name)
                 .set(AgentxSkill::getDescription, desc));
         contentStore.notifyChanged();
-        log.info("[SkillManager] 编辑 skill 内容: {} (source=manual)", name);
+        String source = skill.getSource() == null ? SOURCE_BUILTIN : skill.getSource();
+        log.info("[SkillManager] 编辑 skill 内容: {} (source={})", name, source);
         String storedPath = contentStore.storedPath(name);
         boolean enabled = skill.getEnabled() != null && skill.getEnabled() == 1;
-        return new SkillInfo(name, storedPath, desc, enabled, SOURCE_MANUAL);
+        return new SkillInfo(name, storedPath, desc, enabled, source);
     }
 
     /** 按 name 取技能，不存在抛 IllegalArgumentException → Controller 转 R.fail */

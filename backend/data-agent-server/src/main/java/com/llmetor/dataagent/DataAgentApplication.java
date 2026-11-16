@@ -9,7 +9,8 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  */
 @SpringBootApplication
 @MapperScan({"com.llmetor.dataagent.sys.mapper", "com.llmetor.dataagent.dataagent.file",
-        "com.llmetor.dataagent.dataagent.skill.mapper", "com.llmetor.dataagent.dataagent.mcp.mapper"})
+        "com.llmetor.dataagent.dataagent.skill.mapper", "com.llmetor.dataagent.dataagent.mcp.mapper",
+        "com.llmetor.dataagent.dataagent.model.mapper"})
 public class DataAgentApplication {
 
     public static void main(String[] args) {

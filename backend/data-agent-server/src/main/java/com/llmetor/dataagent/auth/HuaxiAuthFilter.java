@@ -24,9 +24,14 @@ import java.util.concurrent.ConcurrentHashMap;
  * token 存华西库 system_oauth2_access_token——**华西签发的 token 天然可被本校验**
  * （为二期从华西前端跳转 SSO 铺路，届时零额外开发）。
  *
- * <p>校验：access_token 存在且未删除且未过期 → userId 放入 {@link HuaxiAuthContext}；
- * 否则 401。token→userId 映射本地缓存 30s（削高频查表；登出/改密最长 30s 失效延迟，
- * 与 token 有效期相比可忽略）。
+ * <p>校验：access_token 存在且未删除且未过期 → userId（M-E0 起连同 tenantId、原始 token）
+ * 放入 {@link HuaxiAuthContext}；否则 401。token→userId 映射本地缓存 30s（削高频查表；
+ * 登出/改密最长 30s 失效延迟，与 token 有效期相比可忽略）。
+ *
+ * <p>M-E0 tenantId 解析口径：优先 system_users.tenant_id（用户权威租户），
+ * 缺失/为 0 时退 token 表 tenant_id。实测该部署租户号即为 0（多租户未启用），
+ * 因此 0 是合法值原样透传——不假设默认租户 1（假设错了会导致 tenant-id 头与
+ * 用户租户不一致，被启用租户校验的主后端 403 拒绝）。
  *
  * <p>白名单（对齐原 SaTokenConfig 契约）：登录接口、根路径、静态资源、
  * M8/M9 评测端点（生产应在网关禁用）。
@@ -48,10 +53,10 @@ public class HuaxiAuthFilter extends OncePerRequestFilter {
             "/agent/eval/judge", "/agent/eval/diagnose",
             "/bird/eval/question", "/bird/eval/baseline");
 
-    /** token → (userId, expiresTimeMillis)；30s 本地缓存 */
+    /** token → (userId, tenantId, expiresTimeMillis)；30s 本地缓存 */
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
-    private record CacheEntry(Long userId, long expiresAtMillis) {
+    private record CacheEntry(Long userId, Long tenantId, long expiresAtMillis) {
     }
 
     private static final long CACHE_TTL_MILLIS = 30_000L;
@@ -68,9 +73,9 @@ public class HuaxiAuthFilter extends OncePerRequestFilter {
         try {
             String token = extractToken(request);
             if (token != null) {
-                Long userId = resolveUserId(token);
-                if (userId != null) {
-                    HuaxiAuthContext.set(userId);
+                CacheEntry entry = resolveEntry(token);
+                if (entry != null) {
+                    HuaxiAuthContext.set(entry.userId(), entry.tenantId(), token);
                 }
             }
             if (!isWhitelisted(request) && HuaxiAuthContext.getCurrentUserIdOrNull() == null) {
@@ -98,16 +103,20 @@ public class HuaxiAuthFilter extends OncePerRequestFilter {
         return value.isEmpty() ? null : value;
     }
 
-    private Long resolveUserId(String token) {
+    private CacheEntry resolveEntry(String token) {
         CacheEntry hit = cache.get(token);
         long now = System.currentTimeMillis();
         if (hit != null && now < hit.expiresAtMillis() && now < hit.expiresAtMillis() + CACHE_TTL_MILLIS) {
-            return hit.userId();
+            return hit;
         }
+        // M-E0：连同 token 表 tenant_id、用户表 tenant_id 一起取（join 一次查完）
         List<Object[]> rows = jdbc.query(
-                "SELECT user_id, expires_time FROM system_oauth2_access_token "
-                        + "WHERE access_token = ? AND deleted = 0",
-                (rs, i) -> new Object[]{rs.getLong(1), rs.getTimestamp(2)}, token);
+                "SELECT t.user_id, t.expires_time, t.tenant_id, u.tenant_id "
+                        + "FROM system_oauth2_access_token t "
+                        + "LEFT JOIN system_users u ON u.id = t.user_id AND u.deleted = 0 "
+                        + "WHERE t.access_token = ? AND t.deleted = 0",
+                (rs, i) -> new Object[]{rs.getLong(1), rs.getTimestamp(2),
+                        rs.getLong(3), rs.getLong(4)}, token);
         if (rows.isEmpty()) {
             return null;
         }
@@ -117,8 +126,13 @@ public class HuaxiAuthFilter extends OncePerRequestFilter {
             return null; // 已过期（缓存负结果 30s，防过期 token 高频查表）
         }
         Long userId = (Long) row[0];
-        cache.put(token, new CacheEntry(userId, expiresAt));
-        return userId;
+        // 用户表租户优先（权威）；缺失/为 0 退 token 表。0 是合法租户值（本部署多租户未启用），原样透传
+        long userTenant = (Long) row[3];
+        long tokenTenant = (Long) row[2];
+        Long tenantId = userTenant != 0 ? userTenant : tokenTenant;
+        CacheEntry entry = new CacheEntry(userId, tenantId, expiresAt);
+        cache.put(token, entry);
+        return entry;
     }
 
     private boolean isWhitelisted(HttpServletRequest request) {

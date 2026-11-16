@@ -38,6 +38,8 @@ tavily:
 
 # ── M5 文件问答新增依赖（项目基础环境.md，全部远程环境） ──
 data-agent:
+  action:                        # M-E0 写通道：联调主后端在 192.168.2.77（非本机 127.0.0.1）
+    base-url: http://192.168.2.77:9031/admin-api
   agent-eval:                    # M8 评测体系文件路径（绝对路径，同 skills.directory 原因）
     dataset-path: D:/work/llmetor-manage/my-data-agent/scripts/agent/dataset.jsonl
     report-dir: D:/work/llmetor-manage/my-data-agent/scripts/agent/report

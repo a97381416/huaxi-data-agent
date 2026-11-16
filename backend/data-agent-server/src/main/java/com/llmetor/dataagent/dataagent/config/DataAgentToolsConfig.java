@@ -43,7 +43,7 @@ public class DataAgentToolsConfig {
     public record DeferredToolCandidates(List<ToolCallback> tools) {
     }
 
-    /** 延迟层候选：SQL 六工具，注册进 DeferredToolRegistry，经 tool_search 发现 */
+    /** 延迟层候选：SQL 六工具 + M-E0 写通道 demo 工具（myPermissions）+ M-E1 任务处理组（5 个）+ M-E2 资料填报组（7 个，含草稿盘点 listMyDrafts）+ M-E3 审核处理组（6 个），经 tool_search 发现 */
     @Bean
     public DeferredToolCandidates dataDeferredToolCandidates(
             com.llmetor.dataagent.dataagent.tools.ListTablesTool listTablesTool,
@@ -51,9 +51,33 @@ public class DataAgentToolsConfig {
             com.llmetor.dataagent.dataagent.tools.ValidateSqlTool validateSqlTool,
             com.llmetor.dataagent.dataagent.tools.ExecuteSqlTool executeSqlTool,
             com.llmetor.dataagent.dataagent.tools.CalculateTool calculateTool,
-            com.llmetor.dataagent.dataagent.tools.TimeTool timeTool) {
+            com.llmetor.dataagent.dataagent.tools.TimeTool timeTool,
+            com.llmetor.dataagent.dataagent.action.MyPermissionsTool myPermissionsTool,
+            com.llmetor.dataagent.dataagent.action.task.ListMyTasksTool listMyTasksTool,
+            com.llmetor.dataagent.dataagent.action.task.GetTaskDetailTool getTaskDetailTool,
+            com.llmetor.dataagent.dataagent.action.task.StageDraftTool stageDraftTool,
+            com.llmetor.dataagent.dataagent.action.task.ResubmitLedgerTool resubmitLedgerTool,
+            com.llmetor.dataagent.dataagent.action.task.CancelConfirmTool cancelConfirmTool,
+            com.llmetor.dataagent.dataagent.action.fill.ListMyProjectsTool listMyProjectsTool,
+            com.llmetor.dataagent.dataagent.action.fill.ListPhaseTreeTool listPhaseTreeTool,
+            com.llmetor.dataagent.dataagent.action.fill.ListFillNodesTool listFillNodesTool,
+            com.llmetor.dataagent.dataagent.action.fill.ListMyDraftsTool listMyDraftsTool,
+            com.llmetor.dataagent.dataagent.action.fill.ListReviewOptionsTool listReviewOptionsTool,
+            com.llmetor.dataagent.dataagent.action.fill.FillFileEntryTool fillFileEntryTool,
+            com.llmetor.dataagent.dataagent.action.fill.SubmitLedgerForReviewTool submitLedgerForReviewTool,
+            com.llmetor.dataagent.dataagent.action.review.ListReviewTasksTool listReviewTasksTool,
+            com.llmetor.dataagent.dataagent.action.review.GetReviewDetailTool getReviewDetailTool,
+            com.llmetor.dataagent.dataagent.action.review.ListCoauditOptionsTool listCoauditOptionsTool,
+            com.llmetor.dataagent.dataagent.action.review.ApproveTaskTool approveTaskTool,
+            com.llmetor.dataagent.dataagent.action.review.RejectTaskTool rejectTaskTool,
+            com.llmetor.dataagent.dataagent.action.review.PartialApproveLedgerTool partialApproveLedgerTool) {
         return new DeferredToolCandidates(List.copyOf(Arrays.asList(ToolCallbacks.from(
                 listTablesTool, describeTablesTool, validateSqlTool,
-                executeSqlTool, calculateTool, timeTool))));
+                executeSqlTool, calculateTool, timeTool, myPermissionsTool,
+                listMyTasksTool, getTaskDetailTool, stageDraftTool, resubmitLedgerTool, cancelConfirmTool,
+                listMyProjectsTool, listPhaseTreeTool, listFillNodesTool, listMyDraftsTool,
+                listReviewOptionsTool, fillFileEntryTool, submitLedgerForReviewTool,
+                listReviewTasksTool, getReviewDetailTool, listCoauditOptionsTool,
+                approveTaskTool, rejectTaskTool, partialApproveLedgerTool))));
     }
 }

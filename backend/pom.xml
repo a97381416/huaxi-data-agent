@@ -29,7 +29,8 @@
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <spring-ai.version>1.1.0</spring-ai.version>
+        <!-- 1.1.0 的 extraBody 在 createRequest 时被丢弃（关思考参数发不出去），1.1.4 已修复并实测抓包验证 -->
+        <spring-ai.version>1.1.4</spring-ai.version>
         <mybatis-plus.version>3.5.12</mybatis-plus.version>
         <postgresql.version>42.7.4</postgresql.version>
         <minio.version>8.5.1</minio.version>

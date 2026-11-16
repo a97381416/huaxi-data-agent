@@ -3,12 +3,14 @@ package com.llmetor.miniagentx.context;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.tool.ToolCallback;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -71,5 +73,38 @@ class ContextReloadToolTest {
         // 换会话查同一个 uuid → 取不到
         String out = call(tool(store, "conv_y"), "uuid-x");
         assertTrue(out.contains("未找到"));
+    }
+
+    // ==================== Fix E：工具类消息按类型渲染 ====================
+
+    @Test
+    void toolInteractionArchiveRendersNamesAndData() {
+        // 复现事故缺陷的回归用例：归档纯工具交互时，原实现只拼 getText() 返回"144 个换行"
+        InMemoryOffloadStore store = new InMemoryOffloadStore();
+        AssistantMessage call = AssistantMessage.builder()
+                .content("")
+                .toolCalls(List.of(new AssistantMessage.ToolCall(
+                        "c1", "function", "listMyDrafts", "{\"kw\":\"人事管理\"}")))
+                .build();
+        ToolResponseMessage resp = ToolResponseMessage.builder()
+                .responses(List.of(new ToolResponseMessage.ToolResponse(
+                        "c1", "listMyDrafts", "{\"rows\":[1,2,3]}")))
+                .build();
+        store.save("conv_tool", "uuid-tool", List.of(call, resp));
+
+        String out = call(tool(store, "conv_tool"), "uuid-tool");
+        assertTrue(out.contains("listMyDrafts"), "工具名应出现在取回结果: " + out);
+        assertTrue(out.contains("人事管理"), "调用参数应出现（Spring AI 对返回做 JSON 编码，转义不作断言）: " + out);
+        assertTrue(out.contains("rows"), "工具结果数据应出现: " + out);
+        assertFalse(out.isBlank(), "不应再返回空白（144 换行缺陷回归）");
+    }
+
+    @Test
+    void blankRenderedArchiveGetsExplicitHint() {
+        InMemoryOffloadStore store = new InMemoryOffloadStore();
+        // 极端退化场景：归档消息渲染后仍全空白 → 明确提示而非空串（杜绝"成功+空白"）
+        store.save("conv_blank", "uuid-blank", List.of(new AssistantMessage("   ")));
+        String out = call(tool(store, "conv_blank"), "uuid-blank");
+        assertTrue(out.contains("无可用原文"), "应返回明确提示: " + out);
     }
 }

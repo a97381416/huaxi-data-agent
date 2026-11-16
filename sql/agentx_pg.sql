@@ -132,3 +132,21 @@ CREATE TABLE IF NOT EXISTS agentx_file (
 );
 CREATE INDEX IF NOT EXISTS idx_agentx_file_session ON agentx_file (session_id);
 CREATE INDEX IF NOT EXISTS idx_agentx_file_conv ON agentx_file (conversation_id);
+
+-- 8. 动作审计表（M-E0 写通道：写操作结构化审计，conversation_id 关联 agentx_trace 回放）
+CREATE TABLE IF NOT EXISTS agentx_action_log (
+  id bigint NOT NULL,
+  conversation_id varchar(100) DEFAULT NULL,
+  user_id bigint DEFAULT NULL,
+  tool varchar(100) NOT NULL,
+  action varchar(100) DEFAULT NULL,
+  business_object varchar(500) DEFAULT NULL,
+  confirm_token varchar(64) DEFAULT NULL,
+  success smallint DEFAULT 1,
+  error_message text,
+  detail text,
+  created_at timestamp DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS idx_agentx_action_log_conv ON agentx_action_log (conversation_id);
+CREATE INDEX IF NOT EXISTS idx_agentx_action_log_user ON agentx_action_log (user_id);

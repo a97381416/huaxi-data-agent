@@ -6,7 +6,7 @@
         <span class="hint">
           技能 = 含 SKILL.md 的目录包（可附 scripts/references）。手动新建适合纯文档型技能；
           需要附属资源的技能走 zip 上传。启用后经 Skill 工具按需加载（渐进式披露），
-          停用立即从 Agent 工具清单消失。手动/上传技能可编辑、可删除；内置技能只读。
+          停用立即从 Agent 工具清单消失。任何技能均可编辑；内置技能不可删除，如需使其失效请停用。
         </span>
       </div>
       <el-button type="primary" @click="openCreate">
@@ -49,12 +49,7 @@
       <el-table-column label="操作" width="210" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" size="small" @click="openDetail(row)">详情</el-button>
-          <el-button
-            v-if="row.source === 'manual' || row.source === 'upload'"
-            link type="primary" size="small" @click="onEditClick(row)"
-          >
-            编辑
-          </el-button>
+          <el-button link type="primary" size="small" @click="onEditClick(row)">编辑</el-button>
           <el-button link type="primary" size="small" @click="onExport(row)">导出</el-button>
           <el-button v-if="row.source !== 'builtin'" link type="danger" size="small" @click="onDelete(row)">
             删除
@@ -87,7 +82,7 @@
       </div>
       <template #footer>
         <el-button type="primary" @click="onExport(detail)">导出 zip</el-button>
-        <el-button v-if="detail && detail.source !== 'builtin'" type="primary" @click="onEditFromDetail">
+        <el-button v-if="detail" type="primary" @click="onEditFromDetail">
           编辑
         </el-button>
         <el-button @click="drawerVisible = false">关闭</el-button>
@@ -493,15 +488,19 @@ async function onSave() {
   border-radius: 10px;
 }
 
+/* 宽表横向滚动由 markdown.js 包的 .md-table-wrap 承担；table 保持原生 display:table，
+   width:100% 为「最小宽度」语义——窄表撑满容器，宽表自动变宽由 wrap 滚动 */
+.skill-md :deep(.md-table-wrap) {
+  overflow-x: auto;
+  margin: 10px 0;
+}
+
 .skill-md :deep(table) {
   width: 100%;
-  margin: 10px 0;
   border-collapse: collapse;
   border: 1px solid #f3f4f6;
   border-radius: 8px;
   font-size: 13px;
-  display: block;
-  overflow-x: auto;
 }
 
 .skill-md :deep(th) {

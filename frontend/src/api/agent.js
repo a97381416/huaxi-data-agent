@@ -123,6 +123,11 @@ export function getAgentCapabilities() {
   return request.get('/agent/capabilities')
 }
 
+/** 聊天侧技能清单（斜杠命令选择技能用）：仅启用的 [{name, description}]，不含管理端字段 */
+export function listChatSkills() {
+  return request.get('/agent/skills')
+}
+
 /** 会话列表分页（{conversations, total, page, size, hasMore}） */
 export function listSessions(page = 0, size = 10) {
   return request.get('/session/list', { params: { page, size } })

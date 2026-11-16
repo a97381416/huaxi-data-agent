@@ -51,22 +51,29 @@ public class TraceManager {
                 """);
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_agentx_trace_session ON agentx_trace (session_id)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_agentx_trace_conv ON agentx_trace (conversation_id)");
+        // 思考单独耗时（存量表补列；PG 支持 ADD COLUMN IF NOT EXISTS）
+        jdbc.execute("ALTER TABLE agentx_trace ADD COLUMN IF NOT EXISTS think_duration_ms bigint NULL DEFAULT NULL");
     }
 
     /**
      * 记一轮。sessionId 用字符串（表列 varchar）。
+     *
+     * @param thinkDurationMs 本轮"思考"单独耗时（首条 reasoning chunk → 最后一条 reasoning chunk）；
+     *                        无思考/历史数据为 0 或负数时落 NULL
      */
     public void trace(String sessionId, String conversationId, int round,
                       List<Message> inputMessages, String outputData, String think,
                       long promptTokens, long completionTokens, long durationMs,
-                      boolean success, String errorMessage) {
+                      long thinkDurationMs, boolean success, String errorMessage) {
         try {
             String inputJson = serializer.toJsonArray(inputMessages);
+            Long thinkMs = thinkDurationMs > 0 ? thinkDurationMs : null;
             jdbc.update("INSERT INTO agentx_trace (id, session_id, conversation_id, round, input_data, " +
-                            "output_data, think, prompt_tokens, completion_tokens, duration_ms, success, error_message) " +
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            "output_data, think, prompt_tokens, completion_tokens, duration_ms, think_duration_ms, " +
+                            "success, error_message) " +
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     SnowflakeIdGenerator.nextId(), sessionId, conversationId, round, inputJson,
-                    outputData, think, promptTokens, completionTokens, durationMs,
+                    outputData, think, promptTokens, completionTokens, durationMs, thinkMs,
                     success ? 1 : 0, errorMessage);
         } catch (Exception e) {
             log.warn("trace 写入失败（不影响主流程）: convId={}, round={}", conversationId, round, e);

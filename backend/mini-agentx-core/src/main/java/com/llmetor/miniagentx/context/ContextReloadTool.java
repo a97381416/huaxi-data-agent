@@ -1,5 +1,6 @@
 package com.llmetor.miniagentx.context;
 
+import com.llmetor.miniagentx.utils.MessageTextRenderer;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.ai.tool.function.FunctionToolCallback;
@@ -57,11 +58,17 @@ public final class ContextReloadTool {
                 return "未找到 uuid=" + uuid + " 对应的归档内容（可能已失效）。请勿编造原文，"
                         + "如仍需要请说明你需要的具体信息。";
             }
+            // Fix E：按消息类型展开渲染（原实现只拼 getText()，工具类消息文本天生为空，
+            // 曾导致"144 个换行"空回包——见 docs/错误诊断集合 修复方案 Fix E）
             StringBuilder sb = new StringBuilder();
             for (org.springframework.ai.chat.messages.Message m : messages) {
-                sb.append(m.getText() == null ? "" : m.getText()).append('\n');
+                MessageTextRenderer.appendMessage(sb, m);
             }
             String text = sb.toString();
+            if (text.isBlank()) {
+                return "归档 uuid=" + uuid + " 命中 " + messages.size()
+                        + " 条消息，但均为无正文内容（纯工具调用/空消息），无可用原文。";
+            }
             if (text.length() > MAX_CHARS) {
                 text = text.substring(0, MAX_CHARS) + "\n…[原文超长，已截断到 32000 字符]";
             }

@@ -50,6 +50,8 @@ public class ReactAgent {
     private final int maxRetries;
     private final long retryIntervalMs;
     private final ThinkingMode thinkingMode;
+    /** 用户关"深度思考"时注入请求体 extra_body 的 JSON（null = 思考走模型默认） */
+    private final String thinkingOffParam;
     private final AgentTaskManager taskManager;
     private final AgentxSessionStore sessionStore;
     private final TraceManager traceManager;
@@ -60,6 +62,8 @@ public class ReactAgent {
     private final ContextCompactor compactor;
     /** M7：offload 存取（压缩启用时非空） */
     private final OffloadStore offloadStore;
+    /** 循环熔断配置（Fix A） */
+    private final LoopGuardConfig loopGuardConfig;
 
     private ReactAgent(Builder b) {
         this.chatModel = b.chatModel;
@@ -69,6 +73,7 @@ public class ReactAgent {
         this.maxRetries = b.maxRetries;
         this.retryIntervalMs = b.retryIntervalMs;
         this.thinkingMode = b.thinkingMode;
+        this.thinkingOffParam = b.thinkingOffParam == null || b.thinkingOffParam.isBlank() ? null : b.thinkingOffParam.trim();
         this.taskManager = b.taskManager != null ? b.taskManager : new AgentTaskManager();
         if (b.dataSource != null) {
             // 允许外部注入共享实例（每请求重建 Agent 时避免重复建表/重复包装 JdbcTemplate）
@@ -89,6 +94,7 @@ public class ReactAgent {
         this.compactor = b.enableCompaction
                 ? new ContextCompactor(b.contextPolicy, offloadStore, chatModel)
                 : null;
+        this.loopGuardConfig = b.loopGuardConfig;
     }
 
     public static Builder builder() {
@@ -134,7 +140,7 @@ public class ReactAgent {
                 maxRounds, maxRetries, retryIntervalMs, thinkingMode,
                 taskManager, sessionStore, traceManager, stateStore,
                 query, params, null, null,
-                deferredTools, compactor, offloadStore);
+                deferredTools, compactor, offloadStore, loopGuardConfig, thinkingOffParam);
     }
 
     /** 恢复执行通道：复用快照里的 query/params，沿快照 sessionId/轮次续跑 */
@@ -146,7 +152,7 @@ public class ReactAgent {
                 maxRounds, maxRetries, retryIntervalMs, thinkingMode,
                 taskManager, sessionStore, traceManager, stateStore,
                 state.getQuery() == null ? "" : state.getQuery(), params,
-                state, resumeQuery, deferredTools, compactor, offloadStore);
+                state, resumeQuery, deferredTools, compactor, offloadStore, loopGuardConfig, thinkingOffParam);
     }
 
     // ==================== 打断 / 任务查询 ====================
@@ -191,6 +197,8 @@ public class ReactAgent {
         private int maxRetries = 3;
         private long retryIntervalMs = 10_000;
         private ThinkingMode thinkingMode = ThinkingMode.DISABLED;
+        /** 用户关"深度思考"时注入请求体 extra_body 的 JSON（null = 思考走模型默认） */
+        private String thinkingOffParam;
         private AgentTaskManager taskManager;
         private javax.sql.DataSource dataSource;
         private boolean enableTrace = true;
@@ -200,6 +208,7 @@ public class ReactAgent {
         private DeferredToolRegistry deferredTools;
         private boolean enableCompaction = true;
         private ContextPolicy contextPolicy = ContextPolicy.defaults();
+        private LoopGuardConfig loopGuardConfig = LoopGuardConfig.defaults();
 
         public Builder chatModel(ChatModel chatModel) {
             this.chatModel = chatModel;
@@ -233,6 +242,12 @@ public class ReactAgent {
 
         public Builder thinkingMode(ThinkingMode thinkingMode) {
             this.thinkingMode = thinkingMode;
+            return this;
+        }
+
+        /** 关"深度思考"的请求参数（JSON，按模型可配，如 {"enable_thinking":false}；null = 思考走模型默认） */
+        public Builder thinkingOffParam(String thinkingOffParam) {
+            this.thinkingOffParam = thinkingOffParam;
             return this;
         }
 
@@ -287,6 +302,12 @@ public class ReactAgent {
             if (contextPolicy != null) {
                 this.contextPolicy = contextPolicy;
             }
+            return this;
+        }
+
+        /** 循环熔断配置（Fix A；默认开启 3/5/7，传 {@link LoopGuardConfig#disabled()} 关闭） */
+        public Builder loopGuard(LoopGuardConfig loopGuardConfig) {
+            this.loopGuardConfig = loopGuardConfig == null ? LoopGuardConfig.disabled() : loopGuardConfig;
             return this;
         }
 

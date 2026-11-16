@@ -18,7 +18,7 @@ class McpServerManagerValidateTest {
 
     /** 纯逻辑测试实例：Mapper 传 null，DataSource 传空桩（测试不触库，仅满足 JdbcTemplate 构造校验） */
     private static McpServerManager manager() {
-        return new McpServerManager(new NullDataSource(), null, new McpClientRegistry(), "", "", "");
+        return new McpServerManager(new NullDataSource(), null, new McpClientRegistry(), "", "");
     }
 
     /** 全方法抛错的 DataSource 桩（JdbcTemplate 构造要求非 null，本测试不触库） */

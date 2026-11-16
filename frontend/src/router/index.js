@@ -60,6 +60,12 @@ const routes = [
         meta: { title: 'MCP 服务', adminOnly: true }
       },
       {
+        path: 'models',
+        name: 'model-manage',
+        component: () => import('@/views/ModelManageView.vue'),
+        meta: { title: '模型管理', adminOnly: true }
+      },
+      {
         path: 'eval',
         name: 'eval-report',
         component: () => import('@/views/EvalReportView.vue'),

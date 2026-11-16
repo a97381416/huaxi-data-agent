@@ -77,24 +77,31 @@ public class SessionService {
 
     /** conversation 行的最小投影（列表/详情共用） */
     private record ConvRow(long id, String conversationId, String sessionId,
-                           String question, String createdAt) {
+                           String question, String createdAt, Long elapsedMs) {
     }
 
     private List<ConvRow> loadRows(String userId, String conversationId, boolean desc) {
         String order = desc ? "DESC" : "ASC";
-        String sql = "SELECT id, conversation_id, session_id, question, created_at " +
+        String sql = "SELECT id, conversation_id, session_id, question, created_at, completed_at " +
                 "FROM agentx_conversation WHERE user_id = ?" +
                 (conversationId != null ? " AND conversation_id = ?" : "") +
                 " ORDER BY created_at " + order + ", id " + order;
         Object[] args = conversationId != null
                 ? new Object[]{userId, conversationId}
                 : new Object[]{userId};
-        return jdbc.query(sql, (rs, i) -> new ConvRow(
-                rs.getLong("id"),
-                rs.getString("conversation_id"),
-                rs.getString("session_id"),
-                rs.getString("question"),
-                formatTs(rs.getTimestamp("created_at"))), args);
+        return jdbc.query(sql, (rs, i) -> {
+            Timestamp created = rs.getTimestamp("created_at");
+            Timestamp completed = rs.getTimestamp("completed_at");
+            Long elapsedMs = (created != null && completed != null)
+                    ? Math.max(0L, completed.getTime() - created.getTime()) : null;
+            return new ConvRow(
+                    rs.getLong("id"),
+                    rs.getString("conversation_id"),
+                    rs.getString("session_id"),
+                    rs.getString("question"),
+                    formatTs(created),
+                    elapsedMs);
+        }, args);
     }
 
     private static String formatTs(Timestamp ts) {
@@ -171,9 +178,32 @@ public class SessionService {
     private SessionMessageVO buildSessionMessage(ConvRow conv) {
         List<Message> originalMessages = loadOriginalMessages(conv.conversationId(), conv.sessionId());
         String answer = extractAnswer(originalMessages);
-        String timeline = buildTimeline(originalMessages);
+        String timeline = buildTimeline(originalMessages, loadThinkDurations(conv.conversationId(), conv.sessionId()));
         return new SessionMessageVO(conv.id(), conv.question(), answer, timeline,
-                conv.createdAt(), loadAttachments(conv.sessionId()));
+                conv.createdAt(), conv.elapsedMs(), loadAttachments(conv.sessionId()));
+    }
+
+    /**
+     * 该轮 trace 里的思考耗时（think 文本 → think_duration_ms）。
+     * 消息链与 trace 的 reasoning 出自同一 reasoningBuffer，按文本全等对齐；
+     * 对齐不上的（存量数据无该列/失败轮）返回映射不含对应项，前端回退为不显示时长。
+     */
+    private LinkedHashMap<String, Long> loadThinkDurations(String conversationId, String sessionId) {
+        LinkedHashMap<String, Long> thinkDurations = new LinkedHashMap<>();
+        try {
+            jdbc.query(
+                    "SELECT think, think_duration_ms FROM agentx_trace " +
+                            "WHERE conversation_id = ? AND session_id = ? " +
+                            "AND think IS NOT NULL AND length(think) > 0 AND think_duration_ms IS NOT NULL " +
+                            "ORDER BY round ASC",
+                    rs -> {
+                        thinkDurations.putIfAbsent(rs.getString(1), rs.getLong(2));
+                    },
+                    conversationId, sessionId);
+        } catch (Exception e) {
+            log.warn("思考耗时加载失败（回放不带时长）: convId={}, sessionId={}", conversationId, sessionId, e);
+        }
+        return thinkDurations;
     }
 
     /** 该轮附件元数据（M5 双阶段关联的 session_id 反查；轮次无文件返回空列表） */
@@ -252,7 +282,7 @@ public class SessionService {
      * TodoWrite 不进工具卡片，解析参数里的 todos 为 todo 面板事件（参数侧信道）；
      * ToolResponseMessage 按 toolCallId 回填到对应的 pending 工具事件上。
      */
-    private String buildTimeline(List<Message> messages) {
+    private String buildTimeline(List<Message> messages, Map<String, Long> thinkDurations) {
         if (messages == null || messages.isEmpty()) {
             return "[]";
         }
@@ -261,10 +291,17 @@ public class SessionService {
 
         for (Message msg : messages) {
             if (msg instanceof AssistantMessage am) {
-                // 1. 思考过程
+                // 1. 思考过程（带 trace 对齐出的真实耗时，无则省略字段）
                 String reasoning = extractReasoning(am);
                 if (reasoning != null && !reasoning.isBlank()) {
-                    events.add(Map.of("type", "thinking", "content", reasoning));
+                    Map<String, Object> thinkEvent = new LinkedHashMap<>();
+                    thinkEvent.put("type", "thinking");
+                    thinkEvent.put("content", reasoning);
+                    Long thinkMs = thinkDurations.get(reasoning);
+                    if (thinkMs != null) {
+                        thinkEvent.put("durationMs", thinkMs);
+                    }
+                    events.add(thinkEvent);
                 }
                 // 2. 正文回答
                 String text = am.getText();

@@ -21,6 +21,12 @@
             <artifactId>spring-ai-model</artifactId>
         </dependency>
 
+        <!-- OpenAI 兼容层：关"深度思考"时按模型把 JSON 注入请求体 extra_body（OpenAiChatOptions） -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-openai</artifactId>
+        </dependency>
+
         <!-- 会话三表 + trace 持久化（JdbcTemplate，不耦合 MyBatis） -->
         <dependency>
             <groupId>org.springframework</groupId>

@@ -285,3 +285,11 @@ glossary:
     description: 文件的电子档在 doc_file_entry.file_url（逗号多值，与 file_name 下标对齐）；"电子可调阅"= file_url 非空（备案率分子的条件之一）。
     sqlFragment: "file_url IS NOT NULL AND file_url <> ''   -- 有电子档"
     synonyms: [电子档, 可调阅, 附件, 文件在哪]
+
+  # ────────────── 接口枚举对照（工具返回的英文原码 → 中文业务词，卡片展示用） ──────────────
+
+  - term: 项目类型
+    description: >-
+      工作台工具返回的 type 英文原码 → 中文：invest_build=投资建设。
+      未列出的原码按业务语义翻译，不确定时如实告知用户暂无对照，严禁原样输出英文码。
+    synonyms: [invest_build, type 枚举, 项目类型枚举]

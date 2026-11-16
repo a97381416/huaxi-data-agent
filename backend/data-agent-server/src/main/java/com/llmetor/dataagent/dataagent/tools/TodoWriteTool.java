@@ -21,7 +21,9 @@ public class TodoWriteTool {
 
             ## 使用规则
             1. 收到多步骤任务（3 步以上）时，先调用此工具创建任务列表（全部 pending），再开始执行
-            2. 每开始一个任务前，将其标记为 in_progress；每完成一个任务后，立即标记为 completed
+            2. 状态更新必须与推进同轮实时同步：正文宣布某步开始的同一轮立即调用（新步骤标 in_progress，
+               顺带把上一完成步骤标 completed），严禁做完两三步后滞后一次性补发；输出最终结论的前一轮
+               先收尾（已完成步骤全部标 completed、最后一步标 in_progress），再输出结论
             3. 执行过程中发现新步骤时，立即加入列表
             4. 简单单步任务、信息性问答不要使用
 
@@ -45,7 +47,9 @@ public class TodoWriteTool {
         if (inProgress > 1) {
             throw new IllegalArgumentException("同一时间只能有一个任务处于 in_progress 状态");
         }
-        return "任务列表已成功更新。请使用任务列表跟踪你的进度，并继续执行当前的任务。";
+        // Fix C（2026-11-12 死循环事故）：原文案"请继续执行当前的任务"构成无失败信号的正反馈，
+        // 推动弱模型复读 TodoWrite；改为中性文案与系统提示词"todoWrite 纪律"呼应
+        return "任务列表已更新。仅当某项任务状态真正变化时才需再次调用；重复提交无变化的计划不会产生新信息。";
     }
 
     /** 单条任务项（content + status 全量表达；无持久化，状态由每轮参数覆盖） */

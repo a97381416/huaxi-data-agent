@@ -5,6 +5,11 @@ import com.llmetor.dataagent.auth.service.HuaxiAuthService;
 import com.llmetor.dataagent.common.R;
 import com.llmetor.dataagent.dataagent.agent.DodoAgent;
 import com.llmetor.dataagent.dataagent.dto.ChatRequest;
+import com.llmetor.dataagent.dataagent.model.ChatModelManager;
+import com.llmetor.dataagent.dataagent.model.ChatModelOption;
+import com.llmetor.dataagent.dataagent.skill.ChatSkillInfo;
+import com.llmetor.dataagent.dataagent.skill.SkillInfo;
+import com.llmetor.dataagent.dataagent.skill.SkillManager;
 import com.llmetor.dataagent.dataagent.stream.LiveStreamRegistry;
 import com.llmetor.miniagentx.model.AgentStreamEvent;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +28,7 @@ import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -53,6 +59,8 @@ public class AgentController {
     private final DodoAgent dodoAgent;
     private final HuaxiAuthService authService;
     private final LiveStreamRegistry liveStreams;
+    private final SkillManager skillManager;
+    private final ChatModelManager chatModelManager;
     private final ObjectMapper objectMapper;
 
     /**
@@ -88,21 +96,26 @@ public class AgentController {
             takeOverActiveStream(conversationId);
         }
 
+        // 斜杠命令指定的技能（可空）：存在且启用才放行，透传 DodoAgent 定向装配
+        String skillName = resolveSkill(request);
+
         Flux<AgentStreamEvent> source;
         // ③ 存在中断快照 → 恢复执行（本次 query 作为 resumeQuery 传入，空 = 纯恢复）
         if (dodoAgent.hasInterruptedState(conversationId)) {
             source = dodoAgent.resumeStream(conversationId, userId, request.query(),
-                    request.fileIds(), isOnline(request));
+                    request.fileIds(), isOnline(request), skillName, resolveModelCode(request), request.thinking());
         } else {
             // ④ 全新执行
             if (!StringUtils.hasText(request.query())) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "query 不能为空");
             }
-            log.info("[data-agent] 收到查询: convId={}, userId={}, query={}, fileIds={}, online={}",
+            log.info("[data-agent] 收到查询: convId={}, userId={}, query={}, fileIds={}, online={}, skill={}, model={}",
                     conversationId, userId, request.query(),
-                    request.fileIds() == null ? 0 : request.fileIds().size(), isOnline(request));
+                    request.fileIds() == null ? 0 : request.fileIds().size(), isOnline(request), skillName,
+                    resolveModelCode(request));
             source = dodoAgent.stream(request.query(), conversationId, userId,
-                    request.fileIds(), isOnline(request));
+                    request.fileIds(), isOnline(request), skillName, resolveModelCode(request),
+                    !Boolean.FALSE.equals(request.thinking()));
         }
 
         // 流级兜底：内核异常转 ERROR + COMPLETE 事件（注册表 doFinally 会按流终止摘除）
@@ -141,6 +154,28 @@ public class AgentController {
         data.put("onlineAvailable", dodoAgent.isOnlineAvailable());
         data.put("toolLayers", dodoAgent.toolLayers());
         return R.ok(data);
+    }
+
+    /**
+     * 聊天侧技能清单（斜杠命令选择技能用；登录即可，非 admin——
+     * 管理端 /api/skills 含存储路径，此处仅暴露 name/description 最小字段）。
+     */
+    @GetMapping("/skills")
+    public R<List<ChatSkillInfo>> chatSkills() {
+        List<ChatSkillInfo> skills = skillManager.list().stream()
+                .filter(SkillInfo::enabled)
+                .map(s -> new ChatSkillInfo(s.name(), s.description()))
+                .toList();
+        return R.ok(skills);
+    }
+
+    /**
+     * 聊天侧模型清单（对话页模型选择器用；登录即可，非 admin——
+     * 管理端 /api/models 含 api-key 脱敏值等管理字段，此处仅暴露选择所需最小字段）。
+     */
+    @GetMapping("/models")
+    public R<List<ChatModelOption>> chatModels() {
+        return R.ok(chatModelManager.listEnabledOptions());
     }
 
     /**
@@ -197,6 +232,30 @@ public class AgentController {
     /** 联网开关（M6）：请求未带时默认 false */
     private static boolean isOnline(ChatRequest request) {
         return Boolean.TRUE.equals(request.online());
+    }
+
+    /**
+     * 斜杠命令指定的技能名（trim 规范化，空返回 null）；
+     * 指定了但不存在/已停用 → 400（技能可能在选择后被管理端停用）。
+     */
+    private String resolveSkill(ChatRequest request) {
+        if (!StringUtils.hasText(request.skill())) {
+            return null;
+        }
+        String skill = request.skill().trim();
+        if (!skillManager.isEnabled(skill)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "技能不存在或已停用: " + skill);
+        }
+        return skill;
+    }
+
+    /**
+     * 用户选择的对话模型 code（trim 规范化，空返回 null）。
+     * 与技能不同<b>不做 400 校验</b>：模型可能在选择后被停用/删除，
+     * 失效时由 ChatModelManager 回退默认模型（体验优先，不打断提问）。
+     */
+    private static String resolveModelCode(ChatRequest request) {
+        return StringUtils.hasText(request.model()) ? request.model().trim() : null;
     }
 
     private ServerSentEvent<String> toSse(ServerSentEvent<AgentStreamEvent> sse) {
