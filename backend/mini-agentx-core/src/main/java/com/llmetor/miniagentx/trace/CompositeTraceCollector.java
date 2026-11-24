@@ -26,9 +26,15 @@ public class CompositeTraceCollector implements TraceCollector {
 
     @Override
     public void openSession(String sessionId, String conversationId, String userId, String question) {
+        openSession(sessionId, conversationId, userId, question, "router", null, null);
+    }
+
+    @Override
+    public void openSession(String sessionId, String conversationId, String userId, String question,
+                            String agentCode, String parentSessionId, String parentToolCallId) {
         for (TraceCollector d : delegates) {
             try {
-                d.openSession(sessionId, conversationId, userId, question);
+                d.openSession(sessionId, conversationId, userId, question, agentCode, parentSessionId, parentToolCallId);
             } catch (Exception e) {
                 log.warn("[trace-collector] openSession 失败（{}，不影响主流程）: convId={}",
                         d.getClass().getSimpleName(), conversationId, e);
@@ -41,10 +47,22 @@ public class CompositeTraceCollector implements TraceCollector {
                       List<Message> inputMessages, String outputData, String think,
                       long promptTokens, long completionTokens, long durationMs,
                       long thinkDurationMs, boolean success, String errorMessage) {
+        trace(sessionId, conversationId, round, inputMessages, outputData, think,
+                promptTokens, completionTokens, durationMs, thinkDurationMs, success, errorMessage,
+                "router", null);
+    }
+
+    @Override
+    public void trace(String sessionId, String conversationId, int round,
+                      List<Message> inputMessages, String outputData, String think,
+                      long promptTokens, long completionTokens, long durationMs,
+                      long thinkDurationMs, boolean success, String errorMessage,
+                      String agentCode, String parentSessionId) {
         for (TraceCollector d : delegates) {
             try {
                 d.trace(sessionId, conversationId, round, inputMessages, outputData, think,
-                        promptTokens, completionTokens, durationMs, thinkDurationMs, success, errorMessage);
+                        promptTokens, completionTokens, durationMs, thinkDurationMs, success, errorMessage,
+                        agentCode, parentSessionId);
             } catch (Exception e) {
                 log.warn("[trace-collector] trace 失败（{}，不影响主流程）: convId={}, round={}",
                         d.getClass().getSimpleName(), conversationId, round, e);

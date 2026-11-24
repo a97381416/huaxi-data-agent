@@ -322,6 +322,41 @@ export default {
           }
         }
       ]
+    },
+    {
+      key: 'M3',
+      name: 'M-SA3 · 父子 Trace 调用树与监控聚合校准',
+      scenarios: [
+        {
+          id: 'MSA-301',
+          prio: 'P0',
+          title: '父子 Trace 树完整落库（round=1 不撞键）且监控提问数不虚增',
+          steps: '1) 新窗口执行1次主调子完整问答；2) 调 subagent-check 核验新旧 Trace 表行数与父子挂载；3) 核验主列表不混入子会话',
+          expected: 'question_count=1，subSession=1 且 parent_session_id 匹配根 sessionId；新旧 trace 均落库无丢失；监控提问主列表仅1行',
+          auto: {
+            steps: [
+              {
+                kind: 'sse',
+                url: '/agent/demo/subagent/stream',
+                body: { query: '请委派子助手调用 echo 工具输出 trace-tree-ok', conversationId: '{{convId}}' },
+                expect: [{ kind: 'terminal', value: 'COMPLETE' }]
+              },
+              {
+                method: 'GET',
+                url: '/agent/demo/subagent-check?conversationId={{convId}}',
+                expect: [
+                  { kind: 'bodyCode', value: 200 },
+                  { kind: 'jsonEq', path: 'data.monitorQuestionCount', value: 1 },
+                  { kind: 'jsonEq', path: 'data.monitorSubSessionCount', value: 1 },
+                  { kind: 'jsonEq', path: 'data.subParentSessionMatched', value: true },
+                  { kind: 'jsonNumMin', path: 'data.monitorTotalRounds', min: 3 },
+                  { kind: 'jsonNumMin', path: 'data.oldTraceCount', min: 3 }
+                ]
+              }
+            ]
+          }
+        }
+      ]
     }
   ]
 }

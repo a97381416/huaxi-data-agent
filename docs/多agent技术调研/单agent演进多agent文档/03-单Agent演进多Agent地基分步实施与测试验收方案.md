@@ -664,7 +664,7 @@ flowchart LR
 }
 ```
 * **M-SA3 里程碑准出闸门与回滚**：
-  * `[ ]` `MSA-301` 浏览器自动验证通过，且监控页面总览 KPI 中 `trace_write_failures` 零新增
+  * `[x]` `MSA-301` 浏览器自动验证通过，且监控页面总览 KPI 中 `trace_write_failures` 零新增（验收通过 2026-11-24）
   * **回滚预案**：新增字段全部允许 `NULL` 或带默认值 `router`，且 `(session_id, round)` 唯一索引天然兼容单 Agent 模式；即使代码回退到 `M-SA2`，数据库无需回滚即可正常运行。
 
 ---
@@ -980,10 +980,10 @@ flowchart LR
 - [x] **【闸门验收】**：浏览器跑通 `MSA-201 ~ MSA-204` 全绿，且 `/test/m3` 回归全绿 → 打标 `m-sa2-verified`（验收通过 2026-11-24）
 
 ### 阶段 3：父子 Trace 调用树与监控校准（M-SA3）
-- [ ] 执行 `V08__subagent_trace_hierarchy.sql`（迁移 `uk_trace_session_round` + 补齐 `agent_code` / `parent_session_id`）
-- [ ] 改造 `TraceManager`、`MonitorTraceCollector` 落库父子链路
-- [ ] 校准 `refreshConversation`、`MetricAggregateJob`、`MonitorQueryService.sessions` 三处提问计数过滤条件
-- [ ] **【闸门验收】**：浏览器跑通 `MSA-301` 全绿，监控中心会话跟踪页核验提问不虚增 → 打标 `m-sa3-verified`
+- [x] 执行 `V08__subagent_trace_hierarchy.sql`（迁移 `uk_trace_session_round` + 补齐 `agent_code` / `parent_session_id`）（验收通过 2026-11-24）
+- [x] 改造 `TraceManager`、`MonitorTraceCollector` 落库父子链路（验收通过 2026-11-24）
+- [x] 校准 `refreshConversation`、`MetricAggregateJob`、`MonitorQueryService.sessions` 三处提问计数过滤条件（验收通过 2026-11-24）
+- [x] **【闸门验收】**：浏览器跑通 `MSA-301` 全绿，监控中心会话跟踪页核验提问不虚增 → 打标 `m-sa3-verified`（验收通过 2026-11-24）
 
 ### 阶段 4：主路由 + 四大有状态垂类子 Agent 接入（M-SA4）
 - [ ] 拆分 `DataAgentToolsConfig` 为 4 个独立常驻工具组，同步图表 MCP 工具至问数子 Agent

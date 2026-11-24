@@ -31,6 +31,12 @@ public interface TraceCollector {
     default void openSession(String sessionId, String conversationId, String userId, String question) {
     }
 
+    /** M-SA3 扩展版：记录多 Agent 归属（agentCode / parentSessionId / parentToolCallId） */
+    default void openSession(String sessionId, String conversationId, String userId, String question,
+                             String agentCode, String parentSessionId, String parentToolCallId) {
+        openSession(sessionId, conversationId, userId, question);
+    }
+
     /**
      * 记一轮（每轮 LLM 调用一行，同 TraceManager.trace 契约）。
      *
@@ -40,6 +46,16 @@ public interface TraceCollector {
                List<Message> inputMessages, String outputData, String think,
                long promptTokens, long completionTokens, long durationMs,
                long thinkDurationMs, boolean success, String errorMessage);
+
+    /** M-SA3 扩展版：附带 agentCode 与 parentSessionId */
+    default void trace(String sessionId, String conversationId, int round,
+                       List<Message> inputMessages, String outputData, String think,
+                       long promptTokens, long completionTokens, long durationMs,
+                       long thinkDurationMs, boolean success, String errorMessage,
+                       String agentCode, String parentSessionId) {
+        trace(sessionId, conversationId, round, inputMessages, outputData, think,
+                promptTokens, completionTokens, durationMs, thinkDurationMs, success, errorMessage);
+    }
 
     /**
      * 提问终态（persistTerminal 之后回调；每请求恰好一次，含 doFinally 兜底）。

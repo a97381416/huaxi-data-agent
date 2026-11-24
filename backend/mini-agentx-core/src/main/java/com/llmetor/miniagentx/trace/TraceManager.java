@@ -100,14 +100,16 @@ public class TraceManager implements TraceCollector {
         jdbc.execute("ALTER TABLE agentx_trace ADD COLUMN IF NOT EXISTS round_type varchar(10)");
         jdbc.execute("ALTER TABLE agentx_trace ADD COLUMN IF NOT EXISTS tool_names text[]");
         jdbc.execute("ALTER TABLE agentx_trace ADD COLUMN IF NOT EXISTS input_chars int");
-        // 唯一/部分索引在存量脏数据（重复轮次）上会创建失败——只 warn 不阻断启动，
-        // 由 V01 脚本在 DBA 核对后补建
+        // M-SA3：多 Agent 父子链路字段 + 唯一索引迁移至 (session_id, round)
+        jdbc.execute("ALTER TABLE agentx_trace ADD COLUMN IF NOT EXISTS agent_code varchar(50) DEFAULT 'router'");
+        jdbc.execute("ALTER TABLE agentx_trace ADD COLUMN IF NOT EXISTS parent_session_id varchar(100) DEFAULT NULL");
         try {
-            jdbc.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_trace_conv_round ON agentx_trace (conversation_id, round)");
+            jdbc.execute("DROP INDEX IF EXISTS uk_trace_conv_round");
+            jdbc.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_trace_session_round ON agentx_trace (session_id, round)");
             jdbc.execute("CREATE INDEX IF NOT EXISTS idx_trace_created ON agentx_trace (created_at)");
             jdbc.execute("CREATE INDEX IF NOT EXISTS idx_trace_failed ON agentx_trace (conversation_id) WHERE success = 0");
         } catch (Exception e) {
-            log.warn("trace 瘦表索引创建失败（存量数据可能有重复轮次，请核对后执行 V01 脚本补建）: {}", e.getMessage());
+            log.warn("trace 瘦表索引创建失败（存量数据可能有重复轮次，请核对后执行 V08 脚本补建）: {}", e.getMessage());
         }
     }
 
@@ -117,10 +119,22 @@ public class TraceManager implements TraceCollector {
      * @param thinkDurationMs 本轮"思考"单独耗时（首条 reasoning chunk → 最后一条 reasoning chunk）；
      *                        无思考/历史数据为 0 或负数时落 NULL
      */
+    @Override
     public void trace(String sessionId, String conversationId, int round,
                       List<Message> inputMessages, String outputData, String think,
                       long promptTokens, long completionTokens, long durationMs,
                       long thinkDurationMs, boolean success, String errorMessage) {
+        trace(sessionId, conversationId, round, inputMessages, outputData, think,
+                promptTokens, completionTokens, durationMs, thinkDurationMs, success, errorMessage,
+                "router", null);
+    }
+
+    @Override
+    public void trace(String sessionId, String conversationId, int round,
+                      List<Message> inputMessages, String outputData, String think,
+                      long promptTokens, long completionTokens, long durationMs,
+                      long thinkDurationMs, boolean success, String errorMessage,
+                      String agentCode, String parentSessionId) {
         try {
             String inputJson = serializer.toJsonArray(inputMessages);
             Long thinkMs = thinkDurationMs > 0 ? thinkDurationMs : null;
@@ -129,12 +143,13 @@ public class TraceManager implements TraceCollector {
             Analysis analysis = analyzeRound(outputData, success);
             Integer inputChars = inputJson == null ? null : inputJson.length();
             boolean legacy = WRITE_LEGACY_BIG_COLUMNS;
+            String effectiveAgentCode = (agentCode == null || agentCode.isBlank()) ? "router" : agentCode;
 
             txTemplate.executeWithoutResult(status -> {
                 jdbc.update("INSERT INTO agentx_trace (id, session_id, conversation_id, round, input_data, " +
                                 "output_data, think, prompt_tokens, completion_tokens, duration_ms, think_duration_ms, " +
-                                "success, error_message, round_type, tool_names, input_chars) " +
-                                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                "success, error_message, round_type, tool_names, input_chars, agent_code, parent_session_id) " +
+                                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (PreparedStatement ps) -> {
                             int i = 1;
                             ps.setLong(i++, traceId);
@@ -165,6 +180,8 @@ public class TraceManager implements TraceCollector {
                             } else {
                                 ps.setNull(i++, java.sql.Types.INTEGER);
                             }
+                            ps.setString(i++, effectiveAgentCode);
+                            ps.setString(i++, parentSessionId);
                         });
                 jdbc.update("INSERT INTO agentx_trace_payload (trace_id, input_data, output_data, think) " +
                                 "VALUES (?, ?, ?, ?)",

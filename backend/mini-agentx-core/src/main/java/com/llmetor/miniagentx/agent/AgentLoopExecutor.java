@@ -279,10 +279,12 @@ public class AgentLoopExecutor {
             // 存对话表 agentx_conversation（M-SA1：子 Agent 跳过，保一问一行）
             sessionStore.initConversation(SnowflakeIdGenerator.nextId(),conversationId(), sessionId, params.getUserId(), query);
         }
-        // 监控中心挂点：提问开始（一问一行；恢复执行走 initMessagesFromResume 不回调，
-        // 沿用原请求已建的 session 行，避免 seq 重复建行）
+        // 监控中心挂点：提问开始（M-SA3：子 Agent 传 rootConvId + parentSessionId + agentCode）
         if (traceCollector != null) {
-            traceCollector.openSession(sessionId, conversationId(), params.getUserId(), query);
+            String agentCode = (params.getAgentCode() == null || params.getAgentCode().isBlank())
+                    ? "router" : params.getAgentCode();
+            traceCollector.openSession(sessionId, params.effectiveRootConversationId(), params.getUserId(), query,
+                    agentCode, params.getParentSessionId(), params.getParentToolCallId());
         }
         // Fix B：从历史恢复延迟工具发现态（多轮续问与 resume 同样适用）
         restoreDiscoveredToolsFromHistory();
@@ -1083,10 +1085,10 @@ public class AgentLoopExecutor {
         if (traceCollector != null) {
             String answer = "completed".equals(status) ? AnswerExtractor.extract(originalChain) : null;
             try {
-                traceCollector.closeSession(sessionId, conversationId(), status, answer);
+                traceCollector.closeSession(sessionId, params.effectiveRootConversationId(), status, answer);
             } catch (Exception e) {
                 log.warn("监控 closeSession 失败（不影响主流程）: convId={}, sessionId={}, status={}",
-                        conversationId(), sessionId, status, e);
+                        params.effectiveRootConversationId(), sessionId, status, e);
             }
         }
     }
@@ -1196,10 +1198,13 @@ public class AgentLoopExecutor {
         }
         long thinkDurationMs = rs.thinkStartAtMs > 0L
                 ? Math.max(0L, rs.thinkEndAtMs - rs.thinkStartAtMs) : 0L;
-        traceCollector.trace(sessionId, conversationId(), round,
+        String agentCode = (params.getAgentCode() == null || params.getAgentCode().isBlank())
+                ? "router" : params.getAgentCode();
+        traceCollector.trace(sessionId, params.effectiveRootConversationId(), round,
                 rs.inputSnapshot, output, think,
                 rs.roundPromptTokens, rs.roundCompletionTokens,
-                System.currentTimeMillis() - rs.startedAt, thinkDurationMs, success, error);
+                System.currentTimeMillis() - rs.startedAt, thinkDurationMs, success, error,
+                agentCode, params.getParentSessionId());
     }
 
     /** 记录本轮 reasoning chunk 的首末时刻（trace 的 think_duration_ms 数据源） */

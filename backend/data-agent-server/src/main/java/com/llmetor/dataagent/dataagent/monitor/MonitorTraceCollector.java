@@ -113,6 +113,11 @@ public class MonitorTraceCollector implements TraceCollector {
                 """);
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_ams_conv    ON agentx_monitor_session (conversation_id, seq)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_ams_created ON agentx_monitor_session (created_at)");
+        // M-SA3：多 Agent 父子链路字段（幂等补列，与 V08 同构）
+        jdbc.execute("ALTER TABLE agentx_monitor_session ADD COLUMN IF NOT EXISTS agent_code varchar(50) DEFAULT 'router'");
+        jdbc.execute("ALTER TABLE agentx_monitor_session ADD COLUMN IF NOT EXISTS parent_session_id varchar(100) DEFAULT NULL");
+        jdbc.execute("ALTER TABLE agentx_monitor_session ADD COLUMN IF NOT EXISTS parent_tool_call_id varchar(100) DEFAULT NULL");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_ams_parent ON agentx_monitor_session (parent_session_id)");
         try {
             jdbc.execute("CREATE INDEX IF NOT EXISTS idx_ams_running ON agentx_monitor_session (created_at) WHERE status = 'running'");
         } catch (Exception e) {
@@ -145,6 +150,9 @@ public class MonitorTraceCollector implements TraceCollector {
         }
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_amt_conv    ON agentx_monitor_trace (conversation_id, created_at)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_amt_created ON agentx_monitor_trace (created_at)");
+        // M-SA3：多 Agent 父子链路字段（幂等补列）
+        jdbc.execute("ALTER TABLE agentx_monitor_trace ADD COLUMN IF NOT EXISTS agent_code varchar(50) DEFAULT 'router'");
+        jdbc.execute("ALTER TABLE agentx_monitor_trace ADD COLUMN IF NOT EXISTS parent_session_id varchar(100) DEFAULT NULL");
         try {
             jdbc.execute("CREATE INDEX IF NOT EXISTS idx_amt_failed  ON agentx_monitor_trace (session_id) WHERE success = 0");
         } catch (Exception e) {
@@ -174,23 +182,39 @@ public class MonitorTraceCollector implements TraceCollector {
      */
     @Override
     public void openSession(String sessionId, String conversationId, String userId, String question) {
+        openSession(sessionId, conversationId, userId, question, "router", null, null);
+    }
+
+    @Override
+    public void openSession(String sessionId, String conversationId, String userId, String question,
+                            String agentCode, String parentSessionId, String parentToolCallId) {
         try {
             String q = question == null ? "" : question;
-            jdbc.update("""
-                    INSERT INTO agentx_monitor_conversation
-                      (id, conversation_id, user_id, title, status, started_at, last_active_at)
-                    VALUES (?, ?, ?, ?, 'running', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    ON CONFLICT (conversation_id) DO NOTHING
-                    """, SnowflakeIdGenerator.nextId(), conversationId, userId, abbreviate(q, TITLE_MAX_LENGTH));
-            Integer seq = jdbc.queryForObject(
-                    "SELECT COALESCE(MAX(seq), 0) + 1 FROM agentx_monitor_session WHERE conversation_id = ?",
-                    Integer.class, conversationId);
+            String effectiveAgent = (agentCode == null || agentCode.isBlank()) ? "router" : agentCode;
+            boolean isSub = parentSessionId != null && !parentSessionId.isBlank();
+            if (!isSub) {
+                jdbc.update("""
+                        INSERT INTO agentx_monitor_conversation
+                          (id, conversation_id, user_id, title, status, started_at, last_active_at)
+                        VALUES (?, ?, ?, ?, 'running', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        ON CONFLICT (conversation_id) DO NOTHING
+                        """, SnowflakeIdGenerator.nextId(), conversationId, userId, abbreviate(q, TITLE_MAX_LENGTH));
+            }
+            int seqVal = 0;
+            if (!isSub) {
+                Integer nextSeq = jdbc.queryForObject(
+                        "SELECT COALESCE(MAX(seq), 0) + 1 FROM agentx_monitor_session " +
+                                "WHERE conversation_id = ? AND parent_session_id IS NULL",
+                        Integer.class, conversationId);
+                seqVal = nextSeq == null ? 1 : nextSeq;
+            }
             jdbc.update("""
                     INSERT INTO agentx_monitor_session
-                      (id, conversation_id, session_id, seq, user_id, question, status, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 'running', CURRENT_TIMESTAMP)
+                      (id, conversation_id, session_id, seq, user_id, question, status,
+                       agent_code, parent_session_id, parent_tool_call_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, CURRENT_TIMESTAMP)
                     """, SnowflakeIdGenerator.nextId(), conversationId, sessionId,
-                    seq == null ? 1 : seq, userId, q);
+                    seqVal, userId, q, effectiveAgent, parentSessionId, parentToolCallId);
             refreshConversation(conversationId);
         } catch (Exception e) {
             log.warn("[monitor-collector] openSession 失败（不影响主流程）: convId={}, sessionId={}",
@@ -210,19 +234,32 @@ public class MonitorTraceCollector implements TraceCollector {
                       List<Message> inputMessages, String outputData, String think,
                       long promptTokens, long completionTokens, long durationMs,
                       long thinkDurationMs, boolean success, String errorMessage) {
+        trace(sessionId, conversationId, round, inputMessages, outputData, think,
+                promptTokens, completionTokens, durationMs, thinkDurationMs, success, errorMessage,
+                "router", null);
+    }
+
+    @Override
+    public void trace(String sessionId, String conversationId, int round,
+                      List<Message> inputMessages, String outputData, String think,
+                      long promptTokens, long completionTokens, long durationMs,
+                      long thinkDurationMs, boolean success, String errorMessage,
+                      String agentCode, String parentSessionId) {
         try {
             String inputJson = serializer.toJsonArray(inputMessages);
             long traceId = SnowflakeIdGenerator.nextId();
             TraceManager.Analysis analysis = TraceManager.analyzeRound(outputData, success);
             Integer inputChars = inputJson == null ? null : inputJson.length();
             Long thinkMs = thinkDurationMs > 0 ? thinkDurationMs : null;
+            String effectiveAgent = (agentCode == null || agentCode.isBlank()) ? "router" : agentCode;
 
             txTemplate.executeWithoutResult(txStatus -> {
                 jdbc.update("""
                         INSERT INTO agentx_monitor_trace
                           (id, conversation_id, session_id, round, round_type, tool_names, input_chars,
-                           prompt_tokens, completion_tokens, duration_ms, think_duration_ms, success, error_message)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           prompt_tokens, completion_tokens, duration_ms, think_duration_ms, success, error_message,
+                           agent_code, parent_session_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, (PreparedStatement ps) -> {
                     int i = 1;
                     ps.setLong(i++, traceId);
@@ -250,6 +287,8 @@ public class MonitorTraceCollector implements TraceCollector {
                     }
                     ps.setInt(i++, success ? 1 : 0);
                     ps.setString(i++, errorMessage);
+                    ps.setString(i++, effectiveAgent);
+                    ps.setString(i++, parentSessionId);
                 });
                 jdbc.update("INSERT INTO agentx_trace_payload (trace_id, input_data, output_data, think) " +
                         "VALUES (?, ?, ?, ?)", traceId, inputJson, outputData, think);
@@ -364,7 +403,7 @@ public class MonitorTraceCollector implements TraceCollector {
                   started_at        = a.started_at,
                   last_active_at    = a.last_active_at
                 FROM (
-                  SELECT COUNT(*) AS question_count,
+                  SELECT COUNT(*) FILTER (WHERE parent_session_id IS NULL) AS question_count,
                          COALESCE(SUM(COALESCE(rounds, 0)), 0) AS total_rounds,
                          COALESCE(SUM(COALESCE(fail_rounds, 0)), 0) AS fail_rounds,
                          COALESCE(SUM(COALESCE(prompt_tokens, 0)), 0) AS prompt_tokens,

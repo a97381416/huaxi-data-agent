@@ -93,12 +93,8 @@ public class MonitorQueryService {
         int p = page == null || page < 0 ? 0 : page;
         int s = size == null || size <= 0 ? 20 : Math.min(size, 100);
 
-        StringBuilder where = new StringBuilder(" WHERE 1=1");
+        StringBuilder where = new StringBuilder(" WHERE s.parent_session_id IS NULL");
         List<Object> args = new ArrayList<>();
-        if (hasText(conversationId)) {
-            where.append(" AND s.conversation_id = ?");
-            args.add(conversationId.trim());
-        }
         if (hasText(conversationId)) {
             where.append(" AND s.conversation_id = ?");
             args.add(conversationId.trim());

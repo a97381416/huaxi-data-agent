@@ -152,7 +152,7 @@ public class MetricAggregateJob {
             rows.add(metricRow(bucket, "completion_tokens", completion == null ? 0 : completion));
         }
         Long convs = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM agentx_monitor_session WHERE created_at >= ? AND created_at < ?",
+                "SELECT COUNT(*) FROM agentx_monitor_session WHERE parent_session_id IS NULL AND created_at >= ? AND created_at < ?",
                 Long.class, start, end);
         rows.add(metricRow(bucket, "convs", convs == null ? 0 : convs));
 
