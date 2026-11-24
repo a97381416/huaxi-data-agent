@@ -62,6 +62,9 @@ public class AgentController {
     private final SkillManager skillManager;
     private final ChatModelManager chatModelManager;
     private final ObjectMapper objectMapper;
+    /** 多 Agent 架构开关（single / multi），M-SA0 仅透出，M-SA4 起参与分流 */
+    @org.springframework.beans.factory.annotation.Value("${data-agent.agent.mode:single}")
+    private String agentMode;
 
     /**
      * 流式问答（POST SSE，事件名=类型小写，id=事件自增序号，data=事件 JSON）。
@@ -153,6 +156,7 @@ public class AgentController {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("onlineAvailable", dodoAgent.isOnlineAvailable());
         data.put("toolLayers", dodoAgent.toolLayers());
+        data.put("agentMode", agentMode);
         return R.ok(data);
     }
 

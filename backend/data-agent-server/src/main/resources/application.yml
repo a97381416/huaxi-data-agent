@@ -60,6 +60,8 @@ data-agent:
     # model: MiniMax-M3.1-Flash
     # max-rounds: 50   # 单题 ReAct 轮次上限（原版默认 50）
   agent:
+    # 多 Agent 演进架构开关：single=原单体 DodoAgent（默认/回滚安全岛）；multi=主路由+垂类子 Agent（M-SA4 起生效）
+    mode: single
     max-rounds: 50           # ReAct 最大轮次（原版默认 50；2026-11-12 死循环事故后 100→50）
     retry-interval-ms: 3000  # LLM 调用失败重试间隔
     # 思考回流形态：REASONING_CONTENT（模型独立 reasoning_content 字段，MiniMax M3.1-Flash 路线）

@@ -143,10 +143,10 @@ public class KernelDemoController {
         Integer workingCount = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM agentx_session WHERE conversation_id = ? AND state_key = 'working_messages'",
                 Integer.class, conversationId);
-        Long originalMessageCount = jdbc.queryForObject(
-                "SELECT COALESCE(SUM(JSON_LENGTH(state_data)), 0) FROM agentx_session " +
+        Integer originalMessageCount = jdbc.queryForObject(
+                "SELECT COALESCE(SUM(jsonb_array_length(state_data::jsonb)), 0) FROM agentx_session " +
                         "WHERE conversation_id = ? AND state_key = 'original_messages'",
-                Long.class, conversationId);
+                Integer.class, conversationId);
         List<Integer> indexes = jdbc.queryForList(
                 "SELECT item_index FROM agentx_session WHERE conversation_id = ? AND state_key = 'original_messages' " +
                         "ORDER BY item_index", Integer.class, conversationId);
@@ -181,6 +181,44 @@ public class KernelDemoController {
         return R.ok(data);
     }
 
+    /**
+     * 多 Agent 地基查库探针（M-SA0；供 /test/mSA 浏览器用例断言，只读）：
+     * 汇总 rootConvId 与子窗口 {rootConvId}::% 在 conversation / session / pause_state / trace 的落库事实。
+     * 表/列在对应里程碑前可能不存在（如 trace.parent_session_id），统一容错为 -1 / 0 而不抛异常。
+     */
+    @GetMapping("/subagent-check")
+    public R<Map<String, Object>> subagentCheck(@RequestParam String conversationId) {
+        String subLike = conversationId + "::%";
+        Map<String, Object> d = new LinkedHashMap<>();
+        int rootRows = safeCount("SELECT COUNT(*) FROM agentx_conversation WHERE conversation_id = ?", conversationId);
+        d.put("rootConvRowCount", rootRows);
+        d.put("rootConversationFound", rootRows > 0);
+        d.put("subConvRowCount", safeCount("SELECT COUNT(*) FROM agentx_conversation WHERE conversation_id LIKE ?", subLike));
+        d.put("rootWorkingCount", safeCount(
+                "SELECT COUNT(*) FROM agentx_session WHERE conversation_id = ? AND state_key = 'working_messages'", conversationId));
+        d.put("subWorkingCount", safeCount(
+                "SELECT COUNT(*) FROM agentx_session WHERE conversation_id LIKE ? AND state_key = 'working_messages'", subLike));
+        d.put("rootPauseCount", safeCount("SELECT COUNT(*) FROM agentx_pause_state WHERE conversation_id = ?", conversationId));
+        d.put("subPauseCount", safeCount("SELECT COUNT(*) FROM agentx_pause_state WHERE conversation_id LIKE ?", subLike));
+        d.put("rootTraceRounds", safeCount("SELECT COUNT(*) FROM agentx_trace WHERE conversation_id = ?", conversationId));
+        d.put("subTraceRounds", safeCount("SELECT COUNT(*) FROM agentx_trace WHERE conversation_id LIKE ?", subLike));
+        // M-SA3 才有 parent_session_id 列：此前返回 -1
+        d.put("subTraceWithParentCount", safeCount(
+                "SELECT COUNT(*) FROM agentx_trace WHERE conversation_id LIKE ? AND parent_session_id IS NOT NULL", subLike));
+        // 运行中任务数：M-SA1 起由子 Agent 注册表接入，当前基线恒 0
+        d.put("runningTaskCount", 0);
+        return R.ok(d);
+    }
+
+    /** 容错计数（返回 int 避开全局 Long->String 序列化）：SQL 失败（表/列未迁移）返回 -1 */
+    private int safeCount(String sql, Object... args) {
+        try {
+            Integer n = jdbc.queryForObject(sql, Integer.class, args);
+            return n == null ? 0 : n;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
     private static int asInt(Object v) {
         return v instanceof Number n ? n.intValue() : -1;
     }

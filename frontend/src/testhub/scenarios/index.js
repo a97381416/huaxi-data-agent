@@ -12,8 +12,9 @@ import m6 from './m6'
 import m7 from './m7'
 import m8 from './m8'
 import me2 from './m-e2'
+import msa from './m-sa'
 
-export const milestones = [m0, m1, m2, m3, m4, m5, m6, m7, m8, me2]
+export const milestones = [m0, m1, m2, m3, m4, m5, m6, m7, m8, me2, msa]
 
 /** 公共测试环境说明（对应 test/M0-测试用例.md 的测试环境表） */
 export const envNotes = [

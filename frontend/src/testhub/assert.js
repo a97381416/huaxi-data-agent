@@ -166,7 +166,22 @@ export function checkExp(exp, got) {
     }
     case 'snapshotTrue':
       return { pass: got.snapshot?.json?.data?.hasSnapshot === true, msg: `中断快照 hasSnapshot = ${got.snapshot?.json?.data?.hasSnapshot}` }
-    default:
+    // ---- 多 Agent（M-SA）：子 Agent 事件归属与终态唯一性 ----
+    case 'subEventHas':
+      return {
+        pass: got.events.some((e) => e.parentToolCallId && (!exp.agentCode || e.agentCode === exp.agentCode)),
+        msg: `应出现带 parentToolCallId${exp.agentCode ? ' 且 agentCode=' + exp.agentCode : ''} 的子 Agent 事件`
+      }
+    case 'subToolCalled':
+      return {
+        pass: got.events.some((e) => e.type === 'TOOL_START' && e.parentToolCallId && (e.toolName === exp.value || e.name === exp.value)),
+        msg: `子 Agent 内部应调用工具 ${exp.value}`
+      }
+    case 'terminalCountEq': {
+      const n = got.events.filter((e) => e.type === 'COMPLETE' || e.type === 'PAUSED').length
+      const want = exp.value ?? 1
+      return { pass: n === want, msg: `COMPLETE/PAUSED 终态事件总数应为 ${want}（实际 ${n}，子 Agent 终态不得外泄）` }
+    }    default:
       return { pass: false, msg: `未知断言类型：${k}` }
   }
 }

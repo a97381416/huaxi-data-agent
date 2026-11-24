@@ -16,8 +16,9 @@ import java.util.List;
  *                       （不存在/停用回退默认），空走默认模型；库空走 yml 兜底 bean
  * @param thinking       深度思考开关（可空 = 默认开启）：false 时按所选模型注入关思考请求参数
  *                       （agentx_chat_model.thinking_off_param，如 {"enable_thinking":false}）
+ * @param agentMode      架构模式调试覆盖（可空）：single / multi；空则取 data-agent.agent.mode
  */
 public record ChatRequest(String query, String conversationId, Boolean recovery, Long startSeq,
                           List<String> fileIds, Boolean online, String skill, String model,
-                          Boolean thinking) {
+                          Boolean thinking, String agentMode) {
 }
