@@ -288,9 +288,11 @@ public class DodoAgent {
         return pauseStateStore.has(conversationId);
     }
 
-    /** 丢弃中断快照（takeOver 顶掉旧断点时用） */
+    /** 丢弃中断快照（takeOver 顶掉旧断点时用；M-SA2 级联清理所有 :: 子快照） */
     public boolean discardInterruptedState(String conversationId) {
-        return pauseStateStore.delete(conversationId);
+        boolean rootDeleted = pauseStateStore.delete(conversationId);
+        int subDeleted = pauseStateStore.deleteByPrefix(conversationId + "::");
+        return rootDeleted || subDeleted > 0;
     }
 
     /**

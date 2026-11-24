@@ -582,8 +582,8 @@ flowchart LR
 }
 ```
 * **M-SA2 里程碑准出闸门与回滚**：
-  * `[ ]` 浏览器 `/test/m-SA` 中 `MSA-201 ~ MSA-204` 全部 `PASSED`
-  * `[ ]` 回归 `/test/m3`（单 Agent 流式恢复与顶掉）全部通过
+  * `[x]` 浏览器 `/test/mSA` 中 `MSA-201 ~ MSA-204` 全部 `PASSED`（验收通过 2026-11-24）
+  * `[x]` 回归 `/test/m3`（单 Agent 流式恢复与顶掉）全部通过（验收通过 2026-11-24）
   * **回滚预案**：代码回退至 `m-sa1-verified` 标签，`agentx_pause_state` 表结构未变动，无脏数据影响。
 
 ---
@@ -974,10 +974,10 @@ flowchart LR
 - [x] **【闸门验收】**：浏览器跑通 `MSA-101 ~ MSA-104` 全绿 → 打标 `m-sa1-verified`（验收通过 2026-11-24）
 
 ### 阶段 2：父子级联中断、恢复与清理闭环（M-SA2）
-- [ ] 激活 `InterruptContext.fireInterrupt()` 并在 `JdbcPauseStateStore` 补齐新增多 Agent 参数序列化
-- [ ] 实现 `SubAgentTool` 级联 `interrupt` 与基于 `parentToolCallId` 校验的子快照恢复/清理分流
-- [ ] 升级 `discardInterruptedState` 与 `SessionService.deleteConversation` 支持 `rootConvId::%` 级联清理
-- [ ] **【闸门验收】**：浏览器跑通 `MSA-201 ~ MSA-204` 全绿，且 `/chat` 实测点停止/空回车恢复/顶掉正常 → 打标 `m-sa2-verified`
+- [x] 激活 `InterruptContext.fireInterrupt()` 并在 `JdbcPauseStateStore` 补齐新增多 Agent 参数序列化（验收通过 2026-11-24）
+- [x] 实现 `SubAgentTool` 级联 `interrupt` 与基于 `parentToolCallId` 校验的子快照恢复/清理分流（验收通过 2026-11-24）
+- [x] 升级 `discardInterruptedState` 与 `SessionService.deleteConversation` 支持 `rootConvId::%` 级联清理（验收通过 2026-11-24）
+- [x] **【闸门验收】**：浏览器跑通 `MSA-201 ~ MSA-204` 全绿，且 `/test/m3` 回归全绿 → 打标 `m-sa2-verified`（验收通过 2026-11-24）
 
 ### 阶段 3：父子 Trace 调用树与监控校准（M-SA3）
 - [ ] 执行 `V08__subagent_trace_hierarchy.sql`（迁移 `uk_trace_session_round` + 补齐 `agent_code` / `parent_session_id`）

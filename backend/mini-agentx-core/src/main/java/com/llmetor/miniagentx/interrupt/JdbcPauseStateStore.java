@@ -137,6 +137,14 @@ public class JdbcPauseStateStore implements PauseStateStore {
         return Boolean.TRUE.equals(hit);
     }
 
+    @Override
+    public int deleteByPrefix(String prefix) {
+        if (prefix == null || prefix.isEmpty()) {
+            return 0;
+        }
+        return jdbc.update("DELETE FROM agentx_pause_state WHERE conversation_id LIKE ?", prefix + "%");
+    }
+
     // ==================== JSON 序列化 / 反序列化 ====================
     // 包级可见：JdbcPauseStateStoreTest 直接验证 JSON 往返，不连库
 
@@ -151,6 +159,12 @@ public class JdbcPauseStateStore implements PauseStateStore {
             p.put("userId", s.getParams().getUserId());
             p.put("customParams", s.getParams().getCustomParams());
             p.put("toolParams", s.getParams().getToolParams());
+            // M-SA2：补齐多 Agent 归属字段，防子快照恢复后身份丢失
+            p.put("subAgent", s.getParams().isSubAgent());
+            p.put("agentCode", s.getParams().getAgentCode());
+            p.put("rootConversationId", s.getParams().getRootConversationId());
+            p.put("parentSessionId", s.getParams().getParentSessionId());
+            p.put("parentToolCallId", s.getParams().getParentToolCallId());
             m.put("params", p);
         }
         m.put("messagesJson", s.getMessagesJson());
@@ -179,6 +193,11 @@ public class JdbcPauseStateStore implements PauseStateStore {
                     .userId(str(p.get("userId")))
                     .customParams((Map<String, String>) orEmpty(p.get("customParams")))
                     .toolParams((Map<String, Object>) orEmpty(p.get("toolParams")))
+                    .subAgent(Boolean.TRUE.equals(p.get("subAgent")))
+                    .agentCode(str(p.get("agentCode")))
+                    .rootConversationId(str(p.get("rootConversationId")))
+                    .parentSessionId(str(p.get("parentSessionId")))
+                    .parentToolCallId(str(p.get("parentToolCallId")))
                     .build();
         }
         List<PauseState.PendingToolCall> pending = new ArrayList<>();

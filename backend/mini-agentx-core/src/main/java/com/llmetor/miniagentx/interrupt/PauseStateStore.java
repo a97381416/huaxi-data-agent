@@ -15,4 +15,9 @@ public interface PauseStateStore {
     boolean delete(String conversationId);
 
     boolean has(String conversationId);
+
+    /** M-SA2：按前缀级联删除全部子会话快照（如 rootConvId + "::"），返回删除条数 */
+    default int deleteByPrefix(String prefix) {
+        return 0;
+    }
 }

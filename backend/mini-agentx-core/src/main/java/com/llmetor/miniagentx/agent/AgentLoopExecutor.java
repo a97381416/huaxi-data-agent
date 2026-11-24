@@ -923,7 +923,8 @@ public class AgentLoopExecutor {
     // ==================== 中断（interrupt → Paused） ====================
 
     private void onInterrupt(String interruptMessage) {
-        interruptCtx.markInterrupted();
+        // M-SA2：触发中断回调链，级联打断挂载的子 Agent（父停子必停）
+        interruptCtx.fireInterrupt();
         PauseState snapshot;
         synchronized (this) {
             RoundState rs = current;
@@ -1038,13 +1039,16 @@ public class AgentLoopExecutor {
         return startAtMs == 0L ? null : System.currentTimeMillis() - startAtMs;
     }
 
-    /** 删除该会话的中断快照（非 Paused 终态时调用；写失败仅告警不影响主流程） */
+    /** 删除该会话的中断快照（非 Paused 终态时调用；主 Agent 同步级联清理 :: 子快照防僵尸恢复） */
     private void discardSnapshot() {
         if (stateStore == null) {
             return;
         }
         try {
             stateStore.delete(conversationId());
+            if (!params.isSubAgent()) {
+                stateStore.deleteByPrefix(conversationId() + "::");
+            }
         } catch (Exception e) {
             log.warn("中断快照清理失败: convId={}", conversationId(), e);
         }
@@ -1053,7 +1057,11 @@ public class AgentLoopExecutor {
     private void finishSink() {
         sink.tryEmitComplete();
         taskManager.unregisterTask(conversationId());
-        toolPool.shutdown();
+        if (interruptCtx.isInterrupted()) {
+            toolPool.shutdownNow();
+        } else {
+            toolPool.shutdown();
+        }
     }
 
     // ==================== 落库（终态一次 + 兜底） ====================

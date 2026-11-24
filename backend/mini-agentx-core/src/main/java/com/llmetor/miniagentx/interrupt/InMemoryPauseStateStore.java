@@ -53,4 +53,20 @@ public class InMemoryPauseStateStore implements PauseStateStore {
     public boolean has(String conversationId) {
         return get(conversationId) != null;
     }
+
+    @Override
+    public int deleteByPrefix(String prefix) {
+        if (prefix == null || prefix.isEmpty()) {
+            return 0;
+        }
+        int[] count = {0};
+        store.keySet().removeIf(k -> {
+            if (k.startsWith(prefix)) {
+                count[0]++;
+                return true;
+            }
+            return false;
+        });
+        return count[0];
+    }
 }

@@ -385,9 +385,11 @@ public class SessionService {
         if (deleted == 0) {
             return false;
         }
-        jdbc.update("DELETE FROM agentx_session WHERE conversation_id = ?", conversationId);
+        jdbc.update("DELETE FROM agentx_session WHERE conversation_id = ? OR conversation_id LIKE ?",
+                conversationId, conversationId + "::%");
         try {
             pauseStateStore.delete(conversationId);
+            pauseStateStore.deleteByPrefix(conversationId + "::");
         } catch (Exception e) {
             log.warn("删除会话时清理中断快照失败: convId={}", conversationId, e);
         }
