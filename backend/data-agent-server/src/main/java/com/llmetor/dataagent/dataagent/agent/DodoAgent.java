@@ -19,6 +19,8 @@ import com.llmetor.miniagentx.model.ThinkingMode;
 import com.llmetor.miniagentx.tools.SkillsTool;
 import com.llmetor.miniagentx.tools.search.DeferredToolRegistry;
 import com.llmetor.miniagentx.tools.search.ToolSearchConfig;
+import com.llmetor.miniagentx.trace.CompositeTraceCollector;
+import com.llmetor.miniagentx.trace.TraceCollector;
 import com.llmetor.miniagentx.trace.TraceManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
@@ -77,7 +79,10 @@ public class DodoAgent {
     private final AgentTaskManager taskManager;
     private final DataSource dataSource;
     private final AgentxSessionStore sessionStore;
+    /** 旧轨 trace 审计（系统三表，照旧写不动——D1） */
     private final TraceManager traceManager;
+    /** 新轨组合采集器（旧 TraceManager + 监控自有表 MonitorTraceCollector 双写——D2/D5） */
+    private final TraceCollector traceCollector;
     private final PauseStateStore pauseStateStore;
     private final UserContextBuilder userContextBuilder;
     private final FileManageService fileManageService;
@@ -113,6 +118,7 @@ public class DodoAgent {
                      ChatModelManager chatModelManager,
                      AgentTaskManager taskManager,
                      DataSource dataSource,
+                     com.llmetor.dataagent.dataagent.monitor.detect.DetectDispatcher detectDispatcher,
                      PauseStateStore pauseStateStore,
                      UserContextBuilder userContextBuilder,
                      FileManageService fileManageService,
@@ -139,6 +145,11 @@ public class DodoAgent {
         // 共享持久化设施：每请求重建 Agent 时不再重复包装/建表；中断快照 JDBC 落库（M3）
         this.sessionStore = new AgentxSessionStore(dataSource);
         this.traceManager = new TraceManager(dataSource);
+        // 双轨写入（监控中心自有表方案 §4.1）：旧轨系统表照旧，新轨监控三表互不影响；
+        // Step 3 找到异常（03 方案 §4）：终态后挂异常检测派发器（closeSession → 异步检测）
+        var monitorCollector = new com.llmetor.dataagent.dataagent.monitor.MonitorTraceCollector(dataSource);
+        monitorCollector.setDetectDispatcher(detectDispatcher);
+        this.traceCollector = new CompositeTraceCollector(List.of(traceManager, monitorCollector));
         this.pauseStateStore = pauseStateStore;
         this.userContextBuilder = userContextBuilder;
         this.fileManageService = fileManageService;
@@ -383,8 +394,8 @@ public class DodoAgent {
                 .dataSource(dataSource)
                 // 两张会话表 agentx_conversation、 agentx_session
                 .sessionStore(sessionStore)
-                // agentx_trace表
-                .traceManager(traceManager)
+                // trace 采集 SPI：旧轨 agentx_trace + 新轨监控自有表组合双写
+                .traceCollector(traceCollector)
                 // 任务中断快照pause管理器
                 .stateStore(pauseStateStore)
                 .build();

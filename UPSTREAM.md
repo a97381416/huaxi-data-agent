@@ -23,6 +23,7 @@
 | MschemaIntrospector/MschemaCacheService | 新增 include-tables 白名单模式（第 4 参） |
 | pom | sa-token 全删；显式 spring-security-crypto 6.3.4 + spring-boot-starter-data-redis（原传递依赖补位） |
 | backend/skills/data-analysis/SKILL.md | 已加 PG 方言 + 穿透工作流 |
+| mini-agentx-core trace SPI（TraceManager/AgentLoopExecutor/ReactAgent） | 已抽 TraceCollector 接口（trace/openSession/closeSession）+ CompositeTraceCollector + AnswerExtractor；AgentLoopExecutor 依赖接口并接三个挂点（initMessages/persistTerminal）。上游 patch 若直接依赖 TraceManager 具体类需人工合并（监控中心自有表方案 §4.1） |
 
 ## 同步记录
 
@@ -30,3 +31,4 @@
 |---|---|---|---|---|
 | 2026-11-07 | 拷贝 | e9ad4fe | 初始基线 | — |
 | 2026-11-06 | 改造 | — | M-H1 PG 适配 + M-H2 权限华西化 + M-H3 业务适配（277 测全绿） | 见上冲突区 |
+| 2026-11-19 | 改造 | — | 监控中心自有表：TraceCollector SPI + MonitorTraceCollector 双轨写 + 读侧切新表 + searchQuestions 工具 | 见上冲突区 trace SPI 行 |

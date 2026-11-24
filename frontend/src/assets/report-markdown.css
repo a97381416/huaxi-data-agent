@@ -1,0 +1,404 @@
+/* ── 诊断报告现代化文档排版样式（参考清晰文档风 + 代码语义分色 + 高辨识度表格） ── */
+.report-md {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #1f2937;
+  word-break: break-word;
+}
+
+/* 紧凑变体（用于 AI 诊断侧边抽屉实时预览） */
+.report-md.report-md--compact {
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+/* ── 标题层级（干净利落、层次分明） ── */
+.report-md h1 {
+  font-size: 19px;
+  font-weight: 700;
+  color: #111827;
+  margin: 8px 0 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e5e7eb;
+  letter-spacing: -0.01em;
+}
+
+.report-md h2 {
+  font-size: 16px;
+  font-weight: 700;
+  color: #111827;
+  margin: 24px 0 12px;
+  padding-left: 11px;
+  border-left: 3.5px solid #3b82f6;
+  line-height: 1.4;
+}
+
+.report-md h2:first-child {
+  margin-top: 4px;
+}
+
+.report-md h3 {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 18px 0 8px;
+}
+
+.report-md h4 {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #334155;
+  margin: 14px 0 6px;
+}
+
+.report-md.report-md--compact h2 {
+  font-size: 14px;
+  margin: 16px 0 8px;
+}
+
+.report-md.report-md--compact h3 {
+  font-size: 13px;
+  margin: 12px 0 6px;
+}
+
+/* ── 段落与列表 ── */
+.report-md p {
+  margin: 10px 0;
+}
+
+.report-md strong {
+  font-weight: 600;
+  color: #111827;
+}
+
+.report-md ul,
+.report-md ol {
+  padding-left: 22px;
+  margin: 10px 0;
+}
+
+.report-md li {
+  margin-bottom: 6px;
+}
+
+.report-md li::marker {
+  color: #64748b;
+  font-weight: 600;
+}
+
+/* ── 引用块 ── */
+.report-md blockquote {
+  margin: 14px 0;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-left: 3.5px solid #3b82f6;
+  border-radius: 8px;
+  color: #475569;
+  font-size: 13.5px;
+}
+
+.report-md blockquote p {
+  margin: 4px 0;
+}
+
+/* ── 行内代码胶囊（参考图圆角描边风格 + 按代码语义分色） ── */
+.report-md .md-code {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  padding: 1.5px 7px;
+  margin: 1px 2px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  background: #f3f4f6;
+  color: #1f2937;
+  vertical-align: baseline;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.report-md.report-md--compact .md-code {
+  font-size: 11.5px;
+  padding: 1px 5px;
+}
+
+/* 1. 规则与证据代号（TOOL-001@R16 / REACT-001 / SKILL-001 / ANSWER-002）：玫红高亮 */
+.report-md .md-code-rule {
+  background: #fff1f2;
+  color: #be123c;
+  border-color: #fecdd3;
+  font-weight: 600;
+}
+
+/* 2. 文件路径 / 配置名（examples/packages/... / application.yml / *.java）：翡翠绿 */
+.report-md .md-code-path {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+
+/* 3. SQL / JSON / 方法调用 / 键值表达式（ctx.slots.register(...) / SELECT ...）：靛蓝紫 */
+.report-md .md-code-expr {
+  background: #eef2ff;
+  color: #4338ca;
+  border-color: #c7d2fe;
+}
+
+/* 4. 字段名 / 表名 / 类名 / 参数标识符（agentx_trace_payload / sessionId）：天蓝 */
+.report-md .md-code-ident {
+  background: #f0f9ff;
+  color: #0369a1;
+  border-color: #bae6fd;
+}
+
+/* 5. 默认行内代码（普通字面量/短标签）：浅灰描边胶囊 */
+.report-md .md-code-default {
+  background: #f3f4f6;
+  color: #374151;
+  border-color: #d1d5db;
+}
+
+/* ── 轮次深链 R{n} ── */
+.report-md .round-link {
+  display: inline-block;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #1d4ed8;
+  background: #dbeafe;
+  border: 1px solid #93c5fd;
+  padding: 1px 6px;
+  margin: 0 2px;
+  border-radius: 6px;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.report-md .round-link:hover {
+  background: #bfdbfe;
+  color: #1e3a8a;
+  border-color: #60a5fa;
+}
+
+/* ── 代码块（浅色精致文档风 + 顶栏语言标识 + 语法高亮） ── */
+.report-md .md-code-block {
+  margin: 14px 0;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.report-md .md-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 12px;
+  background: #e9eff7;
+  border-bottom: 1px solid #d5dfec;
+}
+
+.report-md .md-code-lang {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #3b5578;
+}
+
+.report-md .md-code-block pre {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  background: transparent;
+  color: #1e293b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.report-md .md-code-block pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+/* 轻量语法高亮色板 */
+.report-md .hl-keyword {
+  color: #4f46e5;
+  font-weight: 600;
+}
+
+.report-md .hl-string {
+  color: #059669;
+}
+
+.report-md .hl-key {
+  color: #be123c;
+  font-weight: 500;
+}
+
+.report-md .hl-fn {
+  color: #0284c7;
+}
+
+.report-md .hl-number {
+  color: #d97706;
+}
+
+.report-md .hl-comment {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+/* ── 表格样式（参考图圆角卡片框 + 明显表头/隔行/悬浮颜色区分） ── */
+.report-md .md-table-wrap {
+  overflow-x: auto;
+  margin: 16px 0;
+  border-radius: 12px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+
+.report-md table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  text-align: left;
+}
+
+.report-md.report-md--compact table {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.report-md thead th {
+  background: #e8eef7;
+  color: #1e293b;
+  font-weight: 700;
+  padding: 11px 14px;
+  border-bottom: 1.5px solid #cbd5e1;
+  border-right: 1px solid #d5dfec;
+  white-space: nowrap;
+}
+
+.report-md.report-md--compact thead th {
+  padding: 8px 10px;
+}
+
+.report-md tbody td {
+  padding: 11px 14px;
+  color: #334155;
+  border-bottom: 1px solid #dde4ee;
+  border-right: 1px solid #e5ebf3;
+  vertical-align: top;
+}
+
+.report-md.report-md--compact tbody td {
+  padding: 7px 10px;
+}
+
+/* 首列轻微加粗，增强表格横向扫读定位 */
+.report-md tbody td:first-child {
+  font-weight: 600;
+  color: #111827;
+  white-space: nowrap;
+}
+
+.report-md thead th:last-child,
+.report-md tbody td:last-child {
+  border-right: none;
+}
+
+.report-md tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* 明显区分的斑马纹与悬浮高亮 */
+.report-md tbody tr:nth-child(odd) {
+  background: #ffffff;
+}
+
+.report-md tbody tr:nth-child(even) {
+  background: #f3f6fb;
+}
+
+.report-md tbody tr:hover {
+  background: #e7f0ff;
+  transition: background-color 0.15s ease;
+}
+
+/* 表格内的行内代码胶囊：自然换行、不撑破单元格 */
+.report-md td .md-code {
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 7px;
+  margin: 2px 2px 2px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── 链接与分隔线、图片 ── */
+.report-md a {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.report-md a:hover {
+  text-decoration: underline;
+}
+
+.report-md hr {
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  margin: 20px 0;
+}
+
+.report-md img {
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+/* ── 对话气泡变体（ChatView 专用：段落节奏更紧凑，首列允许换行避免长项目名撑宽表格） ── */
+.report-md.report-md--chat {
+  font-size: 14px;
+  line-height: 1.72;
+}
+
+.report-md.report-md--chat p {
+  margin: 6px 0;
+}
+
+.report-md.report-md--chat h1 {
+  font-size: 17px;
+  margin: 10px 0 12px;
+  padding-bottom: 6px;
+}
+
+.report-md.report-md--chat h2 {
+  font-size: 15px;
+  margin: 16px 0 8px;
+}
+
+.report-md.report-md--chat h3 {
+  font-size: 14px;
+  margin: 12px 0 6px;
+}
+
+.report-md.report-md--chat .md-table-wrap {
+  margin: 12px 0;
+}
+
+.report-md.report-md--chat tbody td:first-child {
+  white-space: normal;
+}

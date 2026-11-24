@@ -243,37 +243,11 @@ public class SessionService {
     }
 
     /**
-     * 从消息链提取最终回答：倒序找第一个实质性 AssistantMessage（≥100 字符或含
-     * markdown 结构 #/|/http），跳过"好的/明白了"类收尾短回复；找不到则回退最后一个非空。
+     * 从消息链提取最终回答（口径 = 内核公共工具 AnswerExtractor，与监控中心终答同源——
+     * 监控中心自有表方案 §4.3：换口径只改一处）。
      */
     private String extractAnswer(List<Message> messages) {
-        if (messages == null || messages.isEmpty()) {
-            return "";
-        }
-        String lastNonBlank = "";
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            Message msg = messages.get(i);
-            if (msg instanceof AssistantMessage am) {
-                String text = am.getText();
-                if (text != null && !text.isBlank()) {
-                    if (lastNonBlank.isEmpty()) {
-                        lastNonBlank = text;
-                    }
-                    if (isSubstantial(text)) {
-                        return text;
-                    }
-                }
-            }
-        }
-        return lastNonBlank;
-    }
-
-    /** 实质性报告判定：够长，或带 markdown 结构（标题/表格/链接） */
-    private static boolean isSubstantial(String text) {
-        if (text.length() >= 100) {
-            return true;
-        }
-        return text.contains("#") || text.contains("|") || text.contains("http");
+        return com.llmetor.miniagentx.utils.AnswerExtractor.extract(messages);
     }
 
     /**

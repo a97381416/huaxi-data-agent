@@ -16,7 +16,8 @@ import com.llmetor.miniagentx.model.ThinkingMode;
 import com.llmetor.miniagentx.model.think.ThinkTagParser;
 import com.llmetor.miniagentx.tools.search.DeferredToolRegistry;
 import com.llmetor.miniagentx.tools.search.ToolSearchTool;
-import com.llmetor.miniagentx.trace.TraceManager;
+import com.llmetor.miniagentx.trace.TraceCollector;
+import com.llmetor.miniagentx.utils.AnswerExtractor;
 import com.llmetor.miniagentx.utils.JsonRepairUtil;
 import com.llmetor.miniagentx.utils.MessageTextRenderer;
 import com.llmetor.miniagentx.utils.SnowflakeIdGenerator;
@@ -88,7 +89,7 @@ public class AgentLoopExecutor {
     private final String thinkingOffParam;
     private final AgentTaskManager taskManager;
     private final AgentxSessionStore sessionStore;   // null=不落库
-    private final TraceManager traceManager;         // null=不审计
+    private final TraceCollector traceCollector;     // null=不审计（TraceCollector SPI：旧 TraceManager / 组合双写）
     private final PauseStateStore stateStore;        // null=中断不存快照
     private final MessageJsonSerializer serializer = new MessageJsonSerializer();
     private final ToolCallExecutor toolExecutor = new ToolCallExecutor();
@@ -145,11 +146,11 @@ public class AgentLoopExecutor {
     public AgentLoopExecutor(ChatModel chatModel, String instructions, List<ToolCallback> tools,
                              int maxRounds, int maxRetries, long retryIntervalMs,
                              ThinkingMode thinkingMode, AgentTaskManager taskManager,
-                             AgentxSessionStore sessionStore, TraceManager traceManager,
+                             AgentxSessionStore sessionStore, TraceCollector traceCollector,
                              PauseStateStore stateStore,
                              String query, RunnableParams params) {
         this(chatModel, instructions, tools, maxRounds, maxRetries, retryIntervalMs, thinkingMode,
-                taskManager, sessionStore, traceManager, stateStore, query, params, null, null,
+                taskManager, sessionStore, traceCollector, stateStore, query, params, null, null,
                 null, null, null, null, null);
     }
 
@@ -157,12 +158,12 @@ public class AgentLoopExecutor {
     public AgentLoopExecutor(ChatModel chatModel, String instructions, List<ToolCallback> tools,
                              int maxRounds, int maxRetries, long retryIntervalMs,
                              ThinkingMode thinkingMode, AgentTaskManager taskManager,
-                             AgentxSessionStore sessionStore, TraceManager traceManager,
+                             AgentxSessionStore sessionStore, TraceCollector traceCollector,
                              PauseStateStore stateStore,
                              String query, RunnableParams params,
                              PauseState resumeState, String resumeQuery) {
         this(chatModel, instructions, tools, maxRounds, maxRetries, retryIntervalMs, thinkingMode,
-                taskManager, sessionStore, traceManager, stateStore, query, params,
+                taskManager, sessionStore, traceCollector, stateStore, query, params,
                 resumeState, resumeQuery, null, null, null, null, null);
     }
 
@@ -176,7 +177,7 @@ public class AgentLoopExecutor {
     public AgentLoopExecutor(ChatModel chatModel, String instructions, List<ToolCallback> tools,
                              int maxRounds, int maxRetries, long retryIntervalMs,
                              ThinkingMode thinkingMode, AgentTaskManager taskManager,
-                             AgentxSessionStore sessionStore, TraceManager traceManager,
+                             AgentxSessionStore sessionStore, TraceCollector traceCollector,
                              PauseStateStore stateStore,
                              String query, RunnableParams params,
                              PauseState resumeState, String resumeQuery,
@@ -200,7 +201,7 @@ public class AgentLoopExecutor {
         this.thinkingOffParam = thinkingOffParam == null || thinkingOffParam.isBlank() ? null : thinkingOffParam.trim();
         this.taskManager = taskManager;
         this.sessionStore = sessionStore;
-        this.traceManager = traceManager;
+        this.traceCollector = traceCollector;
         this.stateStore = stateStore;
         this.query = query;
         this.params = params;
@@ -277,6 +278,11 @@ public class AgentLoopExecutor {
         if (sessionStore != null) {
             // 存对话表agentx_conversation
             sessionStore.initConversation(SnowflakeIdGenerator.nextId(),conversationId(), sessionId, params.getUserId(), query);
+        }
+        // 监控中心挂点：提问开始（一问一行；恢复执行走 initMessagesFromResume 不回调，
+        // 沿用原请求已建的 session 行，避免 seq 重复建行）
+        if (traceCollector != null) {
+            traceCollector.openSession(sessionId, conversationId(), params.getUserId(), query);
         }
         // Fix B：从历史恢复延迟工具发现态（多轮续问与 resume 同样适用）
         restoreDiscoveredToolsFromHistory();
@@ -1056,14 +1062,23 @@ public class AgentLoopExecutor {
         if (!persisted.compareAndSet(false, true)) {
             return;
         }
-        if (sessionStore == null) {
-            return;
+        if (sessionStore != null) {
+            try {
+                // original 视图从历史条数(即本轮 user 消息)起追加（原始链不被压缩污染）；working 全量替换
+                sessionStore.persistTerminal(conversationId(), sessionId, status, originalChain, messages, historySize);
+            } catch (Exception e) {
+                log.error("终态落库失败: convId={}, status={}", conversationId(), status, e);
+            }
         }
-        try {
-            // original 视图从历史条数(即本轮 user 消息)起追加（原始链不被压缩污染）；working 全量替换
-            sessionStore.persistTerminal(conversationId(), sessionId, status, originalChain, messages, historySize);
-        } catch (Exception e) {
-            log.error("终态落库失败: convId={}, status={}", conversationId(), status, e);
+        // 监控中心挂点：提问终态（completed 才提取最终回答，口径 = AnswerExtractor，与聊天回放同源）
+        if (traceCollector != null) {
+            String answer = "completed".equals(status) ? AnswerExtractor.extract(originalChain) : null;
+            try {
+                traceCollector.closeSession(sessionId, conversationId(), status, answer);
+            } catch (Exception e) {
+                log.warn("监控 closeSession 失败（不影响主流程）: convId={}, sessionId={}, status={}",
+                        conversationId(), sessionId, status, e);
+            }
         }
     }
 
@@ -1167,12 +1182,12 @@ public class AgentLoopExecutor {
     }
 
     private void traceRound(RoundState rs, String output, String think, boolean success, String error) {
-        if (traceManager == null) {
+        if (traceCollector == null) {
             return;
         }
         long thinkDurationMs = rs.thinkStartAtMs > 0L
                 ? Math.max(0L, rs.thinkEndAtMs - rs.thinkStartAtMs) : 0L;
-        traceManager.trace(sessionId, conversationId(), round,
+        traceCollector.trace(sessionId, conversationId(), round,
                 rs.inputSnapshot, output, think,
                 rs.roundPromptTokens, rs.roundCompletionTokens,
                 System.currentTimeMillis() - rs.startedAt, thinkDurationMs, success, error);

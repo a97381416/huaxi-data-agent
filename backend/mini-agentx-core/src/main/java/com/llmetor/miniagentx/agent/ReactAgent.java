@@ -13,6 +13,7 @@ import com.llmetor.miniagentx.model.PauseState;
 import com.llmetor.miniagentx.model.RunnableParams;
 import com.llmetor.miniagentx.model.ThinkingMode;
 import com.llmetor.miniagentx.tools.search.DeferredToolRegistry;
+import com.llmetor.miniagentx.trace.TraceCollector;
 import com.llmetor.miniagentx.trace.TraceManager;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.tool.ToolCallback;
@@ -54,7 +55,8 @@ public class ReactAgent {
     private final String thinkingOffParam;
     private final AgentTaskManager taskManager;
     private final AgentxSessionStore sessionStore;
-    private final TraceManager traceManager;
+    /** trace 采集 SPI（旧 TraceManager 或组合双写 Collector） */
+    private final TraceCollector traceCollector;
     private final PauseStateStore stateStore;
     /** M7：延迟工具注册表（null = 不启用 tool_search） */
     private final DeferredToolRegistry deferredTools;
@@ -78,12 +80,12 @@ public class ReactAgent {
         if (b.dataSource != null) {
             // 允许外部注入共享实例（每请求重建 Agent 时避免重复建表/重复包装 JdbcTemplate）
             this.sessionStore = b.sessionStore != null ? b.sessionStore : new AgentxSessionStore(b.dataSource);
-            this.traceManager = b.enableTrace
-                    ? (b.traceManager != null ? b.traceManager : new TraceManager(b.dataSource))
+            this.traceCollector = b.enableTrace
+                    ? (b.traceCollector != null ? b.traceCollector : new TraceManager(b.dataSource))
                     : null;
         } else {
             this.sessionStore = null;
-            this.traceManager = null;
+            this.traceCollector = null;
         }
         this.stateStore = b.stateStore != null ? b.stateStore : new InMemoryPauseStateStore();
         this.deferredTools = b.deferredTools;
@@ -138,7 +140,7 @@ public class ReactAgent {
     private AgentLoopExecutor newExecutor(String query, RunnableParams params) {
         return new AgentLoopExecutor(chatModel, instructions, tools,
                 maxRounds, maxRetries, retryIntervalMs, thinkingMode,
-                taskManager, sessionStore, traceManager, stateStore,
+                taskManager, sessionStore, traceCollector, stateStore,
                 query, params, null, null,
                 deferredTools, compactor, offloadStore, loopGuardConfig, thinkingOffParam);
     }
@@ -150,7 +152,7 @@ public class ReactAgent {
                 : RunnableParams.of(state.getConversationId());
         return new AgentLoopExecutor(chatModel, instructions, tools,
                 maxRounds, maxRetries, retryIntervalMs, thinkingMode,
-                taskManager, sessionStore, traceManager, stateStore,
+                taskManager, sessionStore, traceCollector, stateStore,
                 state.getQuery() == null ? "" : state.getQuery(), params,
                 state, resumeQuery, deferredTools, compactor, offloadStore, loopGuardConfig, thinkingOffParam);
     }
@@ -204,7 +206,7 @@ public class ReactAgent {
         private boolean enableTrace = true;
         private PauseStateStore stateStore;
         private AgentxSessionStore sessionStore;
-        private TraceManager traceManager;
+        private TraceCollector traceCollector;
         private DeferredToolRegistry deferredTools;
         private boolean enableCompaction = true;
         private ContextPolicy contextPolicy = ContextPolicy.defaults();
@@ -271,7 +273,16 @@ public class ReactAgent {
 
         /** 注入共享 trace 管理（需 enableTrace=true；用于每请求重建 Agent 的场景） */
         public Builder traceManager(TraceManager traceManager) {
-            this.traceManager = traceManager;
+            this.traceCollector = traceManager;
+            return this;
+        }
+
+        /**
+         * 注入 trace 采集 SPI（需 enableTrace=true）：传 {@link TraceManager} 走旧轨单写，
+         * 传 {@code CompositeTraceCollector} 实现旧轨+监控表双写（监控中心自有表方案 §4.1）。
+         */
+        public Builder traceCollector(TraceCollector traceCollector) {
+            this.traceCollector = traceCollector;
             return this;
         }
 

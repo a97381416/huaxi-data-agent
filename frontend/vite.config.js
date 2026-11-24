@@ -19,6 +19,15 @@ export default defineConfig({
       '/sys': { target: 'http://localhost:8889', changeOrigin: true },
       '/agent': { target: 'http://localhost:8889', changeOrigin: true },
       '/session': { target: 'http://localhost:8889', changeOrigin: true },
+      // SPA 路由 /monitor*（监控中心页面）与监控 API /monitor/* 同前缀：
+      // 浏览器整页导航（Accept: text/html）放行给 SPA index.html，axios 接口请求照常代理后端
+      '/monitor': {
+        target: 'http://localhost:8889',
+        changeOrigin: true,
+        bypass(req) {
+          if ((req.headers.accept || '').includes('text/html')) return '/index.html'
+        }
+      },
       '/api': { target: 'http://localhost:8889', changeOrigin: true },
       // M-E1：业务文件直传主平台（/infra/file/upload 等 /admin-api/*）。
       // 默认指向联调主后端（与 agent 后端 local profile 的 action base-url 一致）；

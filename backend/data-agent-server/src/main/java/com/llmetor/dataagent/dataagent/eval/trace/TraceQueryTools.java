@@ -9,11 +9,14 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import javax.sql.DataSource;
 
 /**
- * 诊断 Agent 的 trace 查询工具集（M8）：通读全程 / 查一轮 / 查首现。
+ * 诊断 Agent 的 trace 查询工具集（M8）：通读全程 / 查一轮 / 查首现 / 检索提问。
  *
- * <p>三个工具模拟人工排查路径：先 traceOverview 通读全程锁定可疑轮次，再 traceRound
- * 还原可疑轮现场（失败轮只有这里能看到），配合 traceFirstAppear 以错误值反查源头。
- * 查询逻辑都在 {@link TraceQueryService}。
+ * <p>四个工具模拟人工排查路径：不知道任何 ID 时先 searchQuestions 按问题原文找到那次提问；
+ * 再 traceOverview 通读全程锁定可疑轮次，traceRound 还原可疑轮现场（失败轮只有这里能看到），
+ * 配合 traceFirstAppear 以错误值反查源头。查询逻辑都在 {@link TraceQueryService}。
+ *
+ * <p>术语：一次提问（session）= monitor_session 一行（含最终回答）；一轮 LLM 调用 =
+ * monitor_trace 一行（traceRound 的查询单位）。
  *
  * <p>只给诊断 Agent 注入（{@code AgentDiagnoseService}），不进 DodoAgent 工具清单——
  * 被测 Agent 不该看到自己的审计数据。
@@ -26,12 +29,23 @@ public class TraceQueryTools {
         this.traceQueryService = traceQueryService;
     }
 
+    /** 工具零：按问题原文检索提问，委托 {@link TraceQueryService#searchQuestions}。 */
+    @Tool(name = "searchQuestions",
+            description = "按关键词模糊检索历史提问（不知道任何 ID 时先调这个）。返回每条命中提问的"
+                    + " conversation_id、session 编号、问题原文、最终回答摘要与状态。"
+                    + "拿到 conversation_id 后再调 traceOverview 通读执行过程。")
+    public String searchQuestions(
+            @ToolParam(description = "问题原文关键词，如字段名、表名、指标名、业务词")
+            String keyword) {
+        return traceQueryService.searchQuestions(keyword);
+    }
+
     /** 工具一：通读全程，委托 {@link TraceQueryService#overview}。 */
     @Tool(name = "traceOverview",
-            description = "通读被测 Agent 的完整执行过程（先调这个）。返回：1) 窗口内每次对话的"
-                    + " session 编号、用户、问题和状态；2) 轮次概览（只列失败轮及报错、上下文压缩点，"
-                    + "未列出的轮次均成功）；3) 消息记录预览（每行标 item 序号，assistant 行标注 round，"
-                    + "正文截断、省略模型思考，按执行顺序）。")
+            description = "通读被测 Agent 的完整执行过程（拿到 conversation_id 后先调这个）。返回："
+                    + "1) 窗口内每次提问（Q序号 + session 编号 + 用户 + 状态 + 问题 + 最终回答摘要）；"
+                    + "2) 轮次概览（只列失败轮及报错、上下文压缩点，未列出的轮次均成功）；"
+                    + "3) 消息记录预览（每行标 item 序号，assistant 行标注 round，正文截断、省略模型思考）。")
     public String traceOverview(
             @ToolParam(description = "被测会话窗口的 conversation_id")
             String conversationId) {

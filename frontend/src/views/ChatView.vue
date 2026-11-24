@@ -304,7 +304,7 @@
                   />
 
                   <!-- 正文 markdown -->
-                  <div v-else-if="entry.block.item.type === 'text' && entry.block.item.content" class="chat-md" :class="{ 'chat-md--placeholder': entry.block.item.placeholder }" v-html="renderMd(entry.block.item.content)"></div>
+                  <div v-else-if="entry.block.item.type === 'text' && entry.block.item.content" class="chat-md report-md report-md--chat" :class="{ 'chat-md--placeholder': entry.block.item.placeholder }" v-html="renderMd(entry.block.item.content)"></div>
                 </template>
 
                 <span v-if="msg.streaming && msg.timeline.length && !hasTailText(msg)" class="chat-cursor">▍</span>
@@ -702,7 +702,8 @@ import {
 import { listChatModels } from '@/api/model'
 import { uploadToMainPlatform } from '@/api/mainPlatform'
 import { deleteFile, filePreviewUrl, isImageType, uploadFile } from '@/api/file'
-import md from '@/utils/markdown'
+import { renderReportMarkdown } from '@/utils/reportMarkdown'
+import '@/assets/report-markdown.css'
 import TimelineNav from '@/components/TimelineNav.vue'
 
 /** 单轮最多上传文件数（对齐后端 data-agent.file.max-count） */
@@ -1776,7 +1777,10 @@ function formatConvTime(isoStr) {
 
 // ── 渲染辅助 ──
 function renderMd(text) {
-  return md.render(text)
+  return renderReportMarkdown(text, {
+    stripHeaderMeta: false,
+    enableRoundLinks: false
+  })
 }
 
 function completedCount(items) {
@@ -2753,40 +2757,11 @@ span.pg-badge {
   margin-top: 8px;
 }
 
-/* ── markdown 正文：浅色系、斑马纹表格、浅灰代码块 ── */
-.chat-md {
-  font-size: 14px;
-  line-height: 1.7;
-  color: #374151;
-  word-break: break-word;
-}
-
+/* ── markdown 正文（基础排版/语义代码分色/高辨识度表格复用 report-markdown.css） ── */
 /* 系统占位进度行（模型未写中间轮叙述时的兜底文案）：视觉弱化，与模型正文区分 */
-.chat-md--placeholder {
+.chat-md.chat-md--placeholder {
   color: #9ca3af;
   font-size: 13px;
-}
-
-.chat-md :deep(p) {
-  margin: 6px 0;
-}
-
-.chat-md :deep(h1),
-.chat-md :deep(h2),
-.chat-md :deep(h3) {
-  margin: 14px 0 8px;
-  font-size: 15px;
-  font-weight: 600;
-  color: #111827;
-}
-
-.chat-md :deep(strong) {
-  color: #111827;
-  font-weight: 600;
-}
-
-.chat-md :deep(a) {
-  color: #2563eb;
 }
 
 /* M6 图表图片（mcp-echarts 外链）：约束在气泡宽度内不撑破布局，点击经包层 <a> 看原图 */
@@ -2796,91 +2771,8 @@ span.pg-badge {
   max-width: 100%;
   height: auto;
   margin: 10px 0;
-  border: 1px solid #f3f4f6;
+  border: 1px solid #e2e8f0;
   border-radius: 10px;
-}
-
-/* 宽表横向滚动由 markdown.js 包的 .md-table-wrap 承担；table 保持原生 display:table，
-   width:100% 为「最小宽度」语义——窄表撑满气泡，宽表自动变宽由 wrap 滚动 */
-.chat-md :deep(.md-table-wrap) {
-  overflow-x: auto;
-  margin: 10px 0;
-}
-
-.chat-md :deep(table) {
-  width: 100%;
-  border-collapse: collapse;
-  border: 1px solid #f3f4f6;
-  border-radius: 8px;
-  font-size: 13px;
-}
-
-.chat-md :deep(th) {
-  background: #f9fafb;
-  padding: 8px 12px;
-  text-align: left;
-  font-weight: 600;
-  color: #4b5563;
-  border-bottom: 1px solid #e5e7eb;
-  white-space: nowrap;
-}
-
-.chat-md :deep(td) {
-  padding: 8px 12px;
-  color: #4b5563;
-  border-bottom: 1px solid #f3f4f6;
-}
-
-.chat-md :deep(tbody tr:nth-child(even)) {
-  background: #f9fafb;
-}
-
-.chat-md :deep(tbody tr:last-child td) {
-  border-bottom: none;
-}
-
-.chat-md :deep(code) {
-  background: #f3f4f6;
-  color: #1f2937;
-  padding: 2px 6px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-.chat-md :deep(pre) {
-  background: #f3f4f6;
-  color: #1f2937;
-  padding: 12px 14px;
-  border-radius: 10px;
-  overflow-x: auto;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.chat-md :deep(pre code) {
-  background: transparent;
-  color: inherit;
-  padding: 0;
-}
-
-.chat-md :deep(blockquote) {
-  margin: 8px 0;
-  padding: 2px 12px;
-  border-left: 2px solid #e5e7eb;
-  color: #6b7280;
-}
-
-.chat-md :deep(ul),
-.chat-md :deep(ol) {
-  padding-left: 20px;
-  margin: 6px 0;
-}
-
-.chat-md :deep(hr) {
-  border: none;
-  border-top: 1px solid #f3f4f6;
-  margin: 12px 0;
 }
 
 .chat-cursor {

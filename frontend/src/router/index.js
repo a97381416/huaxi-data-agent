@@ -71,6 +71,43 @@ const routes = [
         component: () => import('@/views/EvalReportView.vue'),
         meta: { title: '评测报告', adminOnly: true }
       },
+      {
+        // 监控中心（融入主框架的普通菜单页：仅页内二级页签 + Ctrl+K 搜索，无独立顶栏/侧栏）
+        path: 'monitor',
+        component: () => import('@/views/monitor/MonitorShell.vue'),
+        children: [
+          {
+            path: '',
+            name: 'monitor-overview',
+            component: () => import('@/views/monitor/MonitorOverview.vue'),
+            meta: { title: '监控总览', adminOnly: true }
+          },
+          {
+            path: 'traces',
+            name: 'monitor-traces',
+            component: () => import('@/views/monitor/TraceListView.vue'),
+            meta: { title: '会话跟踪', adminOnly: true }
+          },
+          {
+            path: 'traces/:conversationId',
+            name: 'monitor-trace-detail',
+            component: () => import('@/views/monitor/TraceDetailView.vue'),
+            meta: { title: '会话详情', adminOnly: true }
+          },
+          {
+            path: 'reports',
+            name: 'monitor-reports',
+            component: () => import('@/views/monitor/ReportCenterView.vue'),
+            meta: { title: '报告中心', adminOnly: true }
+          },
+          {
+            path: 'rules',
+            name: 'monitor-rules',
+            component: () => import('@/views/monitor/RuleManageView.vue'),
+            meta: { title: '规则管理', adminOnly: true }
+          }
+        ]
+      },
       ...testMenuRoutes(),
       {
         path: 'test',

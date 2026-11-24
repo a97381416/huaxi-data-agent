@@ -22,12 +22,12 @@
           <router-link
             :to="t.path"
             class="no-underline relative flex h-14 items-center gap-1.5 px-3.5 text-sm transition-colors duration-200"
-            :class="route.path === t.path ? 'font-semibold text-gray-900' : 'font-medium text-gray-500 hover:text-gray-900'"
+            :class="isTabActive(t.path) ? 'font-semibold text-gray-900' : 'font-medium text-gray-500 hover:text-gray-900'"
           >
             <span>{{ t.label }}</span>
             <!-- 选中底部指示条 -->
             <span
-              v-if="route.path === t.path"
+              v-if="isTabActive(t.path)"
               class="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-blue-600"
             ></span>
           </router-link>
@@ -55,7 +55,11 @@
 
     <el-main
       class="layout-main"
-      :class="{ 'layout-main--flush': isFlushRoute, 'layout-main--chat': route.path === '/chat' }"
+      :class="{
+        'layout-main--flush': isFlushRoute,
+        'layout-main--chat': route.path === '/chat',
+        'layout-main--monitor': route.path.startsWith('/monitor')
+      }"
     >
       <router-view />
     </el-main>
@@ -87,12 +91,21 @@ const navTabs = computed(() => {
     tabs.push({ path: '/mcp', label: 'MCP 服务' })
     tabs.push({ path: '/models', label: '模型管理' })
     // tabs.push({ path: '/eval', label: '评测报告' })
+    tabs.push({ path: '/monitor', label: '监控中心' })
   }
   return tabs
 })
 
-/** 全出血页面（去外边距铺满）：对话工作台 + 管理页表格 */
-const isFlushRoute = computed(() => ['/chat', '/mcp', '/skills', '/models'].includes(route.path))
+/** Tab 选中态：精确匹配；监控中心子页（/monitor/*）都算选中 */
+function isTabActive(path) {
+  if (path === '/monitor') return route.path.startsWith('/monitor')
+  return route.path === path
+}
+
+/** 全出血页面（去外边距铺满）：对话工作台 + 管理页表格 + 监控中心（全高页，滚动发生在页内） */
+const isFlushRoute = computed(
+  () => ['/chat', '/mcp', '/skills', '/models'].includes(route.path) || route.path.startsWith('/monitor')
+)
 
 // 进入主框架时刷新一次用户信息（M0 验收：/auth/me 返回角色/部门/档案）；
 // 无 token（未登录被守卫重定向前的短暂挂载）不发请求，避免 401 toast 噪音
@@ -139,6 +152,12 @@ async function onCommand(cmd) {
 
 /* 智能对话页：外层禁止滚动（高度由 flex 精确分配，滚动发生在页面内部消息流/侧栏） */
 .layout-main--chat {
+  overflow: hidden;
+}
+
+/* 监控中心：主框架内全高页（二级页签条+页内自滚动），外层去边距并禁止滚动 */
+.layout-main--monitor {
+  padding: 0;
   overflow: hidden;
 }
 

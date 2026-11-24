@@ -18,13 +18,17 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * trace 查询服务：诊断 Agent 三个查询工具的底层实现（M8，复刻 dodo-agentx TraceQueryService）。
+ * trace 查询服务：诊断 Agent 查询工具的底层实现（M8，复刻 dodo-agentx TraceQueryService）。
  *
  * <p>设计原则：模拟人类排查问题的操作，<b>分层给原文</b>——通读只给截断预览（省模型思考），
  * 深查才给某轮完整入参出参，反查只给关键词命中片段。服务端只取原文，不做解析/拼接/摘要。
  *
- * <p>数据源三张表：agentx_conversation（调用边界）/ agentx_session（original_messages 消息链，
- * 诊断读真相不用压缩后的 working）/ agentx_trace（每轮 LLM 调用入参出参）。
+ * <p>数据源（监控中心自有表方案 §5/§6，D6 读模式）：
+ * agentx_monitor_session（一次提问一行，含 answer 终答）/ agentx_monitor_trace（每轮 LLM
+ * 调用瘦索引，按 session_id+round 唯一）；明细大字段仍走 agentx_trace_payload（trace_id 复用）；
+ * 消息链真相 firstAppear 与消息预览<b>只读系统表 agentx_session original_messages</b>（不动）。
+ *
+ * <p>术语统一：一次提问（session）= monitor_session 一行；一轮 = monitor_trace 一行。
  */
 @Slf4j
 public class TraceQueryService {
@@ -58,35 +62,41 @@ public class TraceQueryService {
      */
     public String overview(String conversationId) {
         List<Map<String, Object>> convs = jdbc.queryForList(
-                "SELECT session_id, user_id, question, status FROM agentx_conversation " +
-                        "WHERE conversation_id = ? ORDER BY created_at ASC, id ASC", conversationId);
+                "SELECT session_id, seq, user_id, question, status, answer FROM agentx_monitor_session " +
+                        "WHERE conversation_id = ? ORDER BY seq ASC", conversationId);
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "SELECT session_id, item_index, state_data FROM agentx_session " +
                         "WHERE conversation_id = ? AND state_key = ? ORDER BY item_index ASC",
                 conversationId, STATE_KEY_ORIGINAL);
         if (convs.isEmpty() && rows.isEmpty()) {
             return "未找到 conversation_id=" + conversationId
-                    + " 的任何记录（会话不存在或已被删除）。请核对 conversation_id。";
+                    + " 的任何记录（会话不存在、已被删除或早于监控表上线）。请核对 conversation_id。";
         }
 
         StringBuilder sb = new StringBuilder();
         sb.append("# 执行过程全貌 conversation_id=").append(conversationId).append('\n');
 
-        sb.append("\n## 窗口内对话（每次提问一行）\n");
+        sb.append("\n## 窗口内提问（一次提问一行：Q序号 + session 编号 + 状态 + 最终回答摘要）\n");
         for (Map<String, Object> c : convs) {
-            sb.append("- session ").append(c.get("session_id"))
+            sb.append("- Q").append(c.get("seq"))
+                    .append(" session ").append(c.get("session_id"))
                     .append(" | 用户 ").append(c.get("user_id"))
                     .append(" | 状态 ").append(c.get("status"))
                     .append(" | 问题：").append(oneLine(str(c.get("question")))).append('\n');
+            String answer = str(c.get("answer"));
+            if (!answer.isEmpty()) {
+                sb.append("  最终回答：").append(oneLine(answer)).append('\n');
+            }
         }
 
         sb.append("\n## 轮次概览（只列失败轮与上下文压缩点，未列出的轮次均成功）\n");
         List<TraceRoundSummary> rounds = jdbc.query(
-                "SELECT session_id, round, success, error_message, LENGTH(input_data) AS input_chars " +
-                        "FROM agentx_trace WHERE conversation_id = ? ORDER BY session_id, round",
+                "SELECT session_id, round, success, error_message, " +
+                        "COALESCE(input_chars, 0) AS input_chars " +
+                        "FROM agentx_monitor_trace WHERE conversation_id = ? ORDER BY session_id, round",
                 (rs, i) -> new TraceRoundSummary(rs.getString("session_id"), rs.getInt("round"),
                         (Integer) rs.getObject("success"), rs.getString("error_message"),
-                        (Long) rs.getObject("input_chars")),
+                        toLong(rs.getObject("input_chars"))),
                 conversationId);
         Map<String, List<TraceRoundSummary>> bySession = new LinkedHashMap<>();
         for (TraceRoundSummary r : rounds) {
@@ -173,7 +183,7 @@ public class TraceQueryService {
     }
 
     /**
-     * 工具二：查一轮（按 session_id + round 查 agentx_trace）。
+     * 工具二：查一轮（按 session_id + round 查 agentx_monitor_trace，大字段取自 payload 表）。
      * 返回该轮 input_data/output_data 原文。input_data 默认省略 tools 工具定义
      * （本内核 input_data 只存消息序列、天然无 tools 字段，此渲染逻辑保留作契约兼容），
      * includeTools=true 才附带。失败轮的详情只有这里能看到。
@@ -183,8 +193,10 @@ public class TraceQueryService {
             return "参数错误：sessionId 必须是会话概览里的 session 编号，round 从 1 开始。";
         }
         List<Map<String, Object>> list = jdbc.queryForList(
-                "SELECT duration_ms, success, error_message, input_data, output_data " +
-                        "FROM agentx_trace WHERE session_id = ? AND round = ? LIMIT 1",
+                "SELECT t.duration_ms, t.success, t.error_message, " +
+                        "p.input_data, p.output_data " +
+                        "FROM agentx_monitor_trace t LEFT JOIN agentx_trace_payload p ON p.trace_id = t.id " +
+                        "WHERE t.session_id = ? AND t.round = ? LIMIT 1",
                 sessionId, round);
         if (list.isEmpty()) {
             return "未找到 session_id=" + sessionId + " round=" + round
@@ -205,6 +217,56 @@ public class TraceQueryService {
                 .append("\n\n## output_data（模型本轮输出原文）\n")
                 .append(str(t.get("output_data")))
                 .append('\n');
+        return sb.toString();
+    }
+
+    /**
+     * 按 trace_id 查一轮（监控中心单轮明细复用本渲染契约，M2）：先反查 session/round，
+     * 再走 {@link #roundDetail} 同一渲染（payload join + tools 省略约定）。
+     * trace_id 不存在返回 null，由调用方决定 404。
+     */
+    public String roundDetailById(long traceId, Boolean includeTools) {
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT session_id, round FROM agentx_monitor_trace WHERE id = ? LIMIT 1", traceId);
+        if (rows.isEmpty()) {
+            return null;
+        }
+        return roundDetail(str(rows.get(0).get("session_id")),
+                ((Number) rows.get(0).get("round")).intValue(), includeTools);
+    }
+
+    /**
+     * 工具四：按关键词模糊检索历史提问（监控中心自有表方案 §6）：每问一行命中项——
+     * conversation_id + session_id + question + 最终回答摘要 + 状态。解决
+     * "用户只记得问题原文、不知道任何 ID" 的入口问题（验收第 1 步闭环）。
+     */
+    public String searchQuestions(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return "参数错误：keyword 不能为空。";
+        }
+        String kw = keyword.trim().toLowerCase();
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT conversation_id, session_id, seq, question, answer, status, created_at " +
+                        "FROM agentx_monitor_session WHERE LOWER(question) LIKE ? " +
+                        "ORDER BY created_at DESC LIMIT 10", "%" + kw + "%");
+        if (rows.isEmpty()) {
+            return "没有提问包含关键词「" + keyword + "」。可换更短的词（如字段名、表名、指标名）再试。";
+        }
+        StringBuilder sb = new StringBuilder("# 提问检索「").append(keyword).append("」（共 ")
+                .append(rows.size()).append(" 条，每条一次提问）\n\n");
+        for (Map<String, Object> r : rows) {
+            sb.append("- Q").append(r.get("seq"))
+                    .append(" | conversation_id ").append(r.get("conversation_id"))
+                    .append(" | session ").append(r.get("session_id"))
+                    .append(" | 状态 ").append(r.get("status"))
+                    .append(" | 时间 ").append(r.get("created_at"))
+                    .append("\n  问题：").append(oneLine(str(r.get("question")))).append('\n');
+            String answer = str(r.get("answer"));
+            if (!answer.isEmpty()) {
+                sb.append("  最终回答：").append(oneLine(answer)).append('\n');
+            }
+        }
+        sb.append("\n深查某个提问的执行过程：用 traceOverview(conversation_id) 通读，再用 traceRound(session_id, round) 看轮次原文。");
         return sb.toString();
     }
 
@@ -359,6 +421,11 @@ public class TraceQueryService {
 
     private static String str(Object value) {
         return value == null ? "" : String.valueOf(value);
+    }
+
+    /** PG 的 LENGTH()/int4 列 getObject 返回 Integer（MySQL 是 Long），null 语义保持原样 */
+    private static Long toLong(Object value) {
+        return value == null ? null : ((Number) value).longValue();
     }
 
     private static String oneLine(String text) {
