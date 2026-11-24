@@ -153,7 +153,7 @@ public class ToolCallExecutor {
             effectiveArgs = injectToolParams(effectiveArgs, callback, params);
         }
 
-        emit(sink, emitLock, AgentStreamEvent.toolStart(call.name(), call.id(), effectiveArgs));
+        emit(sink, emitLock, AgentStreamEvent.toolStart(call.name(), call.id(), maskSensitiveArgs(effectiveArgs)));
 
         if (callback == null) {
             String err = "{\"error\":\"不存在名为 '" + call.name() + "' 的工具\",\"tool\":\"" + call.name() + "\"}";
@@ -222,6 +222,27 @@ public class ToolCallExecutor {
         } catch (Exception e) {
             log.debug("toolParams 注入失败，保持原参数: {}", e.getMessage());
             return arguments;
+        }
+    }
+
+    /** 对外发射 TOOL_START 时脱敏敏感凭证字段（token/password/secret），防止明文暴露到前端 UI */
+    private String maskSensitiveArgs(String argsJson) {
+        if (argsJson == null || argsJson.isBlank() || !argsJson.contains("\"")) {
+            return argsJson;
+        }
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> map = mapper.readValue(argsJson, Map.class);
+            boolean masked = false;
+            for (String key : List.of("token", "accessToken", "password", "secret", "authorization")) {
+                if (map.containsKey(key) && map.get(key) != null && !String.valueOf(map.get(key)).isBlank()) {
+                    map.put(key, "***");
+                    masked = true;
+                }
+            }
+            return masked ? mapper.writeValueAsString(map) : argsJson;
+        } catch (Exception ignored) {
+            return argsJson;
         }
     }
 

@@ -656,16 +656,20 @@
       </div>
     </section>
 
-    <!-- 右侧：执行计划面板（TodoWrite 参数侧信道 → 会话级 plan 快照，跨轮取最新一份；无计划不渲染整列） -->
-    <aside v-if="activePlan" class="flex w-[300px] shrink-0 flex-col border-l border-gray-100 bg-white">
+    <!-- 右侧：执行计划面板（折叠时释放宽度至 w-11，避免 1280 窄屏挤压中间对话输入框） -->
+    <aside
+      v-if="activePlan"
+      class="flex shrink-0 flex-col border-l border-gray-100 bg-white transition-all duration-200"
+      :class="planCollapsed ? 'w-11 items-center' : 'w-[280px]'"
+    >
       <!-- 面板头：标题 + 领域徽标 + 完成计数 + 折叠开关 -->
-      <div class="flex shrink-0 items-center gap-1.5 border-b border-gray-100 px-4 py-3">
-        <el-icon :size="14" class="text-blue-600"><List /></el-icon>
-        <span class="text-[13px] font-semibold text-gray-700">执行计划</span>
-        <span v-if="activePlan.agentCode" class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600">
+      <div class="flex w-full shrink-0 items-center gap-1.5 border-b border-gray-100 py-3" :class="planCollapsed ? 'justify-center px-1' : 'px-4'">
+        <el-icon v-if="!planCollapsed" :size="14" class="text-blue-600"><List /></el-icon>
+        <span v-if="!planCollapsed" class="text-[13px] font-semibold text-gray-700">执行计划</span>
+        <span v-if="!planCollapsed && activePlan.agentCode" class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600">
           {{ activePlan.agentCode }}
         </span>
-        <span class="ml-auto font-mono text-[11px]" :class="planAllDone ? 'text-emerald-600' : 'text-gray-400'">
+        <span v-if="!planCollapsed" class="ml-auto font-mono text-[11px]" :class="planAllDone ? 'text-emerald-600' : 'text-gray-400'">
           {{ completedCount(planDisplay) }}/{{ activePlan.items.length }}
         </span>
         <button
@@ -2031,28 +2035,59 @@ const vThinkPin = {
   }
 }
 
+/** 工具参数展示脱敏：隐藏 token/userId/tenantId/conversationId 等内部注入字段，子专员参数优先抽 task */
+const HIDDEN_ARG_KEYS = new Set(['token', 'accesstoken', 'password', 'secret', 'authorization', 'userid', 'tenantid', 'conversationid'])
+function sanitizeArgsForDisplay(args) {
+  const raw = (args || '').trim()
+  if (!raw || raw === '{}') return ''
+  try {
+    const obj = JSON.parse(raw)
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+      if (typeof obj.task === 'string' && obj.task.trim()) {
+        return obj.task.replace(/\s+/g, ' ').trim()
+      }
+      const clean = {}
+      for (const [k, v] of Object.entries(obj)) {
+        if (!HIDDEN_ARG_KEYS.has(k.toLowerCase())) clean[k] = v
+      }
+      const keys = Object.keys(clean)
+      if (!keys.length) return ''
+      return JSON.stringify(clean)
+    }
+  } catch {
+    // 非合法 JSON 时回退原文本
+  }
+  return raw.replace(/\s+/g, ' ').trim()
+}
+
 /** 工具参数预览（单行截断；空参/{} 不显示） */
 const ARG_PREVIEW_MAX = 72
 function argPreview(args) {
-  const text = (args || '').replace(/\s+/g, ' ').trim()
-  if (!text || text === '{}') return ''
+  const text = sanitizeArgsForDisplay(args)
+  if (!text) return ''
   return text.length > ARG_PREVIEW_MAX ? text.slice(0, ARG_PREVIEW_MAX) + '…' : text
 }
 
-/** 运行中工具的参数一行滚动尾（同思考尾：钉最右，始终显示"正在写"的最新片段） */
+/** 运行中工具的参数一行滚动尾（优先提取 task/脱敏后的业务参数，避免透出原始 JSON 残片） */
 function liveArgsTail(args) {
-  const text = (args || '').replace(/\s+/g, ' ').trim()
+  const text = sanitizeArgsForDisplay(args)
   if (!text) return ''
   return text.length > THINK_LIVE_TAIL ? '…' + text.slice(-THINK_LIVE_TAIL) : text
 }
 
-/** 运行中工具直播行展开的参数全文（JSON 美化；流式中 JSON 未闭合时原样展示） */
+/** 运行中工具直播行展开的参数全文（脱敏隐藏 token 等系统注入字段） */
 function formatToolArgs(args) {
   const text = unescapeToolText(args || '')
   const trimmed = text.trim()
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     try {
-      return JSON.stringify(JSON.parse(trimmed), null, 2)
+      const parsed = JSON.parse(trimmed)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        for (const k of Object.keys(parsed)) {
+          if (HIDDEN_ARG_KEYS.has(k.toLowerCase())) delete parsed[k]
+        }
+      }
+      return JSON.stringify(parsed, null, 2)
     } catch {
       /* 参数流式传输中，JSON 还没闭合 */
     }

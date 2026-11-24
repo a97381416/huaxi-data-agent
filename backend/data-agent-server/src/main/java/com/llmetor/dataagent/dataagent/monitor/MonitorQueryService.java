@@ -255,7 +255,7 @@ public class MonitorQueryService {
                 "SELECT session_id, seq, user_id, question, answer, answer_chars, answer_trace_id, status, " +
                         "rounds, fail_rounds, duration_ms, prompt_tokens, completion_tokens, created_at, completed_at, " +
                         "detect_status, risk_total, risk_high " +
-                        "FROM agentx_monitor_session WHERE conversation_id = ? ORDER BY seq ASC",
+                        "FROM agentx_monitor_session WHERE conversation_id = ? AND parent_session_id IS NULL ORDER BY seq ASC",
                 (rs, i) -> new ConversationDetailVO.SessionItem(
                         rs.getString("session_id"),
                         rs.getInt("seq"),

@@ -232,18 +232,28 @@ public class AgentLoopExecutor {
     public Flux<AgentStreamEvent> run() {
         // 1、把任务保存起来,onInterrupt(stop中断的时候、会触发这个方法)
         taskManager.registerTask(conversationId(), sink, this::onInterrupt);
-        try {
-            if (resumeState != null) {
-                initMessagesFromResume();
-            } else {
+        if (resumeState != null) {
+            // 恢复通道异步执行：空消息恢复可能同步重放耗时工具（如 SubAgentTool），
+            // 绝不能阻塞 HTTP 线程，确保 SSE 响应头 1ms 内发给前端且实时推送重放事件
+            Schedulers.boundedElastic().schedule(() -> {
+                try {
+                    initMessagesFromResume();
+                    scheduleRound(false);
+                } catch (Exception e) {
+                    log.error("恢复会话初始化失败: convId={}", conversationId(), e);
+                    errorTerminal(e);
+                }
+            });
+        } else {
+            try {
                 initMessages();
+            } catch (Exception e) {
+                taskManager.unregisterTask(conversationId());
+                throw e;
             }
-        } catch (Exception e) {
-            taskManager.unregisterTask(conversationId());
-            throw e;
+            // 执行轮次round
+            scheduleRound(false);
         }
-        // 执行轮次round
-        scheduleRound(false);
 
         return sink.asFlux()
                 .doFinally(sig -> fallbackPersist())
