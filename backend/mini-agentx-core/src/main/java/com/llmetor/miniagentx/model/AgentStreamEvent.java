@@ -56,12 +56,26 @@ public class AgentStreamEvent {
     /** 仅 COMPLETE 携带：LLM 执行轮次数 */
     @JsonProperty("rounds")
     private final Integer rounds;
+    /** M-SA1：子 Agent 归属标识（主 Agent 为 null，JSON 自动省略保持老报文兼容） */
+    private final String agentCode;
+    /** M-SA1：父级调用该子 Agent 的 toolCallId（主 Agent 为 null） */
+    private final String parentToolCallId;
 
     private AgentStreamEvent(Type type, String content, String toolName, String toolCallId,
                              String arguments, String result, Boolean success, String code, String message,
                              String detail, String pauseReason, Long totalPromptTokens,
                              Long totalCompletionTokens, String conversationId, String sessionId,
                              Long elapsedMs, Integer rounds) {
+        this(type, content, toolName, toolCallId, arguments, result, success, code, message, detail,
+                pauseReason, totalPromptTokens, totalCompletionTokens, conversationId, sessionId,
+                elapsedMs, rounds, null, null);
+    }
+
+    private AgentStreamEvent(Type type, String content, String toolName, String toolCallId,
+                             String arguments, String result, Boolean success, String code, String message,
+                             String detail, String pauseReason, Long totalPromptTokens,
+                             Long totalCompletionTokens, String conversationId, String sessionId,
+                             Long elapsedMs, Integer rounds, String agentCode, String parentToolCallId) {
         this.type = type;
         this.content = content;
         this.toolName = toolName;
@@ -79,6 +93,15 @@ public class AgentStreamEvent {
         this.sessionId = sessionId;
         this.elapsedMs = elapsedMs;
         this.rounds = rounds;
+        this.agentCode = agentCode;
+        this.parentToolCallId = parentToolCallId;
+    }
+
+    /** M-SA1：为事件附加子 Agent 溯源归属标记，返回新实例 */
+    public AgentStreamEvent withSource(String agentCode, String parentToolCallId) {
+        return new AgentStreamEvent(type, content, toolName, toolCallId, arguments, result, success,
+                code, message, detail, pauseReason, totalPromptTokens, totalCompletionTokens,
+                conversationId, sessionId, elapsedMs, rounds, agentCode, parentToolCallId);
     }
 
     public static AgentStreamEvent thinking(String delta) {

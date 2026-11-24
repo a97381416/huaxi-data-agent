@@ -128,6 +128,17 @@ public class AgentxSessionStore implements OffloadStore {
     public synchronized void persistTerminal(String conversationId, String sessionId, String status,
                                              List<Message> originalChain, List<Message> workingChain,
                                              int originalAppendFrom) {
+        persistTerminal(conversationId, sessionId, status, originalChain, workingChain, originalAppendFrom, true);
+    }
+
+    /**
+     * 终态落库（支持 M-SA1 子 Agent 跳过 agentx_conversation 更新，保一问一行）。
+     *
+     * @param updateConversation false = 子 Agent，只写 agentx_session，不触碰 agentx_conversation
+     */
+    public synchronized void persistTerminal(String conversationId, String sessionId, String status,
+                                             List<Message> originalChain, List<Message> workingChain,
+                                             int originalAppendFrom, boolean updateConversation) {
         // ① original 视图：追加新增切片。【增量添加】
         int startIndex = Math.max(0, originalAppendFrom);
         List<Message> noSystemOriginal = originalChain.stream()
@@ -145,13 +156,15 @@ public class AgentxSessionStore implements OffloadStore {
             appendState(conversationId, sessionId, STATE_WORKING, noSystemWorking);
         }
 
-        // ③ conversation 三种终态：【completed、error、interrupted】
-        if ("completed".equals(status)) {
-            jdbc.update("UPDATE agentx_conversation SET status = ?, completed_at = NOW() " +
-                    "WHERE conversation_id = ?", status, conversationId);
-        } else {
-            jdbc.update("UPDATE agentx_conversation SET status = ? WHERE conversation_id = ?",
-                    status, conversationId);
+        // ③ conversation 三种终态：【completed、error、interrupted】；子 Agent 跳过
+        if (updateConversation) {
+            if ("completed".equals(status)) {
+                jdbc.update("UPDATE agentx_conversation SET status = ?, completed_at = NOW() " +
+                        "WHERE conversation_id = ?", status, conversationId);
+            } else {
+                jdbc.update("UPDATE agentx_conversation SET status = ? WHERE conversation_id = ?",
+                        status, conversationId);
+            }
         }
     }
 

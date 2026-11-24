@@ -148,6 +148,8 @@ async function runAllAuto() {
   try {
     for (const sc of list) {
       runningId.value = sc.id
+      // 每条用例独立会话窗口（保留 ctx.tokens 免重复登录），与单点运行行为一致
+      delete ctx.vars.convId
       const r = await runScenario(sc, ctx, { delivered: ms.value.delivered })
       applyResult(sc.id, r)
       await new Promise((res) => setTimeout(res, 300))

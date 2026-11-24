@@ -2,6 +2,7 @@ package com.llmetor.miniagentx.agent;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.llmetor.miniagentx.interrupt.InterruptContext;
 import com.llmetor.miniagentx.model.AgentStreamEvent;
 import com.llmetor.miniagentx.model.RunnableParams;
 import org.slf4j.Logger;
@@ -13,6 +14,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -62,16 +64,31 @@ public class ToolCallExecutor {
                              Object emitLock,
                              ExecutorService executor,
                              AllDoneCallback allDone) {
+        executeAsync(calls, toolMap, params, conversationId, null, null, sink, emitLock, executor, allDone);
+    }
+
+    /** M-SA1 扩展版：向 ToolContext 注入 parentSessionId / toolCallId / stepEmitter / interruptContext */
+    public void executeAsync(List<MergedToolCall> calls,
+                             Map<String, ToolCallback> toolMap,
+                             RunnableParams params,
+                             String conversationId,
+                             String parentSessionId,
+                             InterruptContext interruptCtx,
+                             Sinks.Many<AgentStreamEvent> sink,
+                             Object emitLock,
+                             ExecutorService executor,
+                             AllDoneCallback allDone) {
         int n = calls.size();
         AtomicReferenceArray<ToolExecutionOutcome> outcomes = new AtomicReferenceArray<>(n);
         AtomicInteger remaining = new AtomicInteger(n);
+        Consumer<AgentStreamEvent> stepEmitter = ev -> emit(sink, emitLock, ev);
 
         for (int i = 0; i < n; i++) {
             final int index = i;
             final MergedToolCall call = calls.get(i);
             executor.execute(() -> {
                 ToolExecutionOutcome outcome = executeOne(call, toolMap, params, conversationId,
-                        sink, emitLock);
+                        parentSessionId, interruptCtx, stepEmitter, sink, emitLock);
                 outcomes.set(index, outcome);
                 if (remaining.decrementAndGet() == 0) {
                     // 全部完成：按原始顺序统一发 ToolEnd（失败也发，success=false，前端徽章才能落地不再空转）
@@ -102,7 +119,21 @@ public class ToolCallExecutor {
                                             String conversationId,
                                             Sinks.Many<AgentStreamEvent> sink,
                                             Object emitLock) {
-        return executeOne(call, toolMap, params, conversationId, sink, emitLock);
+        return executeSync(call, toolMap, params, conversationId, null, null, sink, emitLock);
+    }
+
+    /** M-SA1 扩展版恢复重放：同样注入 parentSessionId / stepEmitter / interruptContext */
+    public ToolExecutionOutcome executeSync(MergedToolCall call,
+                                            Map<String, ToolCallback> toolMap,
+                                            RunnableParams params,
+                                            String conversationId,
+                                            String parentSessionId,
+                                            InterruptContext interruptCtx,
+                                            Sinks.Many<AgentStreamEvent> sink,
+                                            Object emitLock) {
+        Consumer<AgentStreamEvent> stepEmitter = ev -> emit(sink, emitLock, ev);
+        return executeOne(call, toolMap, params, conversationId, parentSessionId, interruptCtx,
+                stepEmitter, sink, emitLock);
     }
 
     /** 单个工具调用（同步执行，含 ToolStart 发射与 toolParams 注入） */
@@ -110,6 +141,9 @@ public class ToolCallExecutor {
                                             Map<String, ToolCallback> toolMap,
                                             RunnableParams params,
                                             String conversationId,
+                                            String parentSessionId,
+                                            InterruptContext interruptCtx,
+                                            Consumer<AgentStreamEvent> stepEmitter,
                                             Sinks.Many<AgentStreamEvent> sink,
                                             Object emitLock) {
         ToolCallback callback = toolMap.get(call.name());
@@ -130,10 +164,21 @@ public class ToolCallExecutor {
         String result;
         boolean success;
         try {
-            ToolContext toolContext = new ToolContext(Map.of(
-                    "userId", params.getUserId() == null ? "" : params.getUserId(),
-                    "conversationId", conversationId,
-                    "runnableParams", params));
+            Map<String, Object> ctxMap = new LinkedHashMap<>();
+            ctxMap.put("userId", params.getUserId() == null ? "" : params.getUserId());
+            ctxMap.put("conversationId", conversationId);
+            ctxMap.put("runnableParams", params);
+            ctxMap.put("toolCallId", call.id());
+            if (parentSessionId != null) {
+                ctxMap.put("parentSessionId", parentSessionId);
+            }
+            if (stepEmitter != null) {
+                ctxMap.put("stepEmitter", stepEmitter);
+            }
+            if (interruptCtx != null) {
+                ctxMap.put("interruptContext", interruptCtx);
+            }
+            ToolContext toolContext = new ToolContext(ctxMap);
             result = callback.call(effectiveArgs, toolContext);
             if (result == null) {
                 result = "{\"error\":\"工具返回空结果\",\"tool\":\"" + call.name() + "\"}";

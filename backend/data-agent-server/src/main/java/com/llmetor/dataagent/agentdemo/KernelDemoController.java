@@ -1,13 +1,29 @@
 package com.llmetor.dataagent.agentdemo;
 
-import com.llmetor.dataagent.auth.HuaxiAuthContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.llmetor.dataagent.auth.HuaxiAuthContext;
 import com.llmetor.dataagent.common.R;
+import com.llmetor.dataagent.dataagent.monitor.MonitorTraceCollector;
+import com.llmetor.miniagentx.agent.AgentTaskManager;
 import com.llmetor.miniagentx.agent.ReactAgent;
+import com.llmetor.miniagentx.agent.SubAgentTool;
+import com.llmetor.miniagentx.interrupt.PauseStateStore;
+import com.llmetor.miniagentx.memory.AgentxSessionStore;
 import com.llmetor.miniagentx.model.AgentStreamEvent;
+import com.llmetor.miniagentx.model.PauseState;
 import com.llmetor.miniagentx.model.RunnableParams;
+import com.llmetor.miniagentx.model.ThinkingMode;
+import com.llmetor.miniagentx.trace.CompositeTraceCollector;
+import com.llmetor.miniagentx.trace.TraceCollector;
+import com.llmetor.miniagentx.trace.TraceManager;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.Data;
-import org.springframework.http.MediaType;import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.support.ToolCallbacks;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.http.MediaType;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,31 +34,49 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
 import javax.sql.DataSource;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * M1 内核演示接口（SSE 全链路验收入口，M2 换正式 /agent/stream）。
- *
- * <ul>
- *   <li>POST /agent/demo/stream：SSE 流式执行（事件名=类型小写，data=事件 JSON）</li>
- *   <li>GET /agent/demo/stop：可恢复中断（→ Paused + 快照）</li>
- *   <li>GET /agent/demo/snapshot：查询内存中断快照</li>
- * </ul>
+ * M1 内核演示接口（SSE 全链路验收入口，M2 换正式 /agent/stream）及 M-SA 多 Agent 地基靶场。
  */
 @RestController
 @RequestMapping("/agent/demo")
 public class KernelDemoController {
 
+    private static final String DEMO_SUB_CODE = "demo-sub";
+
     private final ReactAgent demoAgent;
+    private final ChatModel chatModel;
+    private final DataSource dataSource;
+    private final AgentTaskManager taskManager;
+    private final PauseStateStore pauseStateStore;
+    private final AgentxSessionStore sessionStore;
+    private final TraceCollector traceCollector;
     private final ObjectMapper objectMapper;
     /** M5 起 pgVectorJdbcTemplate 会顶掉主库 JdbcTemplate 自动装配，按 DataSource 自建避免按类型误注入 */
     private final JdbcTemplate jdbc;
 
-    public KernelDemoController(ReactAgent demoAgent, ObjectMapper objectMapper, DataSource dataSource) {
+    public KernelDemoController(ReactAgent demoAgent,
+                                ChatModel chatModel,
+                                ObjectMapper objectMapper,
+                                DataSource dataSource,
+                                AgentTaskManager taskManager,
+                                PauseStateStore pauseStateStore) {
         this.demoAgent = demoAgent;
+        this.chatModel = chatModel;
+        this.dataSource = dataSource;
+        this.taskManager = taskManager;
+        this.pauseStateStore = pauseStateStore;
+        this.sessionStore = new AgentxSessionStore(dataSource);
+        this.traceCollector = new CompositeTraceCollector(List.of(
+                new TraceManager(dataSource),
+                new MonitorTraceCollector(dataSource)));
         this.objectMapper = objectMapper;
         this.jdbc = new JdbcTemplate(dataSource);
     }
@@ -51,6 +85,10 @@ public class KernelDemoController {
     public static class DemoStreamRequest {
         private String query;
         private String conversationId;
+        /** M-SA1 靶场：覆盖子 Agent 硬超时毫秒数（可选，默认 60000） */
+        private Long subTimeoutMs;
+        /** M-SA5 靶场：开启主/子双层 TodoWrite 计划演示 */
+        private Boolean enableDualTodoDemo;
     }
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -181,14 +219,213 @@ public class KernelDemoController {
         return R.ok(data);
     }
 
+    // ==================== M-SA1~M-SA5 多 Agent 地基靶场 ====================
+
     /**
-     * 多 Agent 地基查库探针（M-SA0；供 /test/mSA 浏览器用例断言，只读）：
-     * 汇总 rootConvId 与子窗口 {rootConvId}::% 在 conversation / session / pause_state / trace 的落库事实。
-     * 表/列在对应里程碑前可能不存在（如 trace.parent_session_id），统一容错为 -1 / 0 而不抛异常。
+     * 多 Agent 靶场流式入口（DemoRouterAgent -> SubAgentTool -> DemoSubAgent）：
+     * 自带严格递增 SSE id，用于稳定验证状态隔离、凭证透传、流透传、超时熔断、级联中断与 Trace 树。
+     */
+    @PostMapping(value = "/subagent/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<String>> subagentStream(@RequestBody DemoStreamRequest request,
+                                                        HttpServletRequest httpReq) {
+        if (request.getQuery() == null || request.getQuery().isBlank()) {
+            throw new IllegalArgumentException("query 不能为空");
+        }
+        String convId = (request.getConversationId() == null || request.getConversationId().isBlank())
+                ? "demo_sa_" + UUID.randomUUID()
+                : request.getConversationId();
+        String userId = HuaxiAuthContext.getCurrentUserIdOrNull() == null
+                ? "" : HuaxiAuthContext.getCurrentUserIdOrNull().toString();
+        String token = extractBearerToken(httpReq);
+        long subTimeoutMs = request.getSubTimeoutMs() != null && request.getSubTimeoutMs() > 0
+                ? request.getSubTimeoutMs() : 60_000L;
+        boolean dualTodo = Boolean.TRUE.equals(request.getEnableDualTodoDemo());
+
+        Map<String, Object> toolParams = new LinkedHashMap<>();
+        toolParams.put("userId", userId);
+        toolParams.put("conversationId", convId);
+        if (token != null && !token.isBlank()) {
+            toolParams.put("token", token);
+        }
+
+        ReactAgent router = buildDemoRouterAgent(subTimeoutMs, dualTodo);
+        AtomicLong seq = new AtomicLong(0);
+        return router.stream(request.getQuery(),
+                        RunnableParams.builder()
+                                .conversationId(convId)
+                                .userId(userId)
+                                .agentCode("router")
+                                .toolParams(toolParams)
+                                .build())
+                .map(ev -> toSseWithId(ev, seq.incrementAndGet()))
+                .onErrorResume(e -> Flux.just(
+                        toSseWithId(AgentStreamEvent.error("STREAM_ERROR", e.getMessage(), null), seq.incrementAndGet()),
+                        toSseWithId(AgentStreamEvent.complete(0, 0, convId, ""), seq.incrementAndGet())));
+    }
+
+    /** 多 Agent 靶场可恢复中断（M-SA2） */
+    @GetMapping("/subagent/stop")
+    public R<Map<String, Object>> subagentStop(@RequestParam String conversationId) {
+        boolean interrupted = taskManager.interrupt(conversationId, "用户请求中断多Agent靶场");
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("stopped", interrupted);
+        data.put("rootPauseSnapshot", pauseStateStore.has(conversationId));
+        data.put("subPauseSnapshot", pauseStateStore.has(conversationId + "::" + DEMO_SUB_CODE));
+        return R.ok(data);
+    }
+
+    /** 多 Agent 靶场断点恢复（M-SA2） */
+    @PostMapping(value = "/subagent/resume", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<String>> subagentResume(@RequestBody DemoStreamRequest request) {
+        String convId = request.getConversationId();
+        if (convId == null || convId.isBlank()) {
+            throw new IllegalArgumentException("conversationId 不能为空");
+        }
+        long subTimeoutMs = request.getSubTimeoutMs() != null && request.getSubTimeoutMs() > 0
+                ? request.getSubTimeoutMs() : 60_000L;
+        ReactAgent router = buildDemoRouterAgent(subTimeoutMs, Boolean.TRUE.equals(request.getEnableDualTodoDemo()));
+        String resumeQuery = (request.getQuery() == null || request.getQuery().isBlank()) ? null : request.getQuery();
+        AtomicLong seq = new AtomicLong(0);
+        return router.resumeStream(convId, resumeQuery)
+                .map(ev -> toSseWithId(ev, seq.incrementAndGet()))
+                .onErrorResume(e -> Flux.just(
+                        toSseWithId(AgentStreamEvent.error("RESUME_ERROR", e.getMessage(), null), seq.incrementAndGet()),
+                        toSseWithId(AgentStreamEvent.complete(0, 0, convId, ""), seq.incrementAndGet())));
+    }
+
+    private ReactAgent buildDemoRouterAgent(long subTimeoutMs, boolean enableDualTodo) {
+        List<ToolCallback> subTools = new ArrayList<>(Arrays.asList(ToolCallbacks.from(new DemoSubTools())));
+        if (enableDualTodo) {
+            subTools.addAll(Arrays.asList(ToolCallbacks.from(new DemoTodoTool())));
+        }
+        ReactAgent subAgent = ReactAgent.builder()
+                .chatModel(chatModel)
+                .instructions("""
+                        你是演示子助手（demo-sub），拥有独立跨轮记忆和专属工具：
+                        - rememberSecret：保存暗号（请如实调用并记住结果）
+                        - whoamiProbe：回显当前身份与凭证参数（如用户要求传某个 userId 请照传，框架会自动校验覆盖）
+                        - hangProbe / slowStep：慢任务模拟工具（按要求的秒数调用）
+                        - echo：原样回显文本
+                        - 如配置了 TodoWrite 工具且任务要求建立子计划，先调用 TodoWrite 建立计划再完成。
+                        收到任务后请直接调用对应工具并简洁、完整地返回结果（如调用了 whoamiProbe 请原样包含返回的 JSON）。""")
+                .tools(subTools)
+                .thinkingMode(ThinkingMode.REASONING_CONTENT)
+                .maxRounds(10)
+                .maxRetries(2)
+                .retryIntervalMs(1500)
+                .taskManager(taskManager)
+                .dataSource(dataSource)
+                .sessionStore(sessionStore)
+                .traceCollector(traceCollector)
+                .stateStore(pauseStateStore)
+                .enableCompaction(false)
+                .build();
+
+        ToolCallback callDemoSub = new SubAgentTool(
+                "call_demo_sub",
+                DEMO_SUB_CODE,
+                "委派演示子助手（demo-sub）执行工具任务（记忆暗号、身份探测、慢任务、echo 回显等）",
+                () -> subAgent,
+                subTimeoutMs);
+
+        List<ToolCallback> routerTools = new ArrayList<>();
+        routerTools.add(callDemoSub);
+        if (enableDualTodo) {
+            routerTools.addAll(Arrays.asList(ToolCallbacks.from(new DemoTodoTool())));
+        }
+
+        return ReactAgent.builder()
+                .chatModel(chatModel)
+                .instructions("""
+                        你是多 Agent 地基测试主路由（DemoRouterAgent）。
+                        凡是用户要求委派子助手（保存/查询暗号、调用 whoamiProbe/hangProbe/slowStep/echo 等），
+                        你必须调用 call_demo_sub 工具委派给子助手，严禁自己编造工具结果。
+                        如果用户要求先建主计划再委派子助手建子计划，请先调 TodoWrite 再调 call_demo_sub。
+                        拿到子助手返回结果后，简洁准确地回复用户（保留关键暗号或返回 JSON）。""")
+                .tools(routerTools)
+                .thinkingMode(ThinkingMode.REASONING_CONTENT)
+                .maxRounds(10)
+                .maxRetries(2)
+                .retryIntervalMs(1500)
+                .taskManager(taskManager)
+                .dataSource(dataSource)
+                .sessionStore(sessionStore)
+                .traceCollector(traceCollector)
+                .stateStore(pauseStateStore)
+                .enableCompaction(false)
+                .build();
+    }
+
+    static class DemoSubTools {
+        @Tool(description = "保存用户指定的暗号到子助手会话记忆中")
+        public String rememberSecret(String secret) {
+            return "已成功保存暗号: " + secret;
+        }
+
+        @Tool(description = "身份与凭证探针工具：返回实际注入的 userId、conversationId 以及 token 是否存在")
+        public String whoamiProbe(String userId, String conversationId, String token) {
+            boolean tokenPresent = token != null && !token.isBlank();
+            return "{\"userId\":\"" + safe(userId) + "\",\"conversationId\":\"" + safe(conversationId)
+                    + "\",\"tokenPresent\":" + tokenPresent + "}";
+        }
+
+        @Tool(description = "慢任务探针（模拟耗时操作，用于验证超时熔断或运行中中断）")
+        public String hangProbe(Integer seconds) {
+            return sleepSeconds(seconds == null ? 5 : seconds, "hangProbe-done");
+        }
+
+        @Tool(description = "慢步骤工具（模拟耗时计算，返回 OK-RESUME）")
+        public String slowStep(Integer seconds) {
+            return sleepSeconds(seconds == null ? 3 : seconds, "OK-RESUME");
+        }
+
+        @Tool(description = "原样回显输入文本")
+        public String echo(String text) {
+            return "echo: " + text;
+        }
+
+        private static String sleepSeconds(int sec, String okMsg) {
+            int bounded = Math.max(1, Math.min(sec, 15));
+            try {
+                Thread.sleep(bounded * 1000L);
+                return okMsg;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return "INTERRUPTED";
+            }
+        }
+
+        private static String safe(String s) {
+            return s == null ? "" : s.replace("\"", "'");
+        }
+    }
+
+    static class DemoTodoTool {
+        @Tool(name = "TodoWrite", description = "更新当前执行计划步骤列表（JSON 数组字符串，每项含 content 与 status）")
+        public String todoWrite(List<Map<String, Object>> todos) {
+            return "{\"ok\":true,\"count\":" + (todos == null ? 0 : todos.size()) + "}";
+        }
+    }
+
+    private static String extractBearerToken(HttpServletRequest req) {
+        if (req == null) {
+            return null;
+        }
+        String auth = req.getHeader("Authorization");
+        if (auth != null && auth.startsWith("Bearer ")) {
+            return auth.substring(7).trim();
+        }
+        return auth;
+    }
+
+    /**
+     * 多 Agent 地基查库探针（M-SA0~M-SA3；供 /test/mSA 浏览器用例断言，只读）：
+     * 汇总 rootConvId 与子窗口 {rootConvId}::% 在 conversation / session / pause_state / trace / monitor 的落库事实。
      */
     @GetMapping("/subagent-check")
     public R<Map<String, Object>> subagentCheck(@RequestParam String conversationId) {
         String subLike = conversationId + "::%";
+        String demoSubConvId = conversationId + "::" + DEMO_SUB_CODE;
         Map<String, Object> d = new LinkedHashMap<>();
         int rootRows = safeCount("SELECT COUNT(*) FROM agentx_conversation WHERE conversation_id = ?", conversationId);
         d.put("rootConvRowCount", rootRows);
@@ -198,15 +435,41 @@ public class KernelDemoController {
                 "SELECT COUNT(*) FROM agentx_session WHERE conversation_id = ? AND state_key = 'working_messages'", conversationId));
         d.put("subWorkingCount", safeCount(
                 "SELECT COUNT(*) FROM agentx_session WHERE conversation_id LIKE ? AND state_key = 'working_messages'", subLike));
-        d.put("rootPauseCount", safeCount("SELECT COUNT(*) FROM agentx_pause_state WHERE conversation_id = ?", conversationId));
-        d.put("subPauseCount", safeCount("SELECT COUNT(*) FROM agentx_pause_state WHERE conversation_id LIKE ?", subLike));
-        d.put("rootTraceRounds", safeCount("SELECT COUNT(*) FROM agentx_trace WHERE conversation_id = ?", conversationId));
-        d.put("subTraceRounds", safeCount("SELECT COUNT(*) FROM agentx_trace WHERE conversation_id LIKE ?", subLike));
-        // M-SA3 才有 parent_session_id 列：此前返回 -1
+
+        int rootPauseCount = safeCount("SELECT COUNT(*) FROM agentx_pause_state WHERE conversation_id = ?", conversationId);
+        int subPauseCount = safeCount("SELECT COUNT(*) FROM agentx_pause_state WHERE conversation_id LIKE ?", subLike);
+        d.put("rootPauseCount", rootPauseCount);
+        d.put("subPauseCount", subPauseCount);
+        d.put("rootPauseSnapshot", rootPauseCount > 0 || pauseStateStore.has(conversationId));
+        d.put("subPauseSnapshot", subPauseCount > 0 || pauseStateStore.has(demoSubConvId));
+        PauseState subSnap = pauseStateStore.get(demoSubConvId);
+        d.put("subSnapshotIsSubAgent", subSnap != null && subSnap.getParams() != null && subSnap.getParams().isSubAgent());
+
+        boolean anySubRunning = taskManager.hasRunningTask(demoSubConvId);
+        d.put("anySubTaskRunning", anySubRunning);
+        d.put("runningTaskCount", anySubRunning ? 1 : 0);
+
+        int oldTraceRoot = safeCount("SELECT COUNT(*) FROM agentx_trace WHERE conversation_id = ?", conversationId);
+        int oldTraceSub = safeCount("SELECT COUNT(*) FROM agentx_trace WHERE conversation_id LIKE ?", subLike);
+        d.put("rootTraceRounds", oldTraceRoot);
+        d.put("subTraceRounds", oldTraceSub);
+        d.put("oldTraceCount", oldTraceRoot + Math.max(0, oldTraceSub));
         d.put("subTraceWithParentCount", safeCount(
-                "SELECT COUNT(*) FROM agentx_trace WHERE conversation_id LIKE ? AND parent_session_id IS NOT NULL", subLike));
-        // 运行中任务数：M-SA1 起由子 Agent 注册表接入，当前基线恒 0
-        d.put("runningTaskCount", 0);
+                "SELECT COUNT(*) FROM agentx_trace WHERE (conversation_id = ? OR conversation_id LIKE ?) AND parent_session_id IS NOT NULL",
+                conversationId, subLike));
+
+        // M-SA3 监控统计探针（列不存在时安全返回 0 / false）
+        d.put("monitorQuestionCount", Math.max(0, safeCount(
+                "SELECT COALESCE(question_count, 0) FROM agentx_monitor_conversation WHERE conversation_id = ?", conversationId)));
+        d.put("monitorTotalRounds", Math.max(0, safeCount(
+                "SELECT COALESCE(total_rounds, 0) FROM agentx_monitor_conversation WHERE conversation_id = ?", conversationId)));
+        d.put("monitorSubSessionCount", Math.max(0, safeCount(
+                "SELECT COUNT(*) FROM agentx_monitor_session WHERE conversation_id = ? AND parent_session_id IS NOT NULL", conversationId)));
+        int matchedParent = safeCount(
+                "SELECT COUNT(*) FROM agentx_monitor_session sub " +
+                        "JOIN agentx_monitor_session root ON sub.parent_session_id = root.session_id " +
+                        "WHERE sub.conversation_id = ? AND root.parent_session_id IS NULL", conversationId);
+        d.put("subParentSessionMatched", matchedParent > 0);
         return R.ok(d);
     }
 
@@ -217,6 +480,20 @@ public class KernelDemoController {
             return n == null ? 0 : n;
         } catch (Exception e) {
             return -1;
+        }
+    }
+
+    private ServerSentEvent<String> toSseWithId(AgentStreamEvent event, long id) {
+        try {
+            return ServerSentEvent.builder(objectMapper.writeValueAsString(event))
+                    .id(String.valueOf(id))
+                    .event(event.getType().name().toLowerCase())
+                    .build();
+        } catch (Exception e) {
+            return ServerSentEvent.builder("{\"type\":\"ERROR\",\"message\":\"事件序列化失败\"}")
+                    .id(String.valueOf(id))
+                    .event("error")
+                    .build();
         }
     }
     private static int asInt(Object v) {

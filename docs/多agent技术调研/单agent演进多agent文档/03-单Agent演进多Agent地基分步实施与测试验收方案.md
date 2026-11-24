@@ -373,8 +373,8 @@ flowchart LR
 }
 ```
 * **M-SA1 里程碑准出闸门与回滚**：
-  * `[ ]` 内核单元测试全绿（`mvn test -pl mini-agentx-core`）
-  * `[ ]` 浏览器 `/test/m-SA` 中 `MSA-101 ~ MSA-104` 全绿，且回归 `/test/m1` 全绿
+  * `[x]` 内核单元测试全绿（`mvn test -pl mini-agentx-core`，127/127 通过，验收通过 2026-11-24）
+  * `[x]` 浏览器 `/test/mSA` 中 `MSA-101 ~ MSA-104` 全绿，且回归 `/test/m1` 全绿（验收通过 2026-11-24）
   * **回滚预案**：内核改动全部受 `subAgent == true` 条件分支控制，单 Agent 默认 `subAgent == false` 零行为变化；若验收异常直接回退至 `M-SA0` 标签。
 
 ---
@@ -968,10 +968,10 @@ flowchart LR
 - [x] **【闸门验收】**：浏览器跑通 `MSA-001` 绿灯，且原 `/test/m1`、`/test/m3` 回归全绿 → 打标 `m-sa0-verified`（验收通过 2026-11-24）
 
 ### 阶段 1：内核多 Agent 隔离与透传底座（M-SA1）
-- [ ] 扩展 `RunnableParams` 与 `AgentStreamEvent` 多 Agent 归属字段
-- [ ] 改造 `AgentLoopExecutor`（`subAgent=true` 跳过 `agentx_conversation` 写表）与 `ToolCallExecutor`（注入 `stepEmitter`）
-- [ ] 实现 `SubAgentTool`（`subConvId` 串行锁、凭证强制继承、子流事件透传与终态拦截、`180s` 硬超时）
-- [ ] **【闸门验收】**：浏览器跑通 `MSA-101 ~ MSA-104` 全绿 → 打标 `m-sa1-verified`
+- [x] 扩展 `RunnableParams` 与 `AgentStreamEvent` 多 Agent 归属字段（验收通过 2026-11-24）
+- [x] 改造 `AgentLoopExecutor`（`subAgent=true` 跳过 `agentx_conversation` 写表）与 `ToolCallExecutor`（注入 `stepEmitter`）（验收通过 2026-11-24）
+- [x] 实现 `SubAgentTool`（`subConvId` 串行锁、凭证强制继承、子流事件透传与终态拦截、`180s` 硬超时）（验收通过 2026-11-24）
+- [x] **【闸门验收】**：浏览器跑通 `MSA-101 ~ MSA-104` 全绿 → 打标 `m-sa1-verified`（验收通过 2026-11-24）
 
 ### 阶段 2：父子级联中断、恢复与清理闭环（M-SA2）
 - [ ] 激活 `InterruptContext.fireInterrupt()` 并在 `JdbcPauseStateStore` 补齐新增多 Agent 参数序列化

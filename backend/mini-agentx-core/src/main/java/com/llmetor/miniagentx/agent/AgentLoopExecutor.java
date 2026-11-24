@@ -275,8 +275,8 @@ public class AgentLoopExecutor {
         // 原始链 = 历史 + 本次新增（working 链会被压缩替换，original 只增不减）
         originalChain.addAll(history);
         originalChain.add(userMessage);
-        if (sessionStore != null) {
-            // 存对话表agentx_conversation
+        if (sessionStore != null && !params.isSubAgent()) {
+            // 存对话表 agentx_conversation（M-SA1：子 Agent 跳过，保一问一行）
             sessionStore.initConversation(SnowflakeIdGenerator.nextId(),conversationId(), sessionId, params.getUserId(), query);
         }
         // 监控中心挂点：提问开始（一问一行；恢复执行走 initMessagesFromResume 不回调，
@@ -465,7 +465,7 @@ public class AgentLoopExecutor {
                 ToolCallExecutor.MergedToolCall call = new ToolCallExecutor.MergedToolCall(
                         ptc.id(), ptc.name(), ptc.arguments());
                 ToolCallExecutor.ToolExecutionOutcome o = toolExecutor.executeSync(
-                        call, replayMap, params, conversationId(), sink, emitLock);
+                        call, replayMap, params, conversationId(), sessionId, interruptCtx, sink, emitLock);
                 // 失败也发 ToolEnd（success=false），与批量通道契约一致
                 emit(AgentStreamEvent.toolEnd(o.name(), o.id(), o.result(), o.success()));
                 responses.add(new ToolResponseMessage.ToolResponse(ptc.id(), ptc.name(), o.result()));
@@ -857,7 +857,7 @@ public class AgentLoopExecutor {
                 .toList();
 
         // 批量调用该轮的工具集合，填充对应的工具调用结果（用本轮工具映射——含已发现的延迟工具）
-        toolExecutor.executeAsync(calls, rs.toolMap, params, conversationId(), sink, emitLock,
+        toolExecutor.executeAsync(calls, rs.toolMap, params, conversationId(), sessionId, interruptCtx, sink, emitLock,
                 toolPool, outcomes -> {
                     synchronized (AgentLoopExecutor.this) {
                         if (interruptCtx.isInterrupted() || terminalEmitted.get()) {
@@ -1065,7 +1065,8 @@ public class AgentLoopExecutor {
         if (sessionStore != null) {
             try {
                 // original 视图从历史条数(即本轮 user 消息)起追加（原始链不被压缩污染）；working 全量替换
-                sessionStore.persistTerminal(conversationId(), sessionId, status, originalChain, messages, historySize);
+                // M-SA1：子 Agent 跳过 agentx_conversation 状态更新
+                sessionStore.persistTerminal(conversationId(), sessionId, status, originalChain, messages, historySize, !params.isSubAgent());
             } catch (Exception e) {
                 log.error("终态落库失败: convId={}, status={}", conversationId(), status, e);
             }
@@ -1086,7 +1087,7 @@ public class AgentLoopExecutor {
     private void fallbackPersist() {
         if (persisted.compareAndSet(false, true) && sessionStore != null) {
             try {
-                sessionStore.persistTerminal(conversationId(), sessionId, "interrupted", originalChain, messages, historySize);
+                sessionStore.persistTerminal(conversationId(), sessionId, "interrupted", originalChain, messages, historySize, !params.isSubAgent());
             } catch (Exception e) {
                 log.warn("兜底落库失败: convId={}", conversationId(), e);
             }

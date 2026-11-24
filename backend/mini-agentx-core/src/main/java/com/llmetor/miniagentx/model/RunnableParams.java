@@ -27,6 +27,22 @@ public class RunnableParams {
     private Map<String, String> customParams = Collections.emptyMap();
     private Map<String, Object> toolParams = Collections.emptyMap();
     private Class<?> outputType;
+    /** M-SA1：是否为子 Agent 执行（true 时跳过 agentx_conversation 写入，保持一问一行） */
+    private boolean subAgent = false;
+    /** M-SA1：Agent 标识（主路由默认 "router"，子 Agent 如 "data-analysis"） */
+    private String agentCode;
+    /** M-SA1：根会话窗口 ID（子 Agent 指向外层 rootConvId，用于 Trace 聚合与附件共享） */
+    private String rootConversationId;
+    /** M-SA1：父级执行 sessionId（用于构建父子 Trace 调用树） */
+    private String parentSessionId;
+    /** M-SA1：父级调用当前子 Agent 时的 toolCallId（用于 SSE 流事件溯源挂载） */
+    private String parentToolCallId;
+
+    /** 返回有效的根窗口 ID（主 Agent 即自身 conversationId，子 Agent 为 rootConversationId） */
+    public String effectiveRootConversationId() {
+        return (rootConversationId != null && !rootConversationId.isBlank())
+                ? rootConversationId : conversationId;
+    }
 
     public static RunnableParams of(String conversationId) {
         RunnableParams p = new RunnableParams();
@@ -67,6 +83,31 @@ public class RunnableParams {
 
         public Builder outputType(Class<?> outputType) {
             params.outputType = outputType;
+            return this;
+        }
+
+        public Builder subAgent(boolean subAgent) {
+            params.subAgent = subAgent;
+            return this;
+        }
+
+        public Builder agentCode(String agentCode) {
+            params.agentCode = agentCode;
+            return this;
+        }
+
+        public Builder rootConversationId(String rootConversationId) {
+            params.rootConversationId = rootConversationId;
+            return this;
+        }
+
+        public Builder parentSessionId(String parentSessionId) {
+            params.parentSessionId = parentSessionId;
+            return this;
+        }
+
+        public Builder parentToolCallId(String parentToolCallId) {
+            params.parentToolCallId = parentToolCallId;
             return this;
         }
 
