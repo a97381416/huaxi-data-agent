@@ -992,7 +992,7 @@ flowchart LR
 - [x] **【闸门验收】**：浏览器跑通 `MSA-401 ~ MSA-404` 全绿，实测填报/审核路由与 `single` 一键回滚可用 → 打标 `m-sa4-verified`（验收通过 2026-11-24）
 
 ### 阶段 5：前端嵌套交互、回放对齐与双层计划面板（M-SA5）
-- [ ] 升级 `ChatView.vue` 支持 `parentToolCallId` 子步骤折叠卡渲染及 `__card: "confirm"` 外层冒泡
-- [ ] 升级 `SessionService.buildSessionMessage` 联查子会话 `original_messages` 还原历史 `subSteps`
-- [ ] 升级 `ChatView.vue` 与 `SessionService` 支持单层自动提升 + 双层 `subItems` 折叠的执行计划面板
-- [ ] **【闸门验收】**：浏览器跑通 `MSA-501 ~ MSA-502` 全绿，`/chat` 实测 F5 刷新与重开历史一致 → 将默认配置切换为 `data-agent.agent.mode: multi` 完成平滑过渡！
+- [x] 升级 `ChatView.vue` 支持 `parentToolCallId` 子步骤折叠卡渲染及 `__card: "confirm"` 外层冒泡（验收通过 2026-11-24）
+- [x] 升级 `SessionService.buildSessionMessage` 联查子会话 `original_messages` 还原历史 `subSteps`（验收通过 2026-11-24）
+- [x] 升级 `ChatView.vue` 与 `SessionService` 支持单层自动提升 + 双层 `subItems` 折叠的执行计划面板（验收通过 2026-11-24）
+- [x] **【闸门验收】**：浏览器跑通 `MSA-501 ~ MSA-502` 全绿（16/16 全部通过），将默认配置切换为 `data-agent.agent.mode: multi` 完成平滑过渡 → 打标 `m-sa5-verified`（验收通过 2026-11-24）

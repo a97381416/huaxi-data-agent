@@ -175,6 +175,16 @@
                           <span class="live-line" v-think-scroll>{{ liveArgsTail(step.arguments) }}</span>
                           <span class="tool-row-dur">{{ step.status === 'running' ? preciseElapsed(step.startAt) : toolDurText(step) }}</span>
                         </div>
+                        <!-- M-SA5：运行中子 Agent 内部步骤实时嵌套展示 -->
+                        <div v-if="step.subSteps?.length" class="ml-5 mt-1 space-y-1 border-l-2 border-blue-100 pl-3 text-xs text-gray-500">
+                          <div v-for="(sub, subi) in step.subSteps.filter((x) => x.type === 'tool')" :key="subi" class="flex items-center gap-1.5">
+                            <el-icon v-if="sub.status === 'running'" :size="11" class="is-loading text-blue-500"><Loading /></el-icon>
+                            <span v-else-if="sub.status === 'failed'" class="text-red-500">✗</span>
+                            <span v-else class="text-emerald-500">✓</span>
+                            <span class="font-mono text-[11px] text-gray-600">{{ sub.toolName }}</span>
+                            <span class="truncate text-[11px] text-gray-400">{{ argPreview(sub.arguments) }}</span>
+                          </div>
+                        </div>
                         <!-- 直播行展开：参数全文 -->
                         <pre v-if="pgSel(entry.block) === step" class="tool-result thin-scroll">{{ formatToolArgs(step.arguments) }}</pre>
                       </template>
@@ -188,11 +198,19 @@
                             :class="{ sel: pgSel(entry.block) === step }"
                             @click="toggleStep(entry.block, step)"
                           >
-                            <span class="tool-emoji">🔍</span>
-                            <span class="tool-row-action">查阅</span>
-                            <span class="tool-row-name font-mono">{{ step.toolName }}</span>
-                            <span class="tool-row-preview font-mono">{{ argPreview(step.arguments) }}</span>
+                            <span class="tool-emoji">{{ step.subSteps?.length ? '🤖' : '🔍' }}</span>
+                            <span class="tool-row-action">{{ step.subSteps?.length ? '委派' : '查阅' }}</span>
+                            <span class="tool-row-name font-mono">{{ toolLabel(step.toolName) }}</span>
+                            <span class="tool-row-preview font-mono">{{ step.subSteps?.length ? `内部 ${step.subSteps.filter((x) => x.type === 'tool').length} 步` : argPreview(step.arguments) }}</span>
                             <span v-if="toolDurText(step)" class="tool-row-dur">{{ toolDurText(step) }}</span>
+                          </div>
+                          <!-- M-SA5：点击父工具展开子 Agent 内部步骤列表 -->
+                          <div v-if="pgSel(entry.block) === step && step.subSteps?.length" class="ml-5 mt-1 space-y-1 border-l-2 border-blue-100 pl-3 text-xs text-gray-600">
+                            <div v-for="(sub, subi) in step.subSteps.filter((x) => x.type === 'tool')" :key="subi" class="flex items-center gap-1.5 py-0.5">
+                              <span :class="sub.status === 'failed' ? 'text-red-500' : 'text-emerald-500'">{{ sub.status === 'failed' ? '✗' : '✓' }}</span>
+                              <span class="font-mono text-[11px] font-medium">{{ sub.toolName }}</span>
+                              <span class="truncate text-[11px] text-gray-400">{{ argPreview(sub.arguments) }}</span>
+                            </div>
                           </div>
                           <pre v-if="pgSel(entry.block) === step && step.result" class="tool-result thin-scroll">{{ formatToolResult(step.result) }}</pre>
                         </template>
@@ -640,10 +658,13 @@
 
     <!-- 右侧：执行计划面板（TodoWrite 参数侧信道 → 会话级 plan 快照，跨轮取最新一份；无计划不渲染整列） -->
     <aside v-if="activePlan" class="flex w-[300px] shrink-0 flex-col border-l border-gray-100 bg-white">
-      <!-- 面板头：标题 + 完成计数 + 折叠开关 -->
+      <!-- 面板头：标题 + 领域徽标 + 完成计数 + 折叠开关 -->
       <div class="flex shrink-0 items-center gap-1.5 border-b border-gray-100 px-4 py-3">
         <el-icon :size="14" class="text-blue-600"><List /></el-icon>
         <span class="text-[13px] font-semibold text-gray-700">执行计划</span>
+        <span v-if="activePlan.agentCode" class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600">
+          {{ activePlan.agentCode }}
+        </span>
         <span class="ml-auto font-mono text-[11px]" :class="planAllDone ? 'text-emerald-600' : 'text-gray-400'">
           {{ completedCount(planDisplay) }}/{{ activePlan.items.length }}
         </span>
@@ -668,15 +689,28 @@
           </div>
           <div v-if="planAllDone" class="mt-2 text-[11px] font-medium text-emerald-600">🎉 计划全部完成</div>
         </div>
-        <!-- 条目列表：completed 划线 / in_progress 蓝色高亮+左竖条 / pending 灰点 -->
+        <!-- 条目列表：completed 划线 / in_progress 蓝色高亮+左竖条 / pending 灰点；支持 M-SA5 双层 subItems -->
         <div class="thin-scroll min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
-          <div v-for="(t, idx) in planDisplay" :key="idx" class="plan-item" :class="t.status">
-            <el-icon :size="14" class="plan-item-icon">
-              <CircleCheckFilled v-if="t.status === 'completed'" />
-              <Loading v-else-if="t.status === 'in_progress'" class="is-loading" />
-              <MoreFilled v-else />
-            </el-icon>
-            <span class="plan-item-text">{{ t.text }}</span>
+          <div v-for="(t, idx) in planDisplay" :key="idx">
+            <div class="plan-item" :class="t.status">
+              <el-icon :size="14" class="plan-item-icon">
+                <CircleCheckFilled v-if="t.status === 'completed'" />
+                <Loading v-else-if="t.status === 'in_progress'" class="is-loading" />
+                <MoreFilled v-else />
+              </el-icon>
+              <span class="plan-item-text">{{ t.text }}</span>
+            </div>
+            <!-- 双层计划：子 Agent 微观子步骤缩进挂载（主步骤完成后自动收起） -->
+            <div v-if="t.subItems?.length && t.status !== 'completed'" class="ml-5 mt-0.5 space-y-0.5 border-l border-blue-100 pl-2.5 pb-1">
+              <div v-for="(st, sidx) in t.subItems" :key="sidx" class="plan-item text-[11px]" :class="st.status">
+                <el-icon :size="12" class="plan-item-icon">
+                  <CircleCheckFilled v-if="st.status === 'completed'" />
+                  <Loading v-else-if="st.status === 'in_progress'" class="is-loading" />
+                  <MoreFilled v-else />
+                </el-icon>
+                <span class="plan-item-text">{{ st.text }}</span>
+              </div>
+            </div>
           </div>
         </div>
         <!-- 尾部：最近一次更新时间（历史回放无时间戳则不显示） -->
@@ -825,10 +859,24 @@ const planAllDone = computed(() => {
   return items.length > 0 && items.every((t) => t.status === 'completed')
 })
 
-/** 写入会话级计划快照（全量覆盖；TodoWrite 每次调用携带完整状态） */
+/** 写入会话级主计划快照（全量覆盖；TodoWrite 每次调用携带完整状态） */
 function setPlan(cid, items) {
   const s = ensureSession(cid)
-  s.plan = { items, updatedAt: Date.now() }
+  s.plan = { items, updatedAt: Date.now(), hasRootPlan: true, agentCode: null }
+}
+
+/** M-SA5 自适应双层计划：无主计划则直接提升为顶层展示并标领域徽标；有主计划则挂入当前 in_progress 主步骤的 subItems */
+function setSubPlan(cid, agentCode, subItems) {
+  const s = ensureSession(cid)
+  if (!s.plan || !s.plan.hasRootPlan) {
+    s.plan = { items: subItems, updatedAt: Date.now(), hasRootPlan: false, agentCode: agentCode || null }
+    return
+  }
+  const target = s.plan.items.find((t) => t.status === 'in_progress') || s.plan.items[s.plan.items.length - 1]
+  if (target) {
+    target.subItems = subItems
+    s.plan.updatedAt = Date.now()
+  }
 }
 
 /** TodoWrite 叙述兜底：按新旧快照 diff 生成一句系统反馈（仅模型本轮没写正文时上屏） */
@@ -1204,6 +1252,60 @@ function onStreamEvent(cid, entry) {
     }
     const msg = entry.aiMsg
     const timeline = msg.timeline
+
+    // M-SA5：子 Agent 透传事件（携带 parentToolCallId）归入对应父委派工具的 subSteps，不污染顶层 timeline
+    if (data.parentToolCallId) {
+      const parent = timeline.find((it) => it.type === 'tool' && it.toolCallId === data.parentToolCallId)
+      if (parent) {
+        if (!Array.isArray(parent.subSteps)) parent.subSteps = []
+        if (data.agentCode && !parent.agentCode) parent.agentCode = data.agentCode
+        if (data.type === 'THINKING') {
+          const content = data.content || ''
+          const lastSub = parent.subSteps[parent.subSteps.length - 1]
+          if (lastSub && lastSub.type === 'thinking') lastSub.content += content
+          else parent.subSteps.push({ type: 'thinking', content, agentCode: data.agentCode })
+        } else if (data.type === 'TOOL_START') {
+          if ((data.toolName || '').toLowerCase() === 'todowrite') {
+            const args = safeParse(data.arguments || '{}', {})
+            const todos = Array.isArray(args.todos) ? args.todos : []
+            if (todos.length) {
+              const items = todos.map((t) => ({ text: t.content || '', status: t.status || 'pending' }))
+              setSubPlan(cid, data.agentCode, items)
+            }
+          } else {
+            parent.subSteps.push({
+              type: 'tool',
+              toolName: data.toolName || 'unknown',
+              toolCallId: data.toolCallId || '',
+              status: 'running',
+              result: '',
+              arguments: data.arguments || '',
+              startAt: Date.now(),
+              agentCode: data.agentCode
+            })
+          }
+        } else if (data.type === 'TOOL_END') {
+          if ((data.toolName || '').toLowerCase() !== 'todowrite') {
+            const subItem = parent.subSteps.find(
+              (it) => it.type === 'tool' && it.toolCallId === data.toolCallId && it.status === 'running'
+            ) || parent.subSteps.filter((it) => it.type === 'tool' && it.toolName === data.toolName && it.status === 'running').at(-1)
+            if (subItem) {
+              subItem.status = data.success === false ? 'failed' : 'completed'
+              subItem.result = data.result || ''
+              subItem.durationMs = Date.now() - (subItem.startAt || Date.now())
+              // M-SA5 确认卡外层冒泡：子工具产出 __card:"confirm" 时直接推入顶层 timeline 展示按钮
+              if (CARD_TOOLS.has((subItem.toolName || '').toLowerCase())) {
+                for (const card of extractCards(subItem.result)) {
+                  timeline.push({ type: 'card', card })
+                }
+              }
+            }
+          }
+        }
+      }
+      return
+    }
+
     switch (data.type) {
       case 'THINKING': {
         const content = data.content || ''
@@ -1663,7 +1765,7 @@ function extractCards(result) {
   return cards
 }
 
-/** 历史回放：在业务工具块后补插派生卡片块（确定性重建，与实时路径同源） */
+/** 历史回放：在业务工具块（及 M-SA5 嵌套 subSteps）后补插派生卡片块（确定性重建，与实时路径同源） */
 function hydrateCards(items) {
   const out = []
   for (const it of items) {
@@ -1671,6 +1773,15 @@ function hydrateCards(items) {
     if (it.type === 'tool' && CARD_TOOLS.has((it.toolName || '').toLowerCase())) {
       for (const card of extractCards(it.result || '')) {
         out.push({ type: 'card', card })
+      }
+    }
+    if (it.type === 'tool' && Array.isArray(it.subSteps)) {
+      for (const sub of it.subSteps) {
+        if (sub.type === 'tool' && CARD_TOOLS.has((sub.toolName || '').toLowerCase())) {
+          for (const card of extractCards(sub.result || '')) {
+            out.push({ type: 'card', card })
+          }
+        }
       }
     }
   }
@@ -1801,6 +1912,10 @@ onBeforeUnmount(() => clearInterval(nowTickTimer))
 
 /** 业务工具的中文短名（徽章/状态行展示；未收录的回退原始函数名） */
 const TOOL_LABELS = {
+  call_data_analysis: '数据分析专员',
+  call_declarant_fill: '资料填报专员',
+  call_reviewer_workflow: '审核审批专员',
+  call_declarant_resubmit: '驳回重提专员',
   listmydrafts: '查我的草稿',
   listphasetree: '查阶段树',
   listfillnodes: '查填报节点',

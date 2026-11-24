@@ -178,9 +178,34 @@ public class SessionService {
     private SessionMessageVO buildSessionMessage(ConvRow conv) {
         List<Message> originalMessages = loadOriginalMessages(conv.conversationId(), conv.sessionId());
         String answer = extractAnswer(originalMessages);
-        String timeline = buildTimeline(originalMessages, loadThinkDurations(conv.conversationId(), conv.sessionId()));
+        List<SubSessionRow> subSessions = loadSubSessions(conv.sessionId());
+        String timeline = buildTimeline(conv.conversationId(), originalMessages,
+                loadThinkDurations(conv.conversationId(), conv.sessionId()), subSessions);
         return new SessionMessageVO(conv.id(), conv.question(), answer, timeline,
                 conv.createdAt(), conv.elapsedMs(), loadAttachments(conv.sessionId()));
+    }
+
+    private record SubSessionRow(String sessionId, String agentCode, String parentToolCallId) {
+    }
+
+    /** M-SA5：联查该根提问下的所有子 Agent 会话（按创建时间正序） */
+    private List<SubSessionRow> loadSubSessions(String rootSessionId) {
+        if (rootSessionId == null || rootSessionId.isBlank()) {
+            return List.of();
+        }
+        try {
+            return jdbc.query(
+                    "SELECT session_id, agent_code, parent_tool_call_id FROM agentx_monitor_session " +
+                            "WHERE parent_session_id = ? ORDER BY created_at ASC",
+                    (rs, i) -> new SubSessionRow(
+                            rs.getString("session_id"),
+                            rs.getString("agent_code"),
+                            rs.getString("parent_tool_call_id")),
+                    rootSessionId);
+        } catch (Exception e) {
+            log.debug("联查子会话跳过（列或表未就绪）: rootSessionId={}, err={}", rootSessionId, e.getMessage());
+            return List.of();
+        }
     }
 
     /**
@@ -251,14 +276,94 @@ public class SessionService {
     }
 
     /**
-     * 从消息链重构前端时间线 JSON（对齐原版 buildTimeline）。
-     * AssistantMessage 拆为三阶段：思考(reasoningContent) → 正文(content) → 工具调用；
-     * TodoWrite 不进工具卡片，解析参数里的 todos 为 todo 面板事件（参数侧信道）；
-     * ToolResponseMessage 按 toolCallId 回填到对应的 pending 工具事件上。
+     * 从消息链重构前端时间线 JSON（M-SA5：内嵌子 Agent 的 subSteps 并归并双层 TodoWrite 计划）。
      */
-    private String buildTimeline(List<Message> messages, Map<String, Long> thinkDurations) {
-        if (messages == null || messages.isEmpty()) {
+    private String buildTimeline(String rootConvId, List<Message> messages,
+                                 Map<String, Long> thinkDurations, List<SubSessionRow> subSessions) {
+        List<Map<String, Object>> events = buildRawEvents(messages, thinkDurations, null);
+
+        // M-SA5：按 parent_tool_call_id 将子会话步骤嵌套回父工具节点，并归并子 TodoWrite
+        if (subSessions != null && !subSessions.isEmpty()) {
+            Map<String, List<Map<String, Object>>> subStepsByCallId = new LinkedHashMap<>();
+            List<Map<String, Object>> subTodoSnapshots = new ArrayList<>();
+            for (SubSessionRow sub : subSessions) {
+                if (sub.agentCode() == null || sub.agentCode().isBlank()) {
+                    continue;
+                }
+                String subConvId = rootConvId + "::" + sub.agentCode();
+                List<Message> subMsgs = loadOriginalMessages(subConvId, sub.sessionId());
+                if (subMsgs.isEmpty()) {
+                    continue;
+                }
+                List<Map<String, Object>> subEvents = buildRawEvents(subMsgs, Map.of(), sub.agentCode());
+                List<Map<String, Object>> steps = new ArrayList<>();
+                for (Map<String, Object> se : subEvents) {
+                    if ("todo".equals(se.get("type"))) {
+                        Map<String, Object> snap = new LinkedHashMap<>(se);
+                        snap.put("agentCode", sub.agentCode());
+                        subTodoSnapshots.add(snap);
+                    } else if ("tool".equals(se.get("type")) || "thinking".equals(se.get("type"))) {
+                        steps.add(se);
+                    }
+                }
+                if (sub.parentToolCallId() != null && !sub.parentToolCallId().isBlank() && !steps.isEmpty()) {
+                    subStepsByCallId.computeIfAbsent(sub.parentToolCallId(), k -> new ArrayList<>()).addAll(steps);
+                }
+            }
+            // 1. 回填 subSteps 到父工具节点
+            for (Map<String, Object> ev : events) {
+                if ("tool".equals(ev.get("type"))) {
+                    String callId = String.valueOf(ev.getOrDefault("toolCallId", ""));
+                    List<Map<String, Object>> nested = subStepsByCallId.get(callId);
+                    if (nested != null && !nested.isEmpty()) {
+                        ev.put("subSteps", nested);
+                    }
+                }
+            }
+            // 2. 双层 TodoWrite 归并：有主计划则挂 subItems，无主计划则直接提升为顶层 todo
+            if (!subTodoSnapshots.isEmpty()) {
+                Map<String, Object> lastSubTodo = subTodoSnapshots.get(subTodoSnapshots.size() - 1);
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> subItems = (List<Map<String, Object>>) lastSubTodo.get("items");
+                Map<String, Object> lastRootTodo = null;
+                for (int i = events.size() - 1; i >= 0; i--) {
+                    if ("todo".equals(events.get(i).get("type"))) {
+                        lastRootTodo = events.get(i);
+                        break;
+                    }
+                }
+                if (lastRootTodo != null && subItems != null && !subItems.isEmpty()) {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> rootItems = (List<Map<String, Object>>) lastRootTodo.get("items");
+                    if (rootItems != null && !rootItems.isEmpty()) {
+                        Map<String, Object> target = rootItems.stream()
+                                .filter(it -> "in_progress".equals(it.get("status")))
+                                .findFirst()
+                                .orElse(rootItems.get(rootItems.size() - 1));
+                        target.put("subItems", subItems);
+                    }
+                } else if (lastRootTodo == null && subItems != null && !subItems.isEmpty()) {
+                    Map<String, Object> lifted = new LinkedHashMap<>();
+                    lifted.put("type", "todo");
+                    lifted.put("agentCode", lastSubTodo.get("agentCode"));
+                    lifted.put("items", subItems);
+                    events.add(lifted);
+                }
+            }
+        }
+
+        try {
+            return objectMapper.writeValueAsString(events);
+        } catch (Exception e) {
+            log.warn("时间线序列化失败: {}", e.getMessage());
             return "[]";
+        }
+    }
+
+    private List<Map<String, Object>> buildRawEvents(List<Message> messages, Map<String, Long> thinkDurations,
+                                                     String agentCode) {
+        if (messages == null || messages.isEmpty()) {
+            return new ArrayList<>();
         }
         List<Map<String, Object>> events = new ArrayList<>();
         Set<String> seenToolCallIds = new LinkedHashSet<>();
@@ -271,6 +376,9 @@ public class SessionService {
                     Map<String, Object> thinkEvent = new LinkedHashMap<>();
                     thinkEvent.put("type", "thinking");
                     thinkEvent.put("content", reasoning);
+                    if (agentCode != null) {
+                        thinkEvent.put("agentCode", agentCode);
+                    }
                     Long thinkMs = thinkDurations.get(reasoning);
                     if (thinkMs != null) {
                         thinkEvent.put("durationMs", thinkMs);
@@ -280,7 +388,7 @@ public class SessionService {
                 // 2. 正文回答
                 String text = am.getText();
                 if (text != null && !text.isBlank()) {
-                    events.add(Map.of("type", "text", "content", text));
+                    events.add(new LinkedHashMap<>(Map.of("type", "text", "content", text)));
                 }
                 // 3. 工具调用（TodoWrite → todo 执行计划面板，其余 → 普通 tool 卡片）
                 List<AssistantMessage.ToolCall> toolCalls = am.getToolCalls();
@@ -289,7 +397,10 @@ public class SessionService {
                         if ("TodoWrite".equalsIgnoreCase(tc.name())) {
                             List<Map<String, Object>> items = parseTodoItems(tc.arguments());
                             if (!items.isEmpty()) {
-                                events.add(Map.of("type", "todo", "items", items));
+                                Map<String, Object> todoEv = new LinkedHashMap<>();
+                                todoEv.put("type", "todo");
+                                todoEv.put("items", items);
+                                events.add(todoEv);
                             }
                             continue;
                         }
@@ -300,6 +411,9 @@ public class SessionService {
                         toolEvent.put("toolCallId", tc.id());
                         toolEvent.put("arguments", tc.arguments());
                         toolEvent.put("status", "pending");
+                        if (agentCode != null) {
+                            toolEvent.put("agentCode", agentCode);
+                        }
                         events.add(toolEvent);
                     }
                 }
@@ -320,13 +434,7 @@ public class SessionService {
                 }
             }
         }
-
-        try {
-            return objectMapper.writeValueAsString(events);
-        } catch (Exception e) {
-            log.warn("时间线序列化失败: {}", e.getMessage());
-            return "[]";
-        }
+        return events;
     }
 
     /**

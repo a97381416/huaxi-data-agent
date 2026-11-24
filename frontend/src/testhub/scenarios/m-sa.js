@@ -29,7 +29,7 @@ export default {
                 expect: [
                   { kind: 'bodyCode', value: 200 },
                   { kind: 'jsonKeys', path: 'data', value: ['onlineAvailable', 'toolLayers', 'agentMode'] },
-                  { kind: 'jsonEq', path: 'data.agentMode', value: 'single' }
+                  { kind: 'jsonMatch', path: 'data.agentMode', value: '^(single|multi)$' }
                 ]
               },
               {
@@ -475,6 +475,73 @@ export default {
                 expect: [
                   { kind: 'terminal', value: 'COMPLETE' },
                   { kind: 'textLenMin', min: 2 }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      key: 'M5',
+      name: 'M-SA5 · 前端嵌套卡片 + 历史回放对齐 + 双层计划面板',
+      scenarios: [
+        {
+          id: 'MSA-501',
+          prio: 'P0',
+          title: '历史回放对齐：GET /session/{id} 的 timeline 完整内嵌子Agent执行步骤 subSteps',
+          steps: '1) multi 模式执行一次问数查询直至 COMPLETE；2) 请求 GET /session/{{convId}}；3) 校验返回的 timeline JSON 中包含 subSteps 与子工具名',
+          expected: 'session 详情返回 200；timeline 字符串中包含 call_data_analysis 及嵌套的 subSteps 与 executeSql',
+          auto: {
+            steps: [
+              {
+                kind: 'sse',
+                url: '/agent/stream',
+                body: { query: '请帮我查一下当前一共有多少个项目？', conversationId: '{{convId}}', agentMode: 'multi', skill: 'data-analysis' },
+                timeoutMs: 120000,
+                expect: [
+                  { kind: 'toolNameCalled', value: 'call_data_analysis' },
+                  { kind: 'subToolCalled', value: 'executeSql' },
+                  { kind: 'terminal', value: 'COMPLETE' }
+                ]
+              },
+              {
+                method: 'GET',
+                url: '/session/{{convId}}',
+                expect: [
+                  { kind: 'bodyCode', value: 200 },
+                  { kind: 'jsonMatch', path: 'data.messages[0].timeline', value: '"subSteps"\\s*:\\s*\\[' },
+                  { kind: 'jsonMatch', path: 'data.messages[0].timeline', value: 'executeSql' }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          id: 'MSA-502',
+          prio: 'P1',
+          title: '双层 TodoWrite 计划归并：主宏观计划挂载子微观 subItems 不互相覆盖',
+          steps: '1) 触发主路由2步计划 + 子Agent 3步计划演示流；2) 检查 SSE 双层 TodoWrite 事件与 /session 回放归并结构',
+          expected: 'SSE 含主子两级 TodoWrite；历史回放 todo 事件保留顶层2步且对应步骤内含 subItems 数组',
+          auto: {
+            steps: [
+              {
+                kind: 'sse',
+                url: '/agent/demo/subagent/stream',
+                body: { query: '请先调用 TodoWrite 建立2步主计划，再委派子助手先调用 TodoWrite 建立3步子计划并调用 echo 输出 dual-todo-ok 完成任务', conversationId: '{{convId}}', enableDualTodoDemo: true },
+                timeoutMs: 90000,
+                expect: [
+                  { kind: 'toolNameCalled', value: 'TodoWrite' },
+                  { kind: 'subToolCalled', value: 'TodoWrite' },
+                  { kind: 'terminal', value: 'COMPLETE' }
+                ]
+              },
+              {
+                method: 'GET',
+                url: '/session/{{convId}}',
+                expect: [
+                  { kind: 'bodyCode', value: 200 },
+                  { kind: 'jsonMatch', path: 'data.messages[0].timeline', value: '"subItems"\\s*:\\s*\\[' }
                 ]
               }
             ]
