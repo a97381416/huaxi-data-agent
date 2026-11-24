@@ -106,19 +106,20 @@ public class AgentController {
         // ③ 存在中断快照 → 恢复执行（本次 query 作为 resumeQuery 传入，空 = 纯恢复）
         if (dodoAgent.hasInterruptedState(conversationId)) {
             source = dodoAgent.resumeStream(conversationId, userId, request.query(),
-                    request.fileIds(), isOnline(request), skillName, resolveModelCode(request), request.thinking());
+                    request.fileIds(), isOnline(request), skillName, resolveModelCode(request),
+                    request.thinking(), request.agentMode());
         } else {
             // ④ 全新执行
             if (!StringUtils.hasText(request.query())) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "query 不能为空");
             }
-            log.info("[data-agent] 收到查询: convId={}, userId={}, query={}, fileIds={}, online={}, skill={}, model={}",
+            log.info("[data-agent] 收到查询: convId={}, userId={}, query={}, fileIds={}, online={}, skill={}, model={}, mode={}",
                     conversationId, userId, request.query(),
                     request.fileIds() == null ? 0 : request.fileIds().size(), isOnline(request), skillName,
-                    resolveModelCode(request));
+                    resolveModelCode(request), request.agentMode());
             source = dodoAgent.stream(request.query(), conversationId, userId,
                     request.fileIds(), isOnline(request), skillName, resolveModelCode(request),
-                    !Boolean.FALSE.equals(request.thinking()));
+                    !Boolean.FALSE.equals(request.thinking()), request.agentMode());
         }
 
         // 流级兜底：内核异常转 ERROR + COMPLETE 事件（注册表 doFinally 会按流终止摘除）

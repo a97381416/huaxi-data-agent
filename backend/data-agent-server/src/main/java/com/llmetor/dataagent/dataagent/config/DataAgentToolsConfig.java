@@ -80,4 +80,82 @@ public class DataAgentToolsConfig {
                 listReviewTasksTool, getReviewDetailTool, listCoauditOptionsTool,
                 approveTaskTool, rejectTaskTool, partialApproveLedgerTool))));
     }
+
+    /**
+     * M-SA4：多 Agent 物理隔离工具组（4 大垂类子 Agent 各自常驻直发，根治跨业务串台并省去首轮 tool_search）。
+     */
+    public record SubAgentToolGroups(
+            List<ToolCallback> dataAnalysisTools,
+            List<ToolCallback> declarantFillTools,
+            List<ToolCallback> reviewerWorkflowTools,
+            List<ToolCallback> declarantWorkflowTools,
+            ToolCallback cancelConfirmTool,
+            ToolCallback todoWriteTool) {
+    }
+
+    @Bean
+    public SubAgentToolGroups subAgentToolGroups(
+            GlossaryCatalog glossaryCatalog,
+            com.llmetor.dataagent.dataagent.tools.ListTablesTool listTablesTool,
+            com.llmetor.dataagent.dataagent.tools.DescribeTablesTool describeTablesTool,
+            com.llmetor.dataagent.dataagent.tools.ValidateSqlTool validateSqlTool,
+            com.llmetor.dataagent.dataagent.tools.ExecuteSqlTool executeSqlTool,
+            com.llmetor.dataagent.dataagent.tools.CalculateTool calculateTool,
+            com.llmetor.dataagent.dataagent.tools.TimeTool timeTool,
+            com.llmetor.dataagent.dataagent.action.MyPermissionsTool myPermissionsTool,
+            com.llmetor.dataagent.dataagent.action.task.ListMyTasksTool listMyTasksTool,
+            com.llmetor.dataagent.dataagent.action.task.GetTaskDetailTool getTaskDetailTool,
+            com.llmetor.dataagent.dataagent.action.task.StageDraftTool stageDraftTool,
+            com.llmetor.dataagent.dataagent.action.task.ResubmitLedgerTool resubmitLedgerTool,
+            com.llmetor.dataagent.dataagent.action.task.CancelConfirmTool cancelConfirmTool,
+            com.llmetor.dataagent.dataagent.action.fill.ListMyProjectsTool listMyProjectsTool,
+            com.llmetor.dataagent.dataagent.action.fill.ListPhaseTreeTool listPhaseTreeTool,
+            com.llmetor.dataagent.dataagent.action.fill.ListFillNodesTool listFillNodesTool,
+            com.llmetor.dataagent.dataagent.action.fill.ListMyDraftsTool listMyDraftsTool,
+            com.llmetor.dataagent.dataagent.action.fill.ListReviewOptionsTool listReviewOptionsTool,
+            com.llmetor.dataagent.dataagent.action.fill.FillFileEntryTool fillFileEntryTool,
+            com.llmetor.dataagent.dataagent.action.fill.SubmitLedgerForReviewTool submitLedgerForReviewTool,
+            com.llmetor.dataagent.dataagent.action.review.ListReviewTasksTool listReviewTasksTool,
+            com.llmetor.dataagent.dataagent.action.review.GetReviewDetailTool getReviewDetailTool,
+            com.llmetor.dataagent.dataagent.action.review.ListCoauditOptionsTool listCoauditOptionsTool,
+            com.llmetor.dataagent.dataagent.action.review.ApproveTaskTool approveTaskTool,
+            com.llmetor.dataagent.dataagent.action.review.RejectTaskTool rejectTaskTool,
+            com.llmetor.dataagent.dataagent.action.review.PartialApproveLedgerTool partialApproveLedgerTool) {
+
+        ToolCallback lookupGlossary = LookupGlossaryTool.builder().terms(glossaryCatalog.listAll()).build();
+        ToolCallback todoWrite = TodoWriteTool.create();
+        ToolCallback cancelConfirm = ToolCallbacks.from(cancelConfirmTool)[0];
+
+        List<ToolCallback> dataAnalysis = new ArrayList<>();
+        dataAnalysis.add(lookupGlossary);
+        dataAnalysis.addAll(Arrays.asList(ToolCallbacks.from(
+                listTablesTool, describeTablesTool, validateSqlTool,
+                executeSqlTool, calculateTool, timeTool, myPermissionsTool)));
+        dataAnalysis.add(todoWrite);
+
+        List<ToolCallback> declarantFill = new ArrayList<>(Arrays.asList(ToolCallbacks.from(
+                listMyProjectsTool, listPhaseTreeTool, listFillNodesTool, listMyDraftsTool,
+                listReviewOptionsTool, fillFileEntryTool, submitLedgerForReviewTool)));
+        declarantFill.add(cancelConfirm);
+        declarantFill.add(todoWrite);
+
+        List<ToolCallback> reviewerWorkflow = new ArrayList<>(Arrays.asList(ToolCallbacks.from(
+                listReviewTasksTool, getReviewDetailTool, listCoauditOptionsTool,
+                approveTaskTool, rejectTaskTool, partialApproveLedgerTool)));
+        reviewerWorkflow.add(cancelConfirm);
+        reviewerWorkflow.add(todoWrite);
+
+        List<ToolCallback> declarantWorkflow = new ArrayList<>(Arrays.asList(ToolCallbacks.from(
+                listMyTasksTool, getTaskDetailTool, stageDraftTool, resubmitLedgerTool)));
+        declarantWorkflow.add(cancelConfirm);
+        declarantWorkflow.add(todoWrite);
+
+        return new SubAgentToolGroups(
+                List.copyOf(dataAnalysis),
+                List.copyOf(declarantFill),
+                List.copyOf(reviewerWorkflow),
+                List.copyOf(declarantWorkflow),
+                cancelConfirm,
+                todoWrite);
+    }
 }

@@ -852,8 +852,8 @@ flowchart LR
 }
 ```
 * **M-SA4 里程碑准出闸门与回滚**：
-  * `[ ]` 浏览器 `/test/m-SA` 中 `MSA-401 ~ MSA-404` 全部 `PASSED`
-  * `[ ]` 切换 `data-agent.agent.mode: single` 与 `multi` 双向验证无异常
+  * `[x]` 浏览器 `/test/mSA` 中 `MSA-401 ~ MSA-404` 全部 `PASSED`（验收通过 2026-11-24）
+  * `[x]` 切换 `data-agent.agent.mode: single` 与 `multi` 双向验证无异常（验收通过 2026-11-24）
   * **回滚预案**：若业务提示词或边缘场景在 `multi` 下表现不稳定，仅需将 `application.yml` 中 `data-agent.agent.mode` 保持为 `single`，即可在不回滚任何代码的情况下 100% 恢复原单 Agent 线上表现。
 
 ---
@@ -986,10 +986,10 @@ flowchart LR
 - [x] **【闸门验收】**：浏览器跑通 `MSA-301` 全绿，监控中心会话跟踪页核验提问不虚增 → 打标 `m-sa3-verified`（验收通过 2026-11-24）
 
 ### 阶段 4：主路由 + 四大有状态垂类子 Agent 接入（M-SA4）
-- [ ] 拆分 `DataAgentToolsConfig` 为 4 个独立常驻工具组，同步图表 MCP 工具至问数子 Agent
-- [ ] 实现 `SubAgentRegistry` 动态装配 4 个垂类子 Agent（复用 `SkillManager` 热加载正文并剥离旧 `tool_search` 段）
-- [ ] 重构 `DodoAgent` 支持 `single / multi` 双模路由，主路由常驻挂载 `cancelConfirm` 与自包含交接提示词
-- [ ] **【闸门验收】**：浏览器跑通 `MSA-401 ~ MSA-404` 全绿，实测填报两段式确认与 `single` 一键回滚可用 → 打标 `m-sa4-verified`
+- [x] 拆分 `DataAgentToolsConfig` 为 4 个独立常驻工具组，同步图表 MCP 工具至问数子 Agent（验收通过 2026-11-24）
+- [x] 实现 `SubAgentRegistry` 动态装配 4 个垂类子 Agent（复用 `SkillManager` 热加载正文并剥离旧 `tool_search` 段）（验收通过 2026-11-24）
+- [x] 重构 `DodoAgent` 支持 `single / multi` 双模路由，主路由常驻挂载 `cancelConfirm` 与自包含交接提示词（验收通过 2026-11-24）
+- [x] **【闸门验收】**：浏览器跑通 `MSA-401 ~ MSA-404` 全绿，实测填报/审核路由与 `single` 一键回滚可用 → 打标 `m-sa4-verified`（验收通过 2026-11-24）
 
 ### 阶段 5：前端嵌套交互、回放对齐与双层计划面板（M-SA5）
 - [ ] 升级 `ChatView.vue` 支持 `parentToolCallId` 子步骤折叠卡渲染及 `__card: "confirm"` 外层冒泡

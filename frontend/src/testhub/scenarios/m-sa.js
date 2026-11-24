@@ -357,6 +357,130 @@ export default {
           }
         }
       ]
+    },
+    {
+      key: 'M4',
+      name: 'M-SA4 · 主路由 + 四大有状态垂类子 Agent 切换',
+      scenarios: [
+        {
+          id: 'MSA-401',
+          prio: 'P0',
+          title: 'Multi模式-闲聊直答：主路由直接响应不误唤醒业务子Agent',
+          steps: 'agentMode=multi 发送问候语，检查不触发任何子Agent工具调用直接返回',
+          expected: '无 TOOL_START 事件，正文正常返回助手能力介绍，COMPLETE 收尾',
+          auto: {
+            steps: [
+              {
+                kind: 'sse',
+                url: '/agent/stream',
+                body: { query: '你好，请简单一句话告诉我你是谁', conversationId: '{{convId}}', agentMode: 'multi' },
+                expect: [
+                  { kind: 'noEventType', value: 'TOOL_START' },
+                  { kind: 'terminal', value: 'COMPLETE' },
+                  { kind: 'textLenMin', min: 5 }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          id: 'MSA-402',
+          prio: 'P0',
+          title: 'Multi模式-问数有状态子Agent：查库权限生效 + 跨轮下钻追问',
+          steps: '1) 第1轮问当前可见项目总数；2) 第2轮同窗口追问"把刚才这些项目按状态分组统计数量"',
+          expected: '两轮均路由 call_data_analysis 且子内部调用 executeSql；返回真实统计结果正常 COMPLETE',
+          auto: {
+            steps: [
+              {
+                kind: 'sse',
+                url: '/agent/stream',
+                body: { query: '帮我查一下目前库里我能看到的项目一共有多少个？', conversationId: '{{convId}}', agentMode: 'multi', skill: 'data-analysis' },
+                timeoutMs: 120000,
+                expect: [
+                  { kind: 'toolNameCalled', value: 'call_data_analysis' },
+                  { kind: 'subToolCalled', value: 'executeSql' },
+                  { kind: 'terminal', value: 'COMPLETE' }
+                ]
+              },
+              {
+                kind: 'sse',
+                url: '/agent/stream',
+                body: { query: '把刚才查到的这些项目按状态分组统计一下各自的数量', conversationId: '{{convId}}', agentMode: 'multi' },
+                timeoutMs: 120000,
+                expect: [
+                  { kind: 'toolNameCalled', value: 'call_data_analysis' },
+                  { kind: 'subToolCalled', value: 'executeSql' },
+                  { kind: 'terminal', value: 'COMPLETE' }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          id: 'MSA-403',
+          prio: 'P0',
+          title: 'Multi模式-办理类垂类子Agent精准路由与物理工具隔离',
+          steps: '1) 发起首次填报意图验证路由至 call_declarant_fill 并调 listMyProjects；2) 新窗口发起待审查询验证路由至 call_reviewer_workflow 并调 listReviewTasks',
+          expected: '各自命中对应垂类子Agent与专属读工具，不跨组误调 SQL 或其他组写工具',
+          auto: {
+            steps: [
+              {
+                kind: 'sse',
+                url: '/agent/stream',
+                body: { query: '我要填报项目资料，先列出我名下的项目清单', conversationId: 'test_fill_{{uuid}}', agentMode: 'multi' },
+                timeoutMs: 90000,
+                expect: [
+                  { kind: 'toolNameCalled', value: 'call_declarant_fill' },
+                  { kind: 'subToolCalled', value: 'listMyProjects' },
+                  { kind: 'terminal', value: 'COMPLETE' }
+                ]
+              },
+              {
+                kind: 'sse',
+                url: '/agent/stream',
+                body: { query: '帮我查一下我名下有哪些待我审核审批的任务', conversationId: 'test_rev_{{uuid}}', agentMode: 'multi' },
+                timeoutMs: 90000,
+                expect: [
+                  { kind: 'toolNameCalled', value: 'call_reviewer_workflow' },
+                  { kind: 'subToolCalled', value: 'listReviewTasks' },
+                  { kind: 'terminal', value: 'COMPLETE' }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          id: 'MSA-404',
+          prio: 'P0',
+          title: 'Multi模式-高危确认令牌取消指令直达与 Single 模式回滚可用性',
+          steps: '1) 发送"取消 ct_probe_0000"验证 cancelConfirm 秒级响应；2) 切 agentMode=single 验证回滚通道随时可用',
+          expected: 'cancelConfirm 被正确调用并返回作废/失效说明；single 模式正常 COMPLETE',
+          auto: {
+            steps: [
+              {
+                kind: 'sse',
+                url: '/agent/stream',
+                body: { query: '取消 ct_probe_0000', conversationId: 'test_cancel_{{uuid}}', agentMode: 'multi' },
+                timeoutMs: 60000,
+                expect: [
+                  { kind: 'toolNameCalled', value: 'cancelConfirm' },
+                  { kind: 'terminal', value: 'COMPLETE' }
+                ]
+              },
+              {
+                kind: 'sse',
+                url: '/agent/stream',
+                body: { query: '当前系统时间是多少？', conversationId: 'test_rb_{{uuid}}', agentMode: 'single' },
+                timeoutMs: 60000,
+                expect: [
+                  { kind: 'terminal', value: 'COMPLETE' },
+                  { kind: 'textLenMin', min: 2 }
+                ]
+              }
+            ]
+          }
+        }
+      ]
     }
   ]
 }

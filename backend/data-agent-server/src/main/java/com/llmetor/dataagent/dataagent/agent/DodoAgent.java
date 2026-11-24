@@ -72,6 +72,31 @@ public class DodoAgent {
             </用户指定技能>
             """;
 
+    /** M-SA4：主路由系统提示词（multi 模式） */
+    private static final String ROUTER_SYSTEM_PROMPT = """
+            你是华西项管平台智能体「多多」的主路由调度助手（RouterAgent）。
+            你负责理解用户意图、承接多轮上下文，并将专业任务精准委派给以下有状态垂类专员（每个专员拥有独立的跨轮记忆和专属工具池）：
+
+            1. `call_data_analysis`（数据分析专员）：数据库查表、项目/合同/台账/进度统计分析、指标口径查询、排名对比、图表生成及多轮下钻追问；
+            2. `call_declarant_fill`（资料填报专员）：项目资料首次填报、查我的项目清单、查阶段树/填报节点清单、续填草稿、暂存资料与提交审核；
+            3. `call_reviewer_workflow`（审核审批专员）：查询待我审核审批的任务、查看待审台账详情、办理通过/驳回/部分通过；
+            4. `call_declarant_resubmit`（驳回重提专员）：查询我被驳回需修改重提的待办任务、查看驳回原因、暂存修改与重新提审；
+            5. `cancelConfirm`：当用户要求取消某个高危确认令牌（如"取消 ct_xxx"）时，**直接由你调用 `cancelConfirm` 立即作废**，无需转交专员。
+
+            ## 严格调度铁律
+            - **闲聊/通用问候直答**：如果用户只是打招呼、问你是谁或能做什么，请直接友好回答，**严禁调用任何工具或子专员**！
+            - **自包含交接**：调用 `call_*` 专员时，`task` 参数必须自包含，原样带上用户原文中的项目名、阶段、筛选条件、`[业务文件已上传]` 信息及 `确认执行 ct_xxx` 令牌，不要省略关键实体。
+            - **高危确认原样上浮**：当子专员返回待用户确认的提审/重提/审批计划（含 `ct_xxx` 令牌）时，直接原样清晰展示给用户等待其确认，**严禁擅自替用户再次调用确认**。
+            - **跨领域复合任务**：若用户一次需求横跨多个领域（如先查数再填报），你可以先用 `TodoWrite` 制定宏观步骤，再按顺序委派对应专员并汇总最终结论。
+            """;
+
+    /** M-SA4：multi 模式下斜杠命令指向垂类子 Agent 时的强制定向指令 */
+    private static final String ROUTER_SKILL_DIRECTIVE = """
+            <用户指定垂类专员>
+            用户已通过斜杠命令显式指定本次任务使用「%s」。你必须第一步立即调用 `%s` 工具委派给对应专员，严禁自行编造答案或调用其他垂类专员。
+            </用户指定垂类专员>
+            """;
+
     /** yml 兜底 ChatModel（spring-ai 自动装配 bean）：库空/无可用模型时 resolve 的落点 */
     private final ChatModel chatModel;
     /** 对话模型管理器（agentx_chat_model）：每请求按前端传的 code 解析实际 ChatModel */
@@ -89,6 +114,10 @@ public class DodoAgent {
     private final SessionFilesPromptBuilder sessionFilesPromptBuilder;
     private final com.llmetor.dataagent.dataagent.tools.AnalyzeFileTool analyzeFileTool;
     private final SkillManager skillManager;
+    /** M-SA4：垂类子 Agent 注册表 */
+    private final SubAgentRegistry subAgentRegistry;
+    /** M-SA4：默认架构模式（single / multi） */
+    private final String defaultAgentMode;
     /** 常驻工具层：每请求工具清单必带（lookupGlossary + todoWrite） */
     private final List<ToolCallback> residentTools;
     /** 延迟工具注册表：SQL 六工具 + MCP ALWAYS 型工具（LLM 经 tool_search 发现） */
@@ -125,10 +154,12 @@ public class DodoAgent {
                      SessionFilesPromptBuilder sessionFilesPromptBuilder,
                      com.llmetor.dataagent.dataagent.tools.AnalyzeFileTool analyzeFileTool,
                      SkillManager skillManager,
+                     SubAgentRegistry subAgentRegistry,
                      List<ToolCallback> dataResidentTools,
                      com.llmetor.dataagent.dataagent.config.DataAgentToolsConfig.DeferredToolCandidates dataDeferredToolCandidates,
                      McpClientRegistry mcpRegistry,
                      com.llmetor.miniagentx.context.ContextPolicy contextPolicy,
+                     @Value("${data-agent.agent.mode:single}") String defaultAgentMode,
                      @Value("${data-agent.agent.max-rounds:100}") int maxRounds,
                      @Value("${data-agent.agent.retry-interval-ms:3000}") long retryIntervalMs,
                      @Value("${data-agent.agent.thinking-mode:REASONING_CONTENT}") ThinkingMode thinkingMode,
@@ -156,6 +187,8 @@ public class DodoAgent {
         this.sessionFilesPromptBuilder = sessionFilesPromptBuilder;
         this.analyzeFileTool = analyzeFileTool;
         this.skillManager = skillManager;
+        this.subAgentRegistry = subAgentRegistry;
+        this.defaultAgentMode = defaultAgentMode;
         this.residentTools = List.copyOf(dataResidentTools);
         // 延迟层：SQL 六工具（业务候选）静态注册；MCP 工具由 syncMcpToolsIfNeeded 按版本动态增删
         // （重名注册由内核 warn 并保留先注册者——业务先注册，MCP 重名工具让位，缺陷清单项）
@@ -216,24 +249,32 @@ public class DodoAgent {
     public Flux<AgentStreamEvent> stream(String query, String conversationId, Long userId,
                                          List<String> fileIds, boolean online, String skillName,
                                          String modelCode, boolean thinking) {
+        return stream(query, conversationId, userId, fileIds, online, skillName, modelCode, thinking, null);
+    }
+
+    /** M-SA4 双模入口：支持按请求级 agentMode（single / multi）动态切换单/多 Agent 链路 */
+    public Flux<AgentStreamEvent> stream(String query, String conversationId, Long userId,
+                                         List<String> fileIds, boolean online, String skillName,
+                                         String modelCode, boolean thinking, String agentMode) {
         // 阶段一关联：本轮 system prompt 反查立即生效
         if (hasFiles(fileIds)) {
             fileManageService.linkToConversation(fileIds, conversationId);
         }
-        ReactAgent agent = buildAgent(userId, conversationId, fileIds, online, skillName, modelCode, thinking);
+        boolean multi = isMultiMode(agentMode);
+        ReactAgent agent = multi
+                ? buildRouterAgent(userId, conversationId, fileIds, online, skillName, modelCode, thinking)
+                : buildAgent(userId, conversationId, fileIds, online, skillName, modelCode, thinking);
         RunnableParams params = RunnableParams.builder()
                 .conversationId(conversationId)
                 .userId(userId == null ? "" : userId.toString())
+                .agentCode(multi ? "router" : "single")
                 // executeSql 的 inputSchema 有 userId 参数 → 内核执行前强制覆盖为真实值，不暴露给 LLM
                 // M-E0 写通道：token/tenantId 同机制注入（写工具以当前用户身份转发主后端 REST）
                 .toolParams(buildToolParams(userId, conversationId))
                 .build();
-        log.info("[data-agent] 收到查询: convId={}, userId={}, query={}, fileIds={}, online={}, skill={}, model={}",
-                conversationId, userId, query, fileIds == null ? 0 : fileIds.size(), online, skillName, modelCode);
-        // M7-A01 观测点：首轮工具清单（延迟层不下发，tool_search 按需发现）
-        List<ToolCallback> firstRound = availableTools(conversationId, online, skillName);
-        log.info("[data-agent] 首轮工具清单({}个): {} + tool_search + context_reload | 延迟层({}个)经 tool_search 发现",
-                firstRound.size() + 2, toolNames(firstRound), deferredRegistry.size());
+        log.info("[data-agent] 收到查询: mode={}, convId={}, userId={}, query={}, fileIds={}, online={}, skill={}, model={}",
+                multi ? "multi" : "single", conversationId, userId, query,
+                fileIds == null ? 0 : fileIds.size(), online, skillName, modelCode);
         // 阶段二关联：Complete/Paused 事件携带 sessionId 后补写（历史回放按轮取附件）
         Flux<AgentStreamEvent> baseFlux = agent.stream(query, params);
         return hasFiles(fileIds) ? baseFlux.doOnNext(evt -> linkFilesFromEvent(fileIds, evt)) : baseFlux;
@@ -310,15 +351,114 @@ public class DodoAgent {
     public Flux<AgentStreamEvent> resumeStream(String conversationId, Long userId, String resumeQuery,
                                                List<String> fileIds, boolean online, String skillName,
                                                String modelCode, Boolean thinking) {
+        return resumeStream(conversationId, userId, resumeQuery, fileIds, online, skillName, modelCode, thinking, null);
+    }
+
+    /** M-SA4 双模恢复入口 */
+    public Flux<AgentStreamEvent> resumeStream(String conversationId, Long userId, String resumeQuery,
+                                               List<String> fileIds, boolean online, String skillName,
+                                               String modelCode, Boolean thinking, String agentMode) {
         if (hasFiles(fileIds)) {
             fileManageService.linkToConversation(fileIds, conversationId);
         }
-        ReactAgent agent = buildAgent(userId, conversationId, fileIds, online, skillName, modelCode, thinking);
+        boolean multi = isMultiMode(agentMode);
+        ReactAgent agent = multi
+                ? buildRouterAgent(userId, conversationId, fileIds, online, skillName, modelCode, thinking)
+                : buildAgent(userId, conversationId, fileIds, online, skillName, modelCode, thinking);
         String effective = (resumeQuery == null || resumeQuery.isBlank()) ? null : resumeQuery;
-        log.info("[data-agent] 恢复中断会话: convId={}, userId={}, resumeQuery={}, fileIds={}, online={}, model={}",
-                conversationId, userId, effective, fileIds == null ? 0 : fileIds.size(), online, modelCode);
+        log.info("[data-agent] 恢复中断会话: mode={}, convId={}, userId={}, resumeQuery={}, fileIds={}, online={}, model={}",
+                multi ? "multi" : "single", conversationId, userId, effective,
+                fileIds == null ? 0 : fileIds.size(), online, modelCode);
         Flux<AgentStreamEvent> baseFlux = agent.resumeStream(conversationId, effective);
         return hasFiles(fileIds) ? baseFlux.doOnNext(evt -> linkFilesFromEvent(fileIds, evt)) : baseFlux;
+    }
+
+    private boolean isMultiMode(String requestAgentMode) {
+        String effective = (requestAgentMode != null && !requestAgentMode.isBlank())
+                ? requestAgentMode.trim() : defaultAgentMode;
+        return "multi".equalsIgnoreCase(effective);
+    }
+
+    /** M-SA4：构建主路由 RouterAgent（挂载 4 个有状态垂类 SubAgentTool + cancelConfirm + TodoWrite + 扩展技能） */
+    private ReactAgent buildRouterAgent(Long userId, String conversationId, List<String> fileIds,
+                                        boolean online, String skillName, String modelCode, Boolean thinking) {
+        syncMcpToolsIfNeeded();
+        String thinkingOffParam = resolveThinkingOffParam(modelCode, thinking);
+        ChatModel resolvedModel = chatModelManager.resolve(modelCode, chatModel);
+
+        StringBuilder prompt = new StringBuilder(ROUTER_SYSTEM_PROMPT);
+        String userCtx = userContextBuilder.build(userId);
+        if (userCtx != null && !userCtx.isBlank()) {
+            prompt.append("\n\n---\n\n").append(userCtx);
+        }
+        String filesCtx = sessionFilesPromptBuilder.build(conversationId, fileIds);
+        if (filesCtx != null && !filesCtx.isBlank()) {
+            prompt.append("\n\n---\n\n").append(filesCtx);
+        }
+        if (skillName != null && !skillName.isBlank()) {
+            String mappedTool = SubAgentRegistry.SKILL_TO_TOOL.get(skillName);
+            if (mappedTool != null) {
+                prompt.append("\n\n---\n\n").append(ROUTER_SKILL_DIRECTIVE.formatted(skillName, mappedTool));
+            } else {
+                prompt.append("\n\n---\n\n").append(USER_SKILL_DIRECTIVE.formatted(skillName));
+            }
+        }
+
+        List<ToolCallback> routerTools = new ArrayList<>();
+        routerTools.addAll(subAgentRegistry.buildSubAgentTools(
+                userId, conversationId, fileIds, resolvedModel, thinkingOffParam, thinkingMode,
+                maxRounds, retryIntervalMs, taskManager, dataSource, sessionStore,
+                traceCollector, pauseStateStore, contextPolicy, loopGuardConfig));
+        routerTools.add(subAgentRegistry.cancelConfirmTool());
+        routerTools.add(subAgentRegistry.todoWriteTool());
+
+        // 非垂类扩展技能保留给主路由 SkillsTool（如 skill-creator 等）
+        List<String> extSkillDirs = skillManager.getEnabledSkillDirs().stream()
+                .filter(dir -> {
+                    String folderName = java.nio.file.Path.of(dir).getFileName().toString();
+                    return !SubAgentRegistry.VERTICAL_SKILLS.contains(folderName);
+                })
+                .toList();
+        if (!extSkillDirs.isEmpty()) {
+            routerTools.add(SkillsTool.builder().addSkillsDirectories(extSkillDirs).build());
+        }
+        if (!fileManageService.listByConversationId(conversationId).isEmpty()) {
+            routerTools.addAll(List.of(ToolCallbacks.from(analyzeFileTool)));
+        }
+        List<ToolCallback> onlineTools = onlineMcpTools;
+        if (online && !onlineTools.isEmpty()) {
+            routerTools.addAll(onlineTools);
+        }
+
+        return ReactAgent.builder()
+                .chatModel(resolvedModel)
+                .instructions(prompt.toString())
+                .tools(routerTools)
+                .contextPolicy(contextPolicy)
+                .thinkingMode(thinkingMode)
+                .thinkingOffParam(thinkingOffParam)
+                .loopGuard(loopGuardConfig)
+                .maxRounds(maxRounds)
+                .maxRetries(3)
+                .retryIntervalMs(retryIntervalMs)
+                .taskManager(taskManager)
+                .dataSource(dataSource)
+                .sessionStore(sessionStore)
+                .traceCollector(traceCollector)
+                .stateStore(pauseStateStore)
+                .build();
+    }
+
+    private String resolveThinkingOffParam(String modelCode, Boolean thinking) {
+        if (!Boolean.FALSE.equals(thinking)) {
+            return null;
+        }
+        com.llmetor.dataagent.dataagent.model.AgentxChatModel pickedRow = chatModelManager.pickRow(modelCode);
+        if (pickedRow != null && pickedRow.getThinkingOffParam() != null && !pickedRow.getThinkingOffParam().isBlank()) {
+            log.info("[data-agent] 深度思考已关闭: model={} 注入关思考参数", pickedRow.getCode());
+            return pickedRow.getThinkingOffParam();
+        }
+        return null;
     }
 
     /**
