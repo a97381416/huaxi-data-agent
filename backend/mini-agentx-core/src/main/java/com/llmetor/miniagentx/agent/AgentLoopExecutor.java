@@ -230,8 +230,8 @@ public class AgentLoopExecutor {
      * 启动执行，返回事件流。每个流必以 Paused 或 Complete 收尾。
      */
     public Flux<AgentStreamEvent> run() {
-        // 1、把任务保存起来,onInterrupt(stop中断的时候、会触发这个方法)
-        taskManager.registerTask(conversationId(), sink, this::onInterrupt);
+        // 1、把任务保存起来,onInterrupt(stop中断的时候、会触发这个方法)，onForceStop(超时/强停彻底终止循环)
+        taskManager.registerTask(conversationId(), sink, this::onInterrupt, this::onForceStop);
         if (resumeState != null) {
             // 恢复通道异步执行：空消息恢复可能同步重放耗时工具（如 SubAgentTool），
             // 绝不能阻塞 HTTP 线程，确保 SSE 响应头 1ms 内发给前端且实时推送重放事件
@@ -256,7 +256,7 @@ public class AgentLoopExecutor {
         }
 
         return sink.asFlux()
-                .doFinally(sig -> fallbackPersist())
+                .doFinally(this::fallbackPersist)
                 .name("mini-agentx-stream");
     }
 
@@ -1103,13 +1103,51 @@ public class AgentLoopExecutor {
         }
     }
 
-    /** doFinally 兜底：不信任 Reactor signal，未落库一律按 interrupted 处理 */
-    private void fallbackPersist() {
-        if (persisted.compareAndSet(false, true) && sessionStore != null) {
+    /**
+     * 强制停止回调（stopTask / 子 Agent 超时触发）：
+     * 1) 置位中断与终态标记，阻断工具异步回调续跑下一轮（防僵尸循环）；
+     * 2) 立即中断线程池并抢占 persisted 标记，跳过失败半截轨迹的 sessionStore 写入（防脏上下文污染）；
+     * 3) 仅关闭监控会话，防止监控表状态永久停留在 running。
+     */
+    private void onForceStop() {
+        interruptCtx.fireInterrupt();
+        terminalEmitted.set(true);
+        current = null;
+        toolPool.shutdownNow();
+        if (persisted.compareAndSet(false, true) && traceCollector != null) {
             try {
-                sessionStore.persistTerminal(conversationId(), sessionId, "interrupted", originalChain, messages, historySize, !params.isSubAgent());
+                traceCollector.closeSession(sessionId, params.effectiveRootConversationId(), "interrupted", null);
             } catch (Exception e) {
-                log.warn("兜底落库失败: convId={}", conversationId(), e);
+                log.warn("强制停止 closeSession 失败（不影响主流程）: convId={}, sessionId={}",
+                        params.effectiveRootConversationId(), sessionId, e);
+            }
+        }
+        taskManager.unregisterTask(conversationId());
+        log.info("执行已强制停止: convId={}, round={}", conversationId(), round);
+    }
+
+    /** doFinally 兜底：外部 CANCEL 走强停阻断（防僵尸循环与脏上下文），其余未落库情况按 interrupted 处理 */
+    private void fallbackPersist(reactor.core.publisher.SignalType sig) {
+        if (sig == reactor.core.publisher.SignalType.CANCEL) {
+            onForceStop();
+            return;
+        }
+        if (persisted.compareAndSet(false, true)) {
+            if (sessionStore != null) {
+                try {
+                    sessionStore.persistTerminal(conversationId(), sessionId, "interrupted", originalChain, messages, historySize, !params.isSubAgent());
+                } catch (Exception e) {
+                    log.warn("兜底落库失败: convId={}", conversationId(), e);
+                }
+            }
+            // M-SA3 补充：stopStream / 超时取消等未经过 onInterrupt 的路径也必须关闭监控会话，防状态永久停留在 running
+            if (traceCollector != null) {
+                try {
+                    traceCollector.closeSession(sessionId, params.effectiveRootConversationId(), "interrupted", null);
+                } catch (Exception e) {
+                    log.warn("兜底 closeSession 失败（不影响主流程）: convId={}, sessionId={}",
+                            params.effectiveRootConversationId(), sessionId, e);
+                }
             }
         }
         taskManager.unregisterTask(conversationId());

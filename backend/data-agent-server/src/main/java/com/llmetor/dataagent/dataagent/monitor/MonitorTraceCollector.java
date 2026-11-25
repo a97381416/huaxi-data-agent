@@ -408,9 +408,9 @@ public class MonitorTraceCollector implements TraceCollector {
                          COALESCE(SUM(COALESCE(fail_rounds, 0)), 0) AS fail_rounds,
                          COALESCE(SUM(COALESCE(prompt_tokens, 0)), 0) AS prompt_tokens,
                          COALESCE(SUM(COALESCE(completion_tokens, 0)), 0) AS completion_tokens,
-                         CASE WHEN COUNT(*) FILTER (WHERE status = 'running') > 0 THEN 'running'
-                              WHEN COUNT(*) FILTER (WHERE status = 'error') > 0 THEN 'error'
-                              WHEN COUNT(*) FILTER (WHERE status = 'interrupted') > 0 THEN 'interrupted'
+                         CASE WHEN COUNT(*) FILTER (WHERE parent_session_id IS NULL AND status = 'running') > 0 THEN 'running'
+                              WHEN COUNT(*) FILTER (WHERE parent_session_id IS NULL AND status = 'error') > 0 THEN 'error'
+                              WHEN COUNT(*) FILTER (WHERE parent_session_id IS NULL AND status = 'interrupted') > 0 THEN 'interrupted'
                               ELSE 'completed' END AS status,
                          MIN(created_at) AS started_at,
                          MAX(COALESCE(completed_at, created_at)) AS last_active_at

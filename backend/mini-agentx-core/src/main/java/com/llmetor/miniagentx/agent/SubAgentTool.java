@@ -236,11 +236,12 @@ public class SubAgentTool implements ToolCallback {
             boolean finished = latch.await(timeoutMs, TimeUnit.MILLISECONDS);
             if (!finished) {
                 log.warn("[SubAgentTool] 子助手执行超时({}ms)，强制停止: subConvId={}", timeoutMs, subConvId);
-                disposable.dispose();
                 try {
                     subAgent.stopStream(subConvId);
                 } catch (Exception e) {
                     log.warn("[SubAgentTool] 超时停止子任务异常: subConvId={}", subConvId, e);
+                } finally {
+                    disposable.dispose();
                 }
                 return "{\"error\":\"子助手执行超时（超过 " + timeoutMs + "ms），已自动终止子任务\",\"agentCode\":\""
                         + agentCode + "\",\"timeout\":true}";

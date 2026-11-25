@@ -510,9 +510,12 @@ function goDetail(row) {
   })
 }
 
-/** 不带 sessionId：进提问详情页，默认聚焦该窗口第一问 */
+/** 进窗口详情页并聚焦当前行提问（有 sessionId 时直达该问，避免缺失参数误聚焦） */
 function goConversation(row) {
-  router.push({ path: `/monitor/traces/${encodeURIComponent(row.conversationId)}` })
+  router.push({
+    path: `/monitor/traces/${encodeURIComponent(row.conversationId)}`,
+    query: row.sessionId ? { sessionId: row.sessionId } : undefined
+  })
 }
 
 function rowClass({ row }) {

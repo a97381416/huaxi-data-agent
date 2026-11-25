@@ -1,8 +1,10 @@
 package com.llmetor.miniagentx.agent;
 
+import com.llmetor.miniagentx.memory.AgentxSessionStore;
 import com.llmetor.miniagentx.model.AgentStreamEvent;
 import com.llmetor.miniagentx.model.RunnableParams;
 import com.llmetor.miniagentx.testsupport.ScriptedChatModel;
+import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
@@ -13,6 +15,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -195,5 +198,76 @@ class SubAgentIsolationTest {
                         && e.getResult() != null && e.getResult().contains("超时"));
         assertTrue(timeoutReturned, "超时应返回结构化超时提示");
         assertFalse(sharedTaskMgr.hasRunningTask("root_timeout_1::demo-sub"), "超时后子任务必须已注销无残留");
+    }
+
+    @Test
+    void subAgentTimeoutStopsZombieRoundsAndDoesNotPolluteHistory() throws InterruptedException {
+        JdbcDataSource ds = new JdbcDataSource();
+        ds.setURL("jdbc:h2:mem:sub_zombie_" + System.nanoTime()
+                + ";MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1");
+        ds.setUser("sa");
+        ds.setPassword("");
+        AgentxSessionStore sessionStore = new AgentxSessionStore(ds);
+        AgentTaskManager sharedTaskMgr = new AgentTaskManager();
+
+        AtomicInteger zombieCalls = new AtomicInteger(0);
+        ProbeTools probe = new ProbeTools() {
+            @Override
+            @Tool(description = "模拟慢工具（忽略中断睡满 700ms）")
+            public String slow() {
+                long end = System.currentTimeMillis() + 700;
+                while (System.currentTimeMillis() < end) {
+                    try {
+                        Thread.sleep(50);
+                    } catch (InterruptedException ignored) {
+                        // 即使工具自身吞掉中断，执行器也必须在回调处拦截，严禁进入下一轮
+                    }
+                }
+                return "slow_finished";
+            }
+        };
+
+        // 第 1 次调用：调 slow 后若僵尸续跑会触发第 2 轮；提前准备正常响应检验是否被误消费
+        ScriptedChatModel subLlm = new ScriptedChatModel();
+        subLlm.enqueue(Flux.just(ScriptedChatModel.toolCallChunk("slow_1", "slow", "{}")));
+        subLlm.enqueue(Flux.defer(() -> {
+            zombieCalls.incrementAndGet();
+            return Flux.just(ScriptedChatModel.textChunk("绝不应该执行的僵尸回复"));
+        }));
+
+        ToolCallback subTool = new SubAgentTool("call_demo_sub", "demo-sub", "慢子助手",
+                () -> ReactAgent.builder()
+                        .chatModel(subLlm)
+                        .tools(Arrays.asList(ToolCallbacks.from(probe)))
+                        .taskManager(sharedTaskMgr)
+                        .sessionStore(sessionStore)
+                        .enableCompaction(false)
+                        .build(),
+                200L);
+
+        ScriptedChatModel routerLlm = new ScriptedChatModel();
+        routerLlm.enqueue(Flux.just(
+                ScriptedChatModel.toolCallChunk("p_timeout", "call_demo_sub", "{\"task\":\"跑慢工具\"}")));
+        routerLlm.enqueue(Flux.just(ScriptedChatModel.textChunk("超时兜底完成")));
+
+        ReactAgent router = ReactAgent.builder()
+                .chatModel(routerLlm)
+                .tools(List.of(subTool))
+                .taskManager(sharedTaskMgr)
+                .sessionStore(sessionStore)
+                .enableCompaction(false)
+                .build();
+
+        List<AgentStreamEvent> events = router.stream("跑慢的", RunnableParams.of("root_zombie_1"))
+                .collectList()
+                .block(Duration.ofSeconds(10));
+
+        assertNotNull(events);
+        // 等待原本 700ms 的慢工具彻底跑完
+        Thread.sleep(800);
+
+        assertEquals(0, zombieCalls.get(), "超时强停后绝不允许出现僵尸续跑轮次");
+        assertTrue(sessionStore.loadHistory("root_zombie_1::demo-sub").isEmpty(),
+                "超时强停的半截失败轨迹不得写入 agentx_session 污染后续上下文");
     }
 }

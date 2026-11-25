@@ -17,3 +17,8 @@ tmp/
 # OS
 .DS_Store
 Thumbs.db
+
+# ZCode / local scratch
+.zcode/
+*.stackdump
+scripts/

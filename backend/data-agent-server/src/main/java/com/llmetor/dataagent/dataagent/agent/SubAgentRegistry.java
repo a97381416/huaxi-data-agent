@@ -134,14 +134,15 @@ public class SubAgentRegistry {
             }
             String prompt = buildSubPrompt(CODE_DATA_ANALYSIS,
                     "你是华西项目管理平台的「数据分析专员」，负责查表、统计、对比、趋势分析、明细查询与可视化图表生成。"
-                            + "你的 SQL 与图表工具已全部常驻可用，无需调用 tool_search，请直接按业务规范执行。",
+                            + "你的 SQL 与图表工具已全部常驻可用，无需调用 tool_search，请直接按业务规范执行。"
+                            + "面对「有多少/统计/汇总」类问题，优先使用 1~2 条聚合 SQL（COUNT/GROUP BY）直接得出结论并作答，避免无意义的多轮逐表探查或全量明细展开。",
                     userCtx, filesCtx);
             result.add(new SubAgentTool(
                     TOOL_DATA_ANALYSIS,
                     CODE_DATA_ANALYSIS,
                     "委派「数据分析专员」执行数据库统计查询、项目/合同/台账/进度分析、指标口径查询与图表生成（有跨轮记忆，支持追问下钻）",
                     () -> buildSubReactAgent(resolvedChatModel, prompt, tools, thinkingMode, thinkingOffParam,
-                            maxRounds, retryIntervalMs, taskManager, dataSource, sessionStore, traceCollector,
+                            subMaxRounds(maxRounds), retryIntervalMs, taskManager, dataSource, sessionStore, traceCollector,
                             pauseStateStore, contextPolicy, loopGuardConfig)));
         }
 
@@ -153,14 +154,15 @@ public class SubAgentRegistry {
             }
             String prompt = buildSubPrompt(CODE_DECLARANT_FILL,
                     "你是华西项目管理平台的「资料填报专员」，负责项目资料首次填报全流程（查我的项目→查阶段树→拉填报节点清单→暂存草稿→查询审核人→生成提审确认计划）。"
-                            + "你的全部填报工具已常驻可用，无需调用 tool_search。涉及 submitLedgerForReview 签发确认令牌（ct_xxx）时，严禁自行二次调用确认，必须把确认计划原样返回给用户等待确认！",
+                            + "你的全部填报工具已常驻可用，无需调用 tool_search。若任务要求跨项目全量数量统计（如汇总全部已上报/已通过数量），请立即说明本专员仅负责填报办理与草稿管理、无法做全量聚合统计（需交由数据分析专员查库），严禁逐项目循环翻树盲猜！"
+                            + "涉及 submitLedgerForReview 签发确认令牌（ct_xxx）时，严禁自行二次调用确认，必须把确认计划原样返回给用户等待确认！",
                     userCtx, filesCtx);
             result.add(new SubAgentTool(
                     TOOL_DECLARANT_FILL,
                     CODE_DECLARANT_FILL,
                     "委派「资料填报专员」办理项目资料首次填报、续填草稿、查看我的项目/阶段/填报节点清单、暂存资料及提交审核",
                     () -> buildSubReactAgent(resolvedChatModel, prompt, tools, thinkingMode, thinkingOffParam,
-                            maxRounds, retryIntervalMs, taskManager, dataSource, sessionStore, traceCollector,
+                            subMaxRounds(maxRounds), retryIntervalMs, taskManager, dataSource, sessionStore, traceCollector,
                             pauseStateStore, contextPolicy, loopGuardConfig)));
         }
 
@@ -179,7 +181,7 @@ public class SubAgentRegistry {
                     CODE_REVIEWER_WORKFLOW,
                     "委派「审核审批专员」查询待我审核的任务清单、查看待审资料详情，以及办理审核通过、驳回或部分通过审批",
                     () -> buildSubReactAgent(resolvedChatModel, prompt, tools, thinkingMode, thinkingOffParam,
-                            maxRounds, retryIntervalMs, taskManager, dataSource, sessionStore, traceCollector,
+                            subMaxRounds(maxRounds), retryIntervalMs, taskManager, dataSource, sessionStore, traceCollector,
                             pauseStateStore, contextPolicy, loopGuardConfig)));
         }
 
@@ -191,18 +193,23 @@ public class SubAgentRegistry {
             }
             String prompt = buildSubPrompt(CODE_DECLARANT_WORKFLOW,
                     "你是华西项目管理平台的「驳回重提专员」，负责查看申报人被驳回的待办任务、查看被驳回明细、暂存修改草稿以及重新提交审核。"
-                            + "你的全部重提工具已常驻可用，无需调用 tool_search。签发确认令牌（ct_xxx）后严禁自行二次确认，必须原样返回给用户等待确认！",
+                            + "你的全部重提工具已常驻可用，无需调用 tool_search。调用 getTaskDetail 前必须确认任务属于资料台账类且带有效台账 ID，严禁把项目批注等非台账任务 ID 反复传入 getTaskDetail！签发确认令牌（ct_xxx）后严禁自行二次确认，必须原样返回给用户等待确认！",
                     userCtx, filesCtx);
             result.add(new SubAgentTool(
                     TOOL_DECLARANT_RESUBMIT,
                     CODE_DECLARANT_WORKFLOW,
                     "委派「驳回重提专员」查询我被驳回需修改重提的待办任务、查看驳回原因详情、暂存修改及重新提审",
                     () -> buildSubReactAgent(resolvedChatModel, prompt, tools, thinkingMode, thinkingOffParam,
-                            maxRounds, retryIntervalMs, taskManager, dataSource, sessionStore, traceCollector,
+                            subMaxRounds(maxRounds), retryIntervalMs, taskManager, dataSource, sessionStore, traceCollector,
                             pauseStateStore, contextPolicy, loopGuardConfig)));
         }
 
         return List.copyOf(result);
+    }
+
+    /** 限制子 Agent 单次委托最大轮次，防止无限探索拖垮 180s 超时窗口 */
+    private static int subMaxRounds(int maxRounds) {
+        return Math.min(Math.max(maxRounds, 1), 25);
     }
 
     private ReactAgent buildSubReactAgent(ChatModel chatModel,

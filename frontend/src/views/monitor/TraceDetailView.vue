@@ -930,7 +930,6 @@ async function loadRelatedReports() {
  */
 function locateInitialSession() {
   const rs = detail.value?.rounds || []
-  if (!rs.length) return
   let sessionId = null
   const traceIdParam = route.query.traceId ? String(route.query.traceId) : ''
   if (traceIdParam) {
@@ -942,7 +941,7 @@ function locateInitialSession() {
     sessionId = rs.find((r) => !r.success)?.sessionId
   }
   if (!sessionId) {
-    sessionId = sessions.value[0]?.sessionId || rs[0].sessionId
+    sessionId = sessions.value[0]?.sessionId || rs[0]?.sessionId || ''
   }
   currentSessionId.value = sessionId
 }

@@ -33,10 +33,12 @@ public class AgentTaskManager {
         final Sinks.Many<?> sink;
         volatile Disposable disposable;
         final InterruptHandler interruptHandler;
+        final Runnable stopHandler;
 
-        TaskInfo(Sinks.Many<?> sink, InterruptHandler interruptHandler) {
+        TaskInfo(Sinks.Many<?> sink, InterruptHandler interruptHandler, Runnable stopHandler) {
             this.sink = sink;
             this.interruptHandler = interruptHandler;
+            this.stopHandler = stopHandler;
         }
     }
 
@@ -46,7 +48,15 @@ public class AgentTaskManager {
      * 登记任务；同会话已有运行任务 → 抛 IllegalStateException（上层转 CONCURRENT 执行冲突）。
      */
     public void registerTask(String conversationId, Sinks.Many<?> sink, InterruptHandler interruptHandler) {
-        TaskInfo existing = tasks.putIfAbsent(conversationId, new TaskInfo(sink, interruptHandler));
+        registerTask(conversationId, sink, interruptHandler, null);
+    }
+
+    /**
+     * 登记任务（含强制停止回调，用于超时/stopTask 时立即终止执行器循环并清理资源）。
+     */
+    public void registerTask(String conversationId, Sinks.Many<?> sink,
+                             InterruptHandler interruptHandler, Runnable stopHandler) {
+        TaskInfo existing = tasks.putIfAbsent(conversationId, new TaskInfo(sink, interruptHandler, stopHandler));
         if (existing != null) {
             throw new IllegalStateException("会话已有进行中的执行: " + conversationId);
         }
@@ -93,7 +103,7 @@ public class AgentTaskManager {
     }
 
     /**
-     * 强制停止（丢弃状态，不产生 Paused 事件）。
+     * 强制停止（丢弃状态，不产生 Paused 事件，并触发强制停止回调彻底终止执行器循环）。
      */
     public boolean stopTask(String conversationId) {
         TaskInfo info = tasks.remove(conversationId);
@@ -102,6 +112,13 @@ public class AgentTaskManager {
         }
         if (info.disposable != null && !info.disposable.isDisposed()) {
             info.disposable.dispose();
+        }
+        if (info.stopHandler != null) {
+            try {
+                info.stopHandler.run();
+            } catch (Exception e) {
+                log.warn("强制停止回调异常: convId={}", conversationId, e);
+            }
         }
         info.sink.tryEmitComplete();
         return true;
