@@ -348,4 +348,4 @@ ALTER TABLE agentx_monitor_trace ADD COLUMN IF NOT EXISTS parent_session_id varc
 ### M-SA4：前端嵌套流可视化与自适应双层计划面板（`frontend`）
 - [ ] `ChatView.vue` 工具卡片支持按 `parentToolCallId` 嵌套渲染子 Agent 实时执行步骤（并验证 F5 刷新重放一致）
 - [ ] `ChatView.vue` 与 `SessionService.buildTimeline` 落地自适应双层 `TodoWrite` 计划面板（单层直展 + 双层挂载折叠）
-- [ ] 监控中心前端支持展开子 Agent Trace 轮次树
+- [x] 监控中心前端支持展开子 Agent Trace 轮次树（完成于 2026-11-25，见 `ing-02-补充方案-监控链路跟踪子Agent穿透实施方案.md`：M-TT1~M-TT5 全部落地，追溯视图委派行可展开子会话轮次树，风险/筛选/深链按命名空间穿透）
