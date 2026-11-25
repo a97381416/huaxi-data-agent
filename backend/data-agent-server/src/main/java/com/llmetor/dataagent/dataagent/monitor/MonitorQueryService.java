@@ -279,7 +279,8 @@ public class MonitorQueryService {
 
         List<RoundListItem> rounds = jdbc.query(
                 "SELECT id, session_id, round, round_type, tool_names, prompt_tokens, completion_tokens, " +
-                        "duration_ms, think_duration_ms, success, error_message, input_chars, created_at " +
+                        "duration_ms, think_duration_ms, success, error_message, input_chars, created_at, " +
+                        "agent_code, parent_session_id " +
                         "FROM agentx_monitor_trace WHERE conversation_id = ? ORDER BY created_at ASC, id ASC",
                 (rs, i) -> roundRow(rs), conversationId);
         long promptTokens = rounds.stream().mapToLong(RoundListItem::promptTokens).sum();
@@ -321,6 +322,11 @@ public class MonitorQueryService {
      * <p>配对口径：R(n) 的工具结果 = R(n+1) INPUT 中 role=tool 且 tool_call_id 相同的消息；
      * assistant 原话 = R(n+1) INPUT 增量段中的 assistant 消息（answer 轮 = output 原文）。
      * 历史轮 payload 缺行时对应事件 delta 为空（前端提示「明细缺失」）。
+     *
+     * <p>子Agent穿透（M-TT，读侧补齐写侧零改动）：① 先查 parent_session_id = 本会话的
+     * 子会话行，逐个用 buildEvents() 组装子事件树（eager 内嵌，D1）；② 子会话按
+     * parent_tool_call_id == 委派 tool 事件 callId 挂载（同 callId 多行时首个挂载）；
+     * ③ 挂不上的进顶层 orphanSubSessions 兜底区（旧数据/关联缺失，D4 可见不静默丢失）。
      */
     public SessionTimelineVO sessionTimeline(String sessionId) {
         List<Map<String, Object>> sess = jdbc.queryForList(
@@ -330,15 +336,70 @@ public class MonitorQueryService {
             return null;
         }
         Map<String, Object> s = sess.get(0);
+        String question = str(s.get("question"));
 
+        // ① 子会话行查询（M-TT）：parent_session_id = 本会话，按创建序（D1 eager 内嵌）
+        List<Map<String, Object>> subRows = jdbc.queryForList(
+                "SELECT session_id, agent_code, question, status, parent_tool_call_id, rounds, fail_rounds, " +
+                        "prompt_tokens, completion_tokens FROM agentx_monitor_session " +
+                        "WHERE parent_session_id = ? ORDER BY created_at ASC, id ASC", sessionId);
+        List<SessionTimelineVO.SubSession> subs = new ArrayList<>(subRows.size());
+        Map<String, SessionTimelineVO.SubSession> subByCallId = new LinkedHashMap<>();
+        for (Map<String, Object> row : subRows) {
+            SessionTimelineVO.SubSession sub = new SessionTimelineVO.SubSession(
+                    str(row.get("agent_code")),
+                    str(row.get("session_id")),
+                    str(row.get("question")),
+                    str(row.get("status")),
+                    intObj(row.get("rounds")),
+                    intObj(row.get("fail_rounds")),
+                    longObj(row.get("prompt_tokens")),
+                    longObj(row.get("completion_tokens")),
+                    buildEvents(str(row.get("session_id")), str(row.get("question")), Map.of()).events());
+            subs.add(sub);
+            String ptc = str(row.get("parent_tool_call_id"));
+            if (!ptc.isBlank()) {
+                subByCallId.putIfAbsent(ptc, sub);
+            }
+        }
+
+        // ② 主会话事件组装（同一 buildEvents 复用）+ 委派 tool 事件挂载子会话
+        BuiltTimeline main = buildEvents(sessionId, question, subByCallId);
+
+        // ③ 未挂载的子会话进孤儿兜底区（D4：可见不静默丢失）
+        java.util.Set<String> mountedIds = new java.util.HashSet<>();
+        for (SessionTimelineVO.Event ev : main.events()) {
+            if (ev.subSession() != null) {
+                mountedIds.add(ev.subSession().sessionId());
+            }
+        }
+        List<SessionTimelineVO.SubSession> orphans = subs.stream()
+                .filter(sub -> !mountedIds.contains(sub.sessionId()))
+                .toList();
+
+        return new SessionTimelineVO(sessionId, str(s.get("conversation_id")),
+                question, str(s.get("status")), main.roundCount(), main.events(), orphans);
+    }
+
+    /** buildEvents 组装结果：事件流 + 轮数（VO roundCount 口径 = monitor_trace 行数） */
+    private record BuiltTimeline(List<SessionTimelineVO.Event> events, int roundCount) {
+    }
+
+    /**
+     * 事件流组装（主/子会话共用，M-TT 抽取重构行为不变）：读该会话全部轮次瘦行 + payload，
+     * 逐轮拆 user/llm/tool/answer 事件。subByCallId 非空时（仅主轴），委派 tool 事件
+     * callId 命中即挂载对应 SubSession（record 不可变，构造时传入）。
+     */
+    private BuiltTimeline buildEvents(String sessionId, String question,
+                                      Map<String, SessionTimelineVO.SubSession> subByCallId) {
         List<RoundListItem> rounds = jdbc.query(
-                "SELECT id, session_id, round, round_type, tool_names, prompt_tokens, completion_tokens, " +
-                        "duration_ms, think_duration_ms, success, error_message, input_chars, created_at " +
-                        "FROM agentx_monitor_trace WHERE session_id = ? ORDER BY round ASC, id ASC",
+                "SELECT t.id, t.session_id, t.round, t.round_type, t.tool_names, t.prompt_tokens, t.completion_tokens, " +
+                        "t.duration_ms, t.think_duration_ms, t.success, t.error_message, t.input_chars, t.created_at, " +
+                        "t.agent_code, t.parent_session_id " +
+                        "FROM agentx_monitor_trace t WHERE t.session_id = ? ORDER BY t.round ASC, t.id ASC",
                 (rs, i) -> roundRow(rs), sessionId);
         if (rounds.isEmpty()) {
-            return new SessionTimelineVO(sessionId, str(s.get("conversation_id")),
-                    str(s.get("question")), str(s.get("status")), 0, List.of());
+            return new BuiltTimeline(List.of(), 0);
         }
 
         // payload 一次取回（input_data 大字段在 Java 侧解析后即弃，响应只含轻内容）
@@ -377,7 +438,6 @@ public class MonitorQueryService {
         int prevCount = -1;
 
         // ❓ 起点：首条 user 消息 + 首轮全量即其增量
-        String question = str(s.get("question"));
         if (!msgsByRound.get(0).isEmpty()) {
             String userText = question;
             for (Map<String, Object> m : msgsByRound.get(0)) {
@@ -391,7 +451,8 @@ public class MonitorQueryService {
                     r0.success(), null, null, null, null, null, null,
                     msgsByRound.get(0).size(), r0.inputChars(), userText,
                     null, deltaMessages(msgsByRound.get(0), 0),
-                    null, null, null, null, null, null, null, null, null));
+                    null, null, null, null, null, null, null, null, null,
+                    null));
         }
         prevCount = countByRound.isEmpty() ? -1 : countByRound.get(0);
 
@@ -424,7 +485,8 @@ public class MonitorQueryService {
                     r.success(), r.errorMessage(), r.durationMs(), r.promptTokens(), r.completionTokens(),
                     r.thinkDurationMs(), thinkByRound.get(i), count, r.inputChars(), assistantText,
                     callsByRound.get(i), delta,
-                    null, null, null, null, null, null, null, null, null));
+                    null, null, null, null, null, null, null, null, null,
+                    null));
 
             // 🔧 并发工具事件：结果在下一轮 INPUT 按 tool_call_id 配对；全文引用下轮 llm 事件 delta
             // 结果判定/预览前先解一层 JSON 字符串编码（tool content 历史上被双重编码，以 " 开头）
@@ -451,12 +513,12 @@ public class MonitorQueryService {
                         result == null ? null : plain.length(),
                         ok,
                         Boolean.TRUE.equals(ok) && startsWithAny(plain, RESULT_EMPTY_HINTS),
-                        result == null || i + 1 >= n ? null : nextLlmSeq));
+                        result == null || i + 1 >= n ? null : nextLlmSeq,
+                        call.callId() == null ? null : subByCallId.get(call.callId())));
             }
             prevCount = count;
         }
-        return new SessionTimelineVO(sessionId, str(s.get("conversation_id")),
-                str(s.get("question")), str(s.get("status")), n, events);
+        return new BuiltTimeline(events, n);
     }
 
     /** 事件类型 ToolCallItem 便捷构造（解析 assistant 消息/tool_calls 输出共用） */
@@ -880,7 +942,9 @@ public class MonitorQueryService {
                 rs.getInt("success") == 1,
                 rs.getString("error_message"),
                 rs.getObject("input_chars") == null ? null : rs.getInt("input_chars"),
-                formatTs(rs.getTimestamp("created_at")));
+                formatTs(rs.getTimestamp("created_at")),
+                rs.getString("agent_code"),
+                rs.getString("parent_session_id"));
     }
 
     private static long wallMs(Timestamp started, Timestamp lastActive) {

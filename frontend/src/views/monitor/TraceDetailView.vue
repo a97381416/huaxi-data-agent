@@ -35,7 +35,7 @@
           <el-tag size="small" :type="statusTag(currentSession?.status)" disable-transitions>
             {{ statusText(currentSession?.status) }}
           </el-tag>
-          <span class="ml-2">{{ currentSession?.rounds ?? currentRounds.length }} 轮</span>
+          <span class="ml-2">{{ currentSession?.rounds ?? currentRounds.length }} 轮<span v-if="subRoundTotal > 0" class="text-gray-400">（含子Agent {{ subRoundTotal }} 轮）</span></span>
           <span v-if="(currentSession?.failRounds || 0) > 0" class="ml-1 text-red-500">失败{{ currentSession.failRounds }}</span>
           <span v-if="currentSession?.durationMs != null" class="ml-2">{{ formatDuration(currentSession.durationMs) }}</span>
           <span class="ml-2">{{ formatTokens(currentSession?.promptTokens) }} / {{ formatTokens(currentSession?.completionTokens) }} tok</span>
@@ -115,6 +115,7 @@
               轮次
               <span class="ml-1 text-gray-700">
                 {{ currentSession?.rounds ?? currentRounds.length }}
+                <span v-if="subRoundTotal > 0" class="text-gray-400">（含子Agent {{ subRoundTotal }} 轮）</span>
                 <span v-if="(currentSession?.failRounds || 0) > 0" class="text-red-500">(失败{{ currentSession.failRounds }})</span>
               </span>
             </span>
@@ -204,13 +205,31 @@
           <div class="mt-1.5 line-clamp-2 break-words text-xs leading-4 text-gray-500" :title="risk.detail">
             {{ risk.detail }}
           </div>
-          <div v-if="risk.roundsHit && risk.roundsHit.length" class="mt-1.5 flex flex-wrap items-center gap-1">
+          <!-- 命中归属（M-TT §4.4）：子会话风险带 🤖 子Agent 徽标；根会话显示「主链路」；轮次胶囊点击按命名空间互跳定位 -->
+          <div v-if="isSubRisk(risk)" class="mt-1.5 flex flex-wrap items-center gap-1">
+            <span class="text-[10px] text-gray-400">命中:</span>
+            <span
+              class="cursor-pointer rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 hover:bg-violet-200"
+              :title="`点击定位到 ${risk.agentCode} 子Agent 的该轮（Sub-R${risk.round ?? '?'}）`"
+              @click="locateFromRisk(risk)"
+            >Sub-R{{ risk.round ?? '?' }} · 🤖{{ agentName(risk.agentCode) }}({{ risk.agentCode }})</span>
             <span
               v-for="rn in risk.roundsHit"
               :key="rn"
               class="cursor-pointer rounded bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-blue-50 hover:text-blue-600"
               title="定位到该轮"
-              @click="locateRound(rn)"
+              @click="locateRiskRound(risk, rn)"
+            >R{{ rn }}</span>
+          </div>
+          <div v-else-if="risk.roundsHit && risk.roundsHit.length" class="mt-1.5 flex flex-wrap items-center gap-1">
+            <span class="text-[10px] text-gray-400">命中:</span>
+            <span class="text-[10px] text-gray-500">R{{ risk.round ?? '?' }} · 主链路</span>
+            <span
+              v-for="rn in risk.roundsHit"
+              :key="rn"
+              class="cursor-pointer rounded bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-blue-50 hover:text-blue-600"
+              title="定位到该轮"
+              @click="locateRiskRound(risk, rn)"
             >R{{ rn }}</span>
           </div>
           <!-- 已有诊断报告角标（成本纪律：同规则先看旧报告，避免重复诊断） -->
@@ -246,86 +265,67 @@
             <el-radio-button value="risk">⚠ 风险</el-radio-button>
           </el-radio-group>
         </div>
-        <div v-if="!timelineNodes.length && !loading" class="flex flex-1 items-center justify-center">
+        <div v-if="!timelineNodes.length && !loading && !orphanSubs.length" class="flex flex-1 items-center justify-center">
           <el-empty description="该提问暂无事件流" :image-size="70" />
         </div>
         <div v-else class="min-h-0 flex-1 overflow-auto px-3 py-1">
-          <template v-for="node in timelineNodes" :key="'g-' + node.event.seq">
-            <!-- 主事件行：❓提问 / 🤖 LLM 决策 / 💬 终答 -->
-            <div
-              :id="'event-node-' + node.event.seq"
-              class="mt-1 cursor-pointer rounded-lg border px-3 py-2 transition-colors"
-              :class="node.event.seq === selectedSeq
-                ? 'border-blue-300 bg-blue-50'
-                : 'border-transparent hover:bg-gray-50'"
-              @click="selectEvent(node.event)"
-            >
-              <div class="flex items-center gap-2 text-sm">
-                <!-- 折叠箭头（仅 LLM 决策有子工具） -->
-                <span
-                  v-if="node.children.length"
-                  class="shrink-0 select-none font-mono text-xs text-gray-400 hover:text-blue-500"
-                  @click.stop="toggleCollapse(node.event.seq)"
-                >{{ collapsed.has(node.event.seq) ? '▸' : '▾' }}</span>
-                <span class="shrink-0 text-[13px] leading-none">{{ eventIcon(node.event) }}</span>
-                <span v-if="eventSuccess(node.event)" class="shrink-0 font-mono text-xs text-gray-400">
-                  {{ eventTypeLabel(node.event) }}
-                </span>
-                <el-icon v-else :size="14" class="shrink-0 text-red-500"><CircleCloseFilled /></el-icon>
-                <span class="min-w-0 flex-1 truncate text-xs" :class="eventTextClass(node.event)" :title="eventTitleFull(node.event)">
-                  {{ eventTitleFull(node.event) }}
-                </span>
-                <el-tooltip
-                  v-if="node.riskRules.length"
-                  :content="`命中规则：${node.riskRules.join('、')}（点击查看异常详情）`"
-                  placement="top"
-                  :show-after="200"
-                >
-                  <span
-                    class="shrink-0 text-[13px] leading-none text-orange-500 hover:text-red-500"
-                    @click.stop="selectEvent(node.event, 'risk')"
-                  >⚠</span>
-                </el-tooltip>
-                <span class="shrink-0 text-[11px] text-gray-400">{{ formatDuration(node.event.durationMs) }}</span>
-              </div>
-              <div class="mt-0.5 flex items-center gap-3 pl-6 text-[11px] text-gray-400">
-                <span v-if="node.event.promptTokens != null">
-                  {{ formatTokens(node.event.promptTokens) }}/{{ formatTokens(node.event.completionTokens) }} tok
-                </span>
-                <span v-if="node.event.errorMessage" class="truncate text-red-400">
-                  错误: {{ node.event.errorMessage }}
-                </span>
-                <span v-if="node.children.length" class="shrink-0">
-                  {{ node.children.length }} 个工具
-                </span>
+          <!-- 事件流一层树（M-TT T3.1：主轴与子Agent块共用 TimelineEventList 组件） -->
+          <TimelineEventList
+            :events="timelineEvents"
+            :keep="visibleKeep"
+            :risk-round-map="rootRiskRoundMap"
+            :selected-key="selectedKey"
+            :collapsed-keys="collapsedKeys"
+            key-prefix=""
+            :expanded-subs="expandedSubs"
+            :sub-keeps="subKeeps"
+            :sub-risk-maps="subRiskMaps"
+            :problem-subs="problemSubIds"
+            @select="onListSelect"
+            @toggle="toggleKey"
+            @toggle-sub="toggleSubExpand"
+            @locate="locateKey"
+          />
+          <!-- ⛓ 孤儿兜底区（M-TT D4：旧数据/委派关联缺失的子会话可见，不静默丢失） -->
+          <div v-if="orphanSubs.length" class="mb-2 mt-2 border-t border-dashed border-gray-200 pt-2">
+            <div class="flex cursor-pointer items-center gap-1.5 text-xs text-gray-500" @click="orphanOpen = !orphanOpen">
+              <span class="select-none font-mono text-gray-400">{{ orphanOpen ? '▾' : '▸' }}</span>
+              <span>⛓ 未关联子会话 ({{ orphanSubs.length }})</span>
+              <span class="text-[10px] text-gray-300">旧数据或委派关联缺失，仅兜底展示</span>
+            </div>
+            <div v-if="orphanOpen" class="mt-1.5 space-y-1.5">
+              <div v-for="o in orphanSubs" :key="o.sessionId" class="rounded-lg border border-gray-200 bg-gray-50/60 p-2">
+                <div class="flex items-center gap-1.5 text-xs">
+                  <span class="shrink-0">🤖</span>
+                  <span class="shrink-0 font-semibold text-gray-600">{{ agentName(o.agentCode) }}</span>
+                  <span class="shrink-0 font-mono text-[10px] text-gray-400">{{ o.agentCode }}</span>
+                  <el-tag size="small" :type="subTagType(o.status)" disable-transitions>{{ subStatusCn(o.status) }}</el-tag>
+                  <span class="ml-auto shrink-0 text-[10px] text-gray-400">{{ o.roundCount || 0 }} 轮</span>
+                </div>
+                <div class="mt-1 flex items-start gap-1 text-[11px] leading-4 text-gray-500" :title="o.task">
+                  <span class="shrink-0">🎯 任务:</span>
+                  <span class="min-w-0 flex-1">{{ firstLine(o.task) }}</span>
+                </div>
+                <TimelineEventList
+                  v-if="o.events && o.events.length"
+                  class="mt-1"
+                  :events="o.events"
+                  :keep="null"
+                  :risk-round-map="subRiskMaps[o.sessionId] || emptyMap"
+                  :selected-key="selectedKey"
+                  :collapsed-keys="collapsedKeys"
+                  :key-prefix="'sub-' + o.sessionId"
+                  :expanded-subs="emptySet"
+                  :sub-keeps="emptyObj"
+                  :sub-risk-maps="emptyObj"
+                  :problem-subs="problemSubIds"
+                  @select="onListSelect"
+                  @toggle="toggleKey"
+                />
+                <div v-else class="mt-1 text-[11px] text-gray-300">（无轮次事件）</div>
               </div>
             </div>
-            <!-- 🔧 工具子事件（并发同级；结果直接内联展示） -->
-            <template v-if="!collapsed.has(node.event.seq)">
-              <div
-                v-for="child in node.children"
-                :key="'c-' + child.seq"
-                :id="'event-node-' + child.seq"
-                class="ml-7 cursor-pointer rounded-lg border px-3 py-1.5 transition-colors"
-                :class="child.seq === selectedSeq
-                  ? 'border-blue-300 bg-blue-50'
-                  : 'border-transparent hover:bg-gray-50'"
-                @click="selectEvent(child)"
-              >
-                <div class="flex items-center gap-2 text-xs">
-                  <span class="shrink-0">{{ toolIcon(child) }}</span>
-                  <span class="shrink-0 font-mono font-semibold text-violet-600">{{ child.toolName }}</span>
-                  <span class="min-w-0 flex-1 truncate font-mono text-[11px] text-gray-400" :title="toolArgsPreview(child)">
-                    {{ toolArgsPreview(child) }}
-                  </span>
-                  <span v-if="child.resultChars != null" class="shrink-0 text-[11px] text-gray-400">
-                    {{ formatSize(child.resultChars) }}
-                  </span>
-                  <span v-else class="shrink-0 text-[11px] text-gray-300">结果缺</span>
-                </div>
-              </div>
-            </template>
-          </template>
+          </div>
         </div>
       </section>
 
@@ -335,10 +335,13 @@
           v-if="selectedEvent"
           :event="selectedEvent"
           :events="timelineEvents"
-          :risks="risks"
+          :sub-session="selectedSubSession"
+          :delegate-key="selectedDelegateKey"
+          :risks="snapshotRisks"
           :initial-tab="eventTabOverride"
           :load-round="loadRound"
-          @locate="locateSeq"
+          @locate="locateKey"
+          @toggle-sub="toggleSubExpand"
         />
         <div v-else class="flex flex-1 items-center justify-center">
           <el-empty description="点击左侧事件查看流程快照" :image-size="80" />
@@ -421,7 +424,6 @@ import {
   Back,
   CaretBottom,
   CaretRight,
-  CircleCloseFilled,
   CopyDocument,
   Document,
   Loading,
@@ -441,6 +443,8 @@ import {
 } from '@/api/monitor'
 import { useMonitorDiagnoseStore } from '@/stores/monitorDiagnose'
 import EventSnapshot from '@/components/snapshot/EventSnapshot.vue'
+import TimelineEventList from '@/components/snapshot/TimelineEventList.vue'
+import { agentName, subStatusCn, subTagType } from '@/utils/agentNames'
 
 /**
  * 提问详情页（2026-11-20 排查视角改造）：左轴从「LLM 调用轮」改为事件流——
@@ -449,6 +453,11 @@ import EventSnapshot from '@/components/snapshot/EventSnapshot.vue'
  * 右栏 = 事件流程快照五 Tab（增量输入/全量输入/思考/输出·决策/执行结果，EventSnapshot 组件）。
  * ② 检测区域保持不变（自动检测卡 + 风险定位深链映射到事件轮次）；
  * 当前问由深链决定：?sessionId=（可带 &round=）/?traceId=，无深链默认第一问聚焦终答。
+ *
+ * M-TT 子Agent穿透（ing-02 方案）：委派 tool 行带 subSession → TimelineEventList 渲染
+ * 徽标行 + 可展开嵌套子块（默认收起，含失败轮自动展开+红描边）；事件选中模型从 seq 数字
+ * 换成字符串 key（主轴 `${seq}` / 子块 `sub-{subSessionId}-{seq}`，子事件 seq 独立命名空间）；
+ * 孤儿子会话（orphanSubSessions）进「未关联子会话」兜底区；筛选/深链/风险定位按命名空间穿透。
  */
 const route = useRoute()
 const router = useRouter()
@@ -462,35 +471,92 @@ const infoCollapsed = ref(true) // 基础信息默认折叠（点开看详情）
 const currentSessionId = ref('')
 const relatedReports = ref([]) // 右上角「关联报告」popover（T5.5 联动）
 
-// ==================== 事件流（左轴 + 右栏快照） ====================
+// ==================== 事件流（左轴 + 右栏快照，M-TT key 命名空间模型） ====================
 
+const timelineData = ref(null) // 完整 VO（events + orphanSubSessions）
 const timelineEvents = ref([])
 const timelineCache = new Map()
-const selectedSeq = ref(null)
-const selectedEvent = computed(() =>
-  timelineEvents.value.find((e) => e.seq === selectedSeq.value) || null)
+const selectedKey = ref('') // 事件 key：主轴 `${seq}`，子块 `sub-{subSessionId}-{seq}`
+const collapsedKeys = ref(new Set()) // 折叠的 LLM 决策节点 key（跨主/子命名空间共用）
+const expandedSubs = ref(new Set()) // 展开的子Agent块 subSessionId 集合（默认收起）
+const orphanOpen = ref(false) // 孤儿兜底区折叠态
+const emptyMap = new Map()
+const emptySet = new Set()
+const emptyObj = {}
+
+/** key → { subSessionId, seq }（主轴 subSessionId=null） */
+function parseEventKey(key) {
+  if (key && key.startsWith('sub-')) {
+    const rest = key.slice(4)
+    const i = rest.lastIndexOf('-')
+    return { subSessionId: rest.slice(0, i), seq: Number(rest.slice(i + 1)) }
+  }
+  return { subSessionId: null, seq: Number(key) }
+}
+
+/** 按 key 找事件（含子命名空间扫描） */
+function findEventByKey(key) {
+  if (!key) return null
+  const { subSessionId, seq } = parseEventKey(key)
+  if (subSessionId == null) return timelineEvents.value.find((e) => e.seq === seq) || null
+  const sub = findSubSession(subSessionId)
+  return (sub?.events || []).find((e) => e.seq === seq) || null
+}
+
+/** subSessionId → SubSession（挂载 + 孤儿兜底区都找） */
+function findSubSession(subSessionId) {
+  for (const e of timelineEvents.value) {
+    if (e.subSession?.sessionId === subSessionId) return e.subSession
+  }
+  return (timelineData.value?.orphanSubSessions || []).find((s) => s.sessionId === subSessionId) || null
+}
+
+const selectedEvent = computed(() => findEventByKey(selectedKey.value))
+/** 选中事件为子事件时所属的 SubSession（主轴事件为 null） */
+const selectedSubSession = computed(() => {
+  if (!selectedKey.value?.startsWith('sub-')) return null
+  return findSubSession(parseEventKey(selectedKey.value).subSessionId)
+})
+/** 选中子事件时其主轴委派 tool 事件 key（「返回委派处」导航；孤儿无主轴入口为空） */
+const selectedDelegateKey = computed(() => {
+  if (!selectedSubSession.value) return ''
+  const sid = selectedSubSession.value.sessionId
+  const delegate = timelineEvents.value.find((e) => e.subSession?.sessionId === sid)
+  return delegate ? String(delegate.seq) : ''
+})
+
 /** 快照初始 Tab 覆写（点 ⚠ 角标 → 'risk' 直达规则异常；普通点击空串走类型默认） */
 const eventTabOverride = ref('')
-/** 折叠的 LLM 决策节点（seq 集合；默认全展开） */
-const collapsed = ref(new Set())
 
 const currentRounds = computed(() => {
   const sid = currentSessionId.value
   return sid ? (detail.value?.rounds || []).filter((r) => r.sessionId === sid) : []
 })
 
-/** 筛选命中集合（all = 全部） */
+/** 挂载到委派行上的子会话（主轴事件内） */
+const attachedSubs = computed(() =>
+  timelineEvents.value.filter((e) => e.subSession).map((e) => e.subSession))
+/** 孤儿兜底子会话（旧数据/关联缺失） */
+const orphanSubs = computed(() => timelineData.value?.orphanSubSessions || [])
+/** 子Agent总轮数（挂载 + 孤儿，§4.5 头部「含子Agent N 轮」） */
+const subRoundTotal = computed(() =>
+  [...attachedSubs.value, ...orphanSubs.value].reduce((acc, s) => acc + (s.roundCount || 0), 0))
+
+/** 筛选命中集合（all = 全部）——子块独立过滤（T4.3）：「子命中保留父链」与主轴同规则扩展一层 */
 const visibleKeep = computed(() => {
   const evs = timelineEvents.value
   const keep = new Set(evs.map((e) => e.seq))
   if (timelineFilter.value === 'all') return keep
   keep.clear()
+  const subK = subKeeps.value
+  const subHit = (e) => !!e.subSession && (subK?.[e.subSession.sessionId]?.size ?? 0) > 0
   const match = (e) => {
     if (timelineFilter.value === 'failed') {
+      if (e.subSession) return e.resultOk === false || subHit(e) // 委派行：子块内有失败命中也保留入口
       return e.type === 'tool' ? e.resultOk === false : e.success === false
     }
     if (timelineFilter.value === 'tool') return e.type === 'tool'
-    if (timelineFilter.value === 'risk') return riskRoundMap.value.has(e.round)
+    if (timelineFilter.value === 'risk') return rootRiskRoundMap.value.has(e.round) || subHit(e)
     return true
   }
   for (const e of evs) {
@@ -512,136 +578,238 @@ const visibleKeep = computed(() => {
   return keep
 })
 
-/** 当前提问的事件流骨架节点：主事件 + 筛选后的并发工具子事件 + 命中规则 */
+/** 子块命名空间的筛选命中集合：{ [subSessionId]: Set<seq> }（null = 全部可见） */
+const subKeeps = computed(() => {
+  if (timelineFilter.value === 'all') return null
+  const out = {}
+  for (const sub of attachedSubs.value) {
+    const evs = sub.events || []
+    const riskMap = (subRiskMaps.value[sub.sessionId] || new Map())
+    const keep = new Set()
+    const match = (e) => {
+      if (timelineFilter.value === 'failed') {
+        return e.type === 'tool' ? e.resultOk === false : e.success === false
+      }
+      if (timelineFilter.value === 'tool') return e.type === 'tool'
+      if (timelineFilter.value === 'risk') return riskMap.has(e.round)
+      return true
+    }
+    for (const e of evs) {
+      if (match(e)) keep.add(e.seq)
+    }
+    if (!keep.size) continue
+    // 子块内同规则：子命中保留父级，父命中保留子级；user/answer 锚点保留
+    for (const e of evs) {
+      if (e.type === 'tool' && keep.has(e.seq) && e.parentSeq != null) keep.add(e.parentSeq)
+    }
+    for (const e of evs) {
+      if (e.type !== 'tool' && keep.has(e.seq) && e.type !== 'user' && e.type !== 'answer') {
+        for (const c of evs) {
+          if (c.type === 'tool' && c.parentSeq === e.seq) keep.add(c.seq)
+        }
+      }
+    }
+    if (evs.length && evs[0].type === 'user') keep.add(evs[0].seq)
+    const last = evs[evs.length - 1]
+    if (last && last.type === 'answer') keep.add(last.seq)
+    out[sub.sessionId] = keep
+  }
+  return out
+})
+
+/** 当前提问的事件流骨架节点：主事件 + 筛选后的并发工具子事件（渲染下推给 TimelineEventList） */
 const timelineNodes = computed(() => {
-  const byRoundRules = riskRoundMap.value
   const keep = visibleKeep.value
   const nodes = []
   for (const ev of timelineEvents.value) {
     if (ev.type === 'tool' || !keep.has(ev.seq)) continue
     nodes.push({
       event: ev,
-      children: childToolsOf(ev.seq).filter((c) => keep.has(c.seq)),
-      riskRules: byRoundRules.get(ev.round) || []
+      children: childToolsOf(ev.seq).filter((c) => keep.has(c.seq))
     })
   }
   return nodes
 })
 
 const visibleNodeCount = computed(() =>
-  timelineNodes.value.reduce((acc, n) => acc + 1 + (collapsed.value.has(n.event.seq) ? 0 : n.children.length), 0))
+  timelineNodes.value.reduce((acc, n) => {
+    let c = acc + 1 + (collapsedKeys.value.has(String(n.event.seq)) ? 0 : n.children.length)
+    // 子块行数（展开 = 头部 + 任务行 + 可见子事件；收起 = 徽标行）
+    for (const child of n.children) {
+      if (!child.subSession) continue
+      if (expandedSubs.value.has(child.subSession.sessionId)) {
+        const k = subKeeps.value?.[child.subSession.sessionId]
+        c += 2 + (child.subSession.events || []).filter((e) => !k || k.has(e.seq)).length
+      } else {
+        c += 1
+      }
+    }
+    return c
+  }, 0))
 
 function childToolsOf(seq) {
   return timelineEvents.value.filter((e) => e.type === 'tool' && e.parentSeq === seq)
 }
 
-function toggleCollapse(seq) {
-  if (collapsed.value.has(seq)) collapsed.value.delete(seq)
-  else collapsed.value.add(seq)
+/** 切换 LLM 决策节点折叠（key 字符串，跨命名空间） */
+function toggleKey(key) {
+  if (collapsedKeys.value.has(key)) collapsedKeys.value.delete(key)
+  else collapsedKeys.value.add(key)
 }
 
-/** 切问懒加载事件流（缓存；加载后按深链/默认规则选中事件） */
+/** 切换子Agent块展开/收起（EventSnapshot 汇总卡「展开左轴子块」也走这里） */
+function toggleSubExpand(subSessionId) {
+  if (expandedSubs.value.has(subSessionId)) expandedSubs.value.delete(subSessionId)
+  else expandedSubs.value.add(subSessionId)
+}
+
+/** TimelineEventList select 转发：selectEvent(ev, tab, prefix) */
+function onListSelect(ev, prefix, tab) {
+  selectEvent(ev, tab, prefix || '')
+}
+
+/** 切问懒加载事件流（缓存完整 VO；加载后按深链/默认规则选中事件 + 自动展开问题子块） */
 watch(currentSessionId, async (sid) => {
-  selectedSeq.value = null
+  selectedKey.value = ''
   timelineEvents.value = []
+  timelineData.value = null
   if (!sid) return
   if (timelineCache.has(sid)) {
-    timelineEvents.value = timelineCache.get(sid)
-    selectInitialEvent()
+    applyTimeline(timelineCache.get(sid))
     return
   }
   try {
     const data = await fetchSessionTimeline(sid)
-    const events = Array.isArray(data?.events) ? data.events : []
-    timelineCache.set(sid, events)
     if (currentSessionId.value === sid) {
-      timelineEvents.value = events
-      selectInitialEvent()
+      timelineCache.set(sid, data)
+      applyTimeline(data)
     }
   } catch {
     timelineEvents.value = []
   }
 })
 
-/** 选中事件（含滚动到可视区；tab 覆写用于 ⚠ 角标直达「规则异常」） */
-function selectEvent(ev, tab) {
-  if (!ev) return
-  eventTabOverride.value = tab || ''
-  selectedSeq.value = ev.seq
-  requestAnimationFrame(() => {
-    document.getElementById(`event-node-${ev.seq}`)?.scrollIntoView({ block: 'nearest' })
+function applyTimeline(data) {
+  timelineData.value = normalizeTimeline(data)
+  timelineEvents.value = Array.isArray(timelineData.value?.events) ? timelineData.value.events : []
+  autoExpandProblemSubs()
+  selectInitialEvent()
+}
+
+/**
+ * 数值字段归一化：后端全局 Jackson 把 Long 序列化为字符串（防雪花 ID 精度丢失），
+ * SubSession 的轮次/token 数值字段转 Number，避免徽标/汇总卡做字符串拼接。
+ */
+function normalizeTimeline(data) {
+  const num = (v) => (v == null ? null : Number(v))
+  const fixEvent = (e) => ({
+    ...e,
+    seq: Number(e.seq),
+    round: Number(e.round),
+    durationMs: num(e.durationMs),
+    promptTokens: num(e.promptTokens),
+    completionTokens: num(e.completionTokens),
+    thinkDurationMs: num(e.thinkDurationMs),
+    subSession: e.subSession ? {
+      ...e.subSession,
+      roundCount: e.subSession.roundCount == null ? null : Number(e.subSession.roundCount),
+      failRounds: e.subSession.failRounds == null ? null : Number(e.subSession.failRounds),
+      promptTokens: num(e.subSession.promptTokens),
+      completionTokens: num(e.subSession.completionTokens),
+      events: (e.subSession.events || []).map(fixEvent)
+    } : null
   })
-}
-
-function locateSeq(seq) {
-  const ev = timelineEvents.value.find((e) => e.seq === seq)
-  if (ev) selectEvent(ev)
-}
-
-/** 事件流加载后的初始选中：深链 round/traceId 优先；无深链默认第一个轮次（R1），不指向终答 */
-function selectInitialEvent() {
-  const evs = timelineEvents.value
-  if (!evs.length) return
-  const roundParam = route.query.round ? Number(route.query.round) : null
-  const traceParam = route.query.traceId ? String(route.query.traceId) : ''
-  let target = null
-  if (traceParam) target = evs.find((e) => e.traceId === traceParam && e.type !== 'tool')
-  if (!target && roundParam != null) target = evs.find((e) => e.round === roundParam && e.type === 'llm')
-  if (!target) target = evs.find((e) => e.type === 'llm')
-  if (!target) target = evs[0]
-  selectEvent(target)
-}
-
-// ==================== 事件行渲染辅助 ====================
-
-function eventIcon(ev) {
-  return { user: '❓', llm: '🤖', answer: '💬' }[ev.type] || '·'
-}
-
-function eventTypeLabel(ev) {
-  return ev.type === 'user' ? '提问' : ev.type === 'answer' ? '终答' : `R${ev.round}`
-}
-
-function eventSuccess(ev) {
-  return ev.type === 'tool' ? ev.resultOk !== false : ev.success !== false
-}
-
-function eventTextClass(ev) {
-  if (ev.type === 'user') return 'font-medium text-gray-800'
-  if (ev.type === 'answer') return 'font-medium text-green-700'
-  return ev.success === false ? 'text-red-500' : 'text-gray-600'
-}
-
-function eventTitleFull(ev) {
-  if (ev.type === 'user') return ev.assistantText || '（无提问内容）'
-  if (ev.type === 'answer') return ev.assistantText || '（无回答内容）'
-  return ev.assistantText ? `“${firstLine(ev.assistantText)}”` : '（无文本输出，仅工具调用）'
-}
-
-function toolIcon(ev) {
-  if (ev.resultOk == null) return '◌'
-  if (ev.resultOk === false) return '❌'
-  return ev.resultEmpty ? 'ⓘ' : '✅'
-}
-
-function toolArgsPreview(ev) {
-  try {
-    const args = JSON.parse(ev.arguments || '{}')
-    const first = Object.entries(args)[0]
-    if (!first) return '{}'
-    const val = typeof first[1] === 'string' ? first[1] : JSON.stringify(first[1])
-    return `${first[0]}=${abbreviate(firstLine(val), 30)}`
-  } catch {
-    return abbreviate(firstLine(ev.arguments || ''), 30)
+  const fixSub = (s) => s ? {
+    ...s,
+    roundCount: s.roundCount == null ? null : Number(s.roundCount),
+    failRounds: s.failRounds == null ? null : Number(s.failRounds),
+    promptTokens: num(s.promptTokens),
+    completionTokens: num(s.completionTokens),
+    events: (s.events || []).map(fixEvent)
+  } : s
+  return {
+    ...(data || {}),
+    events: (Array.isArray(data?.events) ? data.events : []).map(fixEvent),
+    orphanSubSessions: (data?.orphanSubSessions || []).map(fixSub)
   }
 }
 
-function firstLine(text) {
-  return (text || '').split('\n')[0]
+/**
+ * T3.4 默认收起；重点提示的子会话自动展开（problemSubIds 定义见 Step3 检测段——
+ * 它依赖 risks，必须在 risks 声明之后定义，否则 watch 注册时求值触发 TDZ）。
+ */
+function autoExpandProblemSubs() {
+  for (const sid of problemSubIds.value) expandedSubs.value.add(sid)
 }
 
-function abbreviate(text, max) {
-  return (text || '').length > max ? (text || '').slice(0, max) + '…' : (text || '')
+/** 选中事件（含滚动到可视区；tab 覆写用于 ⚠ 角标直达「规则异常」；prefix 非空 = 子块事件，自动展开所在子块） */
+function selectEvent(ev, tab, prefix = '') {
+  if (!ev) return
+  eventTabOverride.value = tab || ''
+  if (prefix) {
+    const sid = prefix.startsWith('sub-') ? prefix.slice(4) : prefix
+    if (sid) expandedSubs.value.add(sid)
+  }
+  const key = `${prefix ? prefix + '-' : ''}${ev.seq}`
+  selectedKey.value = key
+  requestAnimationFrame(() => {
+    document.getElementById(`event-node-${key}`)?.scrollIntoView({ block: 'nearest' })
+  })
+}
+
+/** EventSnapshot / 嵌套列表 locate 统一入口：key 字符串（主轴/子块命名空间自适应） */
+function locateKey(key) {
+  if (!key) return
+  const ev = findEventByKey(String(key))
+  if (!ev) return
+  const { subSessionId } = parseEventKey(String(key))
+  selectEvent(ev, '', subSessionId == null ? '' : `sub-${subSessionId}`)
+}
+
+/** 事件流加载后的初始选中：深链 round/traceId 优先（traceId 命中子轮次 → 自动展开子块高亮，§4.3）；无深链默认第一个轮次（R1） */
+function selectInitialEvent() {
+  const evs = timelineEvents.value
+  const orphans = orphanSubs.value
+  if (!evs.length && !orphans.length) return
+  const roundParam = route.query.round ? Number(route.query.round) : null
+  const traceParam = route.query.traceId ? String(route.query.traceId) : ''
+  let target = null
+  let targetPrefix = ''
+  if (traceParam) {
+    const mainEv = evs.find((e) => e.traceId === traceParam && e.type !== 'tool')
+    if (mainEv) target = mainEv
+    if (!target) {
+      // 深链命中子轮次：扫各子会话事件 → 自动展开该子Agent块 + 高亮该子事件行
+      for (const e of evs) {
+        const subEv = (e.subSession?.events || []).find((x) => x.traceId === traceParam && x.type !== 'tool')
+        if (subEv) {
+          target = subEv
+          targetPrefix = 'sub-' + e.subSession.sessionId
+          break
+        }
+      }
+    }
+    if (!target) {
+      for (const o of orphans) {
+        const subEv = (o.events || []).find((x) => x.traceId === traceParam && x.type !== 'tool')
+        if (subEv) {
+          target = subEv
+          targetPrefix = 'sub-' + o.sessionId
+          break
+        }
+      }
+    }
+  }
+  if (!target && roundParam != null) target = evs.find((e) => e.round === roundParam && e.type === 'llm')
+  if (!target) target = evs.find((e) => e.type === 'llm')
+  if (!target) target = evs[0]
+  selectEvent(target, '', targetPrefix)
+}
+
+// ==================== 事件行渲染辅助（左轴行渲染已下沉 TimelineEventList） ====================
+
+function firstLine(text) {
+  return (text || '').split('\n')[0]
 }
 
 /** 全量输入懒加载（EventSnapshot 用；detailCache 会话内缓存避免重复拉取） */
@@ -664,6 +832,30 @@ const detectSubmitting = ref(false)
 const detectOverride = ref(null)
 /** 规则注册表（弹层数据源；{ version, rules: [...] }）；状态头「规则 N 条」进页面即拉一次 */
 const detectMeta = reactive({ version: 'v1', ruleCount: 0 })
+
+/**
+ * 需重点提示的子会话（方案 §4.1 口径：含失败轮 / 错误态 / 命中 high 风险）——
+ * 命中即自动展开 + 红描边。工具级失败（❌ 结果但轮次成功、自愈重试）不计入，
+ * 避免把正常完成的子会话误标红（工具行的 ❌ 仍在明细里可见）。
+ * 定义必须在 risks 之后（watch 注册即求值，提前声明会触发 TDZ 白屏）。
+ */
+const problemSubIds = computed(() => {
+  const ids = new Set()
+  for (const sub of [...attachedSubs.value, ...orphanSubs.value]) {
+    if ((sub.failRounds || 0) > 0 || sub.status === 'error') ids.add(sub.sessionId)
+  }
+  for (const r of risks.value) {
+    if (r.severity === 'high' && r.sessionId && r.sessionId !== currentSessionId.value) {
+      ids.add(r.sessionId)
+    }
+  }
+  return ids
+})
+
+/** 风险异步加载完成后：命中 high 风险的子会话补展开（打开即看到病灶） */
+watch(problemSubIds, (ids) => {
+  for (const sid of ids) expandedSubs.value.add(sid)
+})
 
 async function loadDetectMeta() {
   try {
@@ -700,20 +892,47 @@ const detectState = computed(() => {
   }
 })
 
-/** 轮号 → 命中规则 ID 列表（事件流 ⚠ 角标 + 「⚠ 风险」筛选档） */
-const riskRoundMap = computed(() => {
-  const map = new Map()
+/** 根会话风险（M-TT：risks 现包含子会话命中，主轴 ⚠ 角标/筛选只看根链路） */
+const rootRisks = computed(() =>
+  risks.value.filter((r) => !r.sessionId || r.sessionId === currentSessionId.value))
+
+/** 轮号 → 命中规则 ID 列表（事件流 ⚠ 角标 + 「⚠ 风险」筛选档；仅根链路） */
+const rootRiskRoundMap = computed(() => buildRoundMap(rootRisks.value))
+
+/** 子会话风险按 subSessionId 分组：{ [subSessionId]: Map<round, ruleIds> }（子块 ⚠ 角标 + 筛选） */
+const subRiskMaps = computed(() => {
+  const out = {}
+  for (const r of risks.value) {
+    if (!r.sessionId || r.sessionId === currentSessionId.value) continue
+    out[r.sessionId] = buildRoundMap([r], out[r.sessionId] || new Map())
+  }
+  return out
+})
+
+/** 快照风险（EventSnapshot「规则异常」Tab 数据源）：子事件只看该子会话命中，主轴事件看根链路 */
+const snapshotRisks = computed(() =>
+  selectedSubSession.value
+    ? risks.value.filter((r) => r.sessionId === selectedSubSession.value.sessionId)
+    : rootRisks.value)
+
+/** 风险是否命中子会话（M-TT：sessionId 不等于当前根会话即子Agent命中） */
+function isSubRisk(risk) {
+  return !!risk.sessionId && risk.sessionId !== currentSessionId.value
+}
+
+function buildRoundMap(list, base) {
+  const map = base || new Map()
   const push = (round, ruleId) => {
     if (round == null) return
     if (!map.has(round)) map.set(round, [])
     if (!map.get(round).includes(ruleId)) map.get(round).push(ruleId)
   }
-  for (const r of risks.value) {
+  for (const r of list) {
     push(r.round, r.ruleId)
     for (const rn of r.roundsHit || []) push(rn, r.ruleId)
   }
   return map
-})
+}
 
 /** 切问懒加载风险（缓存；未检测的问 risks 为空数组也缓存避免重复请求）；顺带拉已有诊断报告角标 */
 const riskReports = ref([]) // 每规则最新诊断报告（RiskReportRef：ruleId/reportId/summary/createdAt）
@@ -770,10 +989,29 @@ async function reDetect() {
   }
 }
 
-/** 风险卡「定位 ▸」/ 轮次胶囊：定位到该轮的 LLM 决策事件 */
+/** 风险卡「定位 ▸」/ 子Agent徽标：按风险归属命名空间定位（主链路 → locateRound；子Agent → 展开子块 + 定位子轮） */
 function locateFromRisk(risk) {
   const target = (risk.round != null && risk.round) || (risk.roundsHit || [])[0]
-  if (target != null) locateRound(target)
+  if (target != null) locateRiskRound(risk, target)
+}
+
+/** 风险定位统一入口（M-TT §4.4 互跳）：isSubRisk 时自动展开该子块并选中子事件 */
+function locateRiskRound(risk, roundNum) {
+  if (isSubRisk(risk)) {
+    const sid = risk.sessionId
+    const sub = findSubSession(sid)
+    expandedSubs.value.add(sid)
+    if (!sub || !(sub.events || []).length) {
+      ElMessage.warning('该子会话轮次事件未加载（无轮次明细）')
+      return
+    }
+    const ev = sub.events.find((e) => e.round === roundNum && e.type === 'llm')
+      || sub.events.find((e) => e.round === roundNum)
+      || sub.events[0]
+    selectEvent(ev, 'risk', `sub-${sid}`)
+    return
+  }
+  locateRound(roundNum)
 }
 
 // ==================== 规则级 AI 诊断（06 调研：风险卡一键入口 + 成本纪律） ====================
@@ -926,6 +1164,8 @@ async function loadRelatedReports() {
 /**
  * 深链定位：?sessionId=（可带 &round=）/?traceId=/?status=failed 先换算出目标提问
  * （= 当前问），事件流加载后 selectInitialEvent 再按 round/traceId 精确定位事件。
+ * 深链 traceId 命中子轮次时（M-TT §4.3）：按 rounds 行的 parentSessionId 反查归属根会话
+ * （一问一行口径下 sessions 只有根行，子会话不在其中），随后 selectInitialEvent 自动展开子块。
  * 无任何深链参数时默认第一问。
  */
 function locateInitialSession() {
@@ -933,7 +1173,8 @@ function locateInitialSession() {
   let sessionId = null
   const traceIdParam = route.query.traceId ? String(route.query.traceId) : ''
   if (traceIdParam) {
-    sessionId = rs.find((r) => r.traceId === traceIdParam)?.sessionId
+    const hit = rs.find((r) => r.traceId === traceIdParam)
+    if (hit) sessionId = hit.parentSessionId || hit.sessionId
   }
   const sessionParam = route.query.sessionId ? String(route.query.sessionId) : ''
   if (!sessionId && sessionParam) sessionId = sessionParam
@@ -994,11 +1235,7 @@ function formatDuration(ms) {
   return `${m}m${Math.round(s % 60)}s`
 }
 
-function formatSize(chars) {
-  if (chars >= 1024 * 1024) return (chars / 1024 / 1024).toFixed(1) + 'MB'
-  if (chars >= 1024) return (chars / 1024).toFixed(1) + 'KB'
-  return chars + 'B'
-}
+// 左轴工具行的 formatSize 渲染已随行模板下沉 TimelineEventList
 
 onMounted(() => {
   load()

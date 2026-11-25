@@ -163,14 +163,23 @@ public class RiskStore {
 
     /**
      * 风险列表（详情页检测区域数据源）：severity 降序（high→medium→low）→ round 升序（NULL 最后）。
+     *
+     * <p>子会话穿透（M-TT，§3.3）：本会话风险 + 全部子会话风险一次返回（检测兜底任务对
+     * 子会话终态同样落风险行）；RiskItem 带 sessionId/agentCode（join agentx_monitor_session），
+     * 前端打「子Agent」徽标并按 ${subSessionId}:${round} 挂到子事件上。根会话风险排前面。
      */
     public List<RiskItem> listBySession(String sessionId) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
-                SELECT rule_id, severity, round, trace_id, rounds_hit, title, detail, evidence, created_at
-                FROM agentx_monitor_risk WHERE session_id = ?
-                ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END ASC,
-                         round ASC NULLS LAST, id ASC
-                """, sessionId);
+                SELECT r.rule_id, r.severity, r.round, r.trace_id, r.rounds_hit, r.title, r.detail,
+                       r.evidence, r.created_at, r.session_id AS risk_session_id, s.agent_code
+                FROM agentx_monitor_risk r
+                LEFT JOIN agentx_monitor_session s ON s.session_id = r.session_id
+                WHERE r.session_id = ?
+                   OR r.session_id IN (SELECT session_id FROM agentx_monitor_session WHERE parent_session_id = ?)
+                ORDER BY CASE r.severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END ASC,
+                         CASE WHEN r.session_id = ? THEN 0 ELSE 1 END ASC,
+                         r.round ASC NULLS LAST, r.id ASC
+                """, sessionId, sessionId, sessionId);
         List<RiskItem> out = new ArrayList<>();
         for (Map<String, Object> row : rows) {
             out.add(new RiskItem(
@@ -182,7 +191,9 @@ public class RiskStore {
                     str(row.get("title")),
                     str(row.get("detail")),
                     parseEvidence(row.get("evidence")),
-                    row.get("created_at") == null ? null : String.valueOf(row.get("created_at"))));
+                    row.get("created_at") == null ? null : String.valueOf(row.get("created_at")),
+                    str(row.get("risk_session_id")),
+                    str(row.get("agent_code"))));
         }
         return out;
     }

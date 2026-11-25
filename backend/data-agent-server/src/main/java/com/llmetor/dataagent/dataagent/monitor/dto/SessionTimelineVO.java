@@ -13,6 +13,10 @@ import java.util.List;
  * （上一轮的 assistant 原话 + 工具结果们），即「这次调用时增量传入的数据」。
  * 工具结果全文只在 deltaMessages 存一份，tool 事件带 resultRefSeq 指向下轮
  * llm 事件，前端按 callId 取全文（避免响应体翻倍）。
+ *
+ * <p>子Agent穿透（M-TT，2026-11-25）：委派 tool 事件带 subSession（子会话完整事件树，
+ * eager 内嵌一次返回，D1）；挂不上委派点的子会话进顶层 orphanSubSessions 兜底区可见（D4）。
+ * 子事件 seq 在子会话命名空间内独立编号（D2），前端 key 用 sub:{subSessionId}:{seq} 区分。
  */
 public record SessionTimelineVO(
         String sessionId,
@@ -20,7 +24,9 @@ public record SessionTimelineVO(
         String question,
         String status,
         int roundCount,
-        List<Event> events) {
+        List<Event> events,
+        /** 挂不上委派 tool 事件的子会话（旧数据无 parent_tool_call_id / 关联缺失），前端兜底区展示 */
+        List<SubSession> orphanSubSessions) {
 
     /**
      * 事件行。type = user | llm | tool | answer。
@@ -63,7 +69,31 @@ public record SessionTimelineVO(
             /** tool：执行成功但未命中数据（未找到/无结果类前缀）→ 前端 ⓘ */
             Boolean resultEmpty,
             /** tool：结果全文所在 llm 事件 seq（下轮 deltaMessages 内按 callId 查找） */
-            Integer resultRefSeq) {
+            Integer resultRefSeq,
+            /** tool：委派子Agent执行块（callId 命中某子会话 parent_tool_call_id 时挂载；其余 null） */
+            SubSession subSession) {
+    }
+
+    /**
+     * 委派子Agent执行块（M-TT）：挂在匹配 parent_tool_call_id 的 tool 事件上。
+     * events 复用 Event 结构（含 user 起点=任务、llm、tool、answer=子Agent产出），
+     * seq 在子会话命名空间内独立编号；只嵌一层（D3，子Agent工具池物理隔离无孙代）。
+     */
+    public record SubSession(
+            /** 子Agent编码：data-analysis / declarant-fill 等 */
+            String agentCode,
+            /** 子会话ID（子事件 seq 在此命名空间内） */
+            String sessionId,
+            /** 委派任务文本（子会话行 question = 父委派的任务原文） */
+            String task,
+            /** 子会话状态：completed / error / running / interrupted */
+            String status,
+            Integer roundCount,
+            Integer failRounds,
+            Long promptTokens,
+            Long completionTokens,
+            /** 子会话完整事件流（瘦字段 + delta，与大字段懒加载策略不冲突） */
+            List<Event> events) {
     }
 
     /** 工具调用项（决策与参数；arguments 为模型输出的 JSON 字符串原文） */

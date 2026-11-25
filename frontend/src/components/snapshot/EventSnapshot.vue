@@ -1,10 +1,13 @@
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <!-- 事件头：类型 + 轮次 + 状态 + 耗时 -->
+    <!-- 事件头：类型 + 轮次 + 状态 + 耗时（子事件带 [子Agent] 徽标与子块内双导航，M-TT §4.2） -->
     <div class="shrink-0 border-b border-gray-50 px-4 pt-3">
       <div class="flex items-center gap-2">
         <span class="text-sm font-semibold text-gray-800">{{ headTitle }}</span>
         <el-tag size="small" :type="headTagType" disable-transitions>{{ headTypeCn }}</el-tag>
+        <el-tag v-if="isSubEvent" size="small" type="warning" disable-transitions>
+          [子Agent] {{ agentName(subSession?.agentCode) }}
+        </el-tag>
         <el-tag v-if="event.success === false" size="small" type="danger" disable-transitions>error</el-tag>
         <span v-if="event.errorMessage" class="truncate text-xs text-red-500" :title="event.errorMessage">
           {{ event.errorMessage }}
@@ -15,9 +18,18 @@
             {{ formatTokens(event.promptTokens) }}/{{ formatTokens(event.completionTokens) }} tok
           </span>
         </span>
-        <el-button v-if="event.type === 'tool'" link size="small" type="primary" @click="$emit('locate', event.parentSeq)">
+        <!-- 双导航（M-TT §4.2）：主轴 tool → 父级决策；子事件 → 子块内父级决策 + 返回委派处 -->
+        <el-button v-if="!isSubEvent && event.type === 'tool' && event.parentSeq != null" link size="small" type="primary" @click="$emit('locate', String(event.parentSeq))">
           父级决策 ▸
         </el-button>
+        <template v-else-if="isSubEvent">
+          <el-button v-if="event.parentSeq != null" link size="small" type="primary" @click="$emit('locate', subKey(event.parentSeq))">
+            ◂ 父级决策
+          </el-button>
+          <el-button v-if="delegateKey" link size="small" type="primary" plain @click="$emit('locate', delegateKey)">
+            ↩ 返回委派处
+          </el-button>
+        </template>
       </div>
       <div v-if="event.assistantText && event.type === 'llm'" class="mt-1 truncate text-xs text-gray-500" :title="event.assistantText">
         "{{ firstLine(event.assistantText) }}"
@@ -202,7 +214,7 @@
           <template v-else-if="event.type === 'tool'">
             <div v-if="parentEvent?.assistantText" class="mb-2 text-xs text-gray-500">
               发起决策：<span class="text-gray-700">"{{ firstLine(parentEvent.assistantText) }}"</span>
-              <el-button link size="small" type="primary" @click="$emit('locate', event.parentSeq)">查看父级 ▸</el-button>
+              <el-button link size="small" type="primary" @click="$emit('locate', parentKey)">查看父级 ▸</el-button>
             </div>
             <div class="mb-1 text-xs font-medium text-gray-600">本工具调用参数：</div>
             <pre class="overflow-auto whitespace-pre-wrap break-words rounded-lg border border-gray-100 bg-white p-2.5 font-mono text-[11px] leading-4 text-gray-600">{{ abbreviate(prettyJson(event.arguments), 2000) }}</pre>
@@ -219,6 +231,52 @@
           <div v-else class="rounded-lg bg-gray-50 py-8 text-center text-sm text-gray-400">（无回答内容）</div>
         </template>
         <template v-else-if="event.type === 'tool'">
+          <!-- 子Agent执行块汇总卡（M-TT §4.2 左图）：委派事件点击即看子会话任务/状态/轮次/失败轮/内部明细，可点击定位 -->
+          <div v-if="event.subSession" class="mb-2 rounded-lg border border-blue-100 bg-blue-50/30 p-2.5">
+            <div class="flex items-center gap-1.5 text-xs">
+              <span class="shrink-0">🤖</span>
+              <span class="shrink-0 font-semibold text-blue-700">{{ agentName(event.subSession.agentCode) }}</span>
+              <span class="shrink-0 font-mono text-[10px] text-gray-400">{{ event.subSession.agentCode }}</span>
+              <el-tag size="small" :type="subTagType(event.subSession.status)" disable-transitions>
+                {{ subStatusCn(event.subSession.status) }}
+              </el-tag>
+              <el-button
+                v-if="event.subSession.events?.length"
+                link size="small" class="ml-auto shrink-0"
+                @click="$emit('toggle-sub', event.subSession.sessionId)"
+              >展开/收起左轴子块 ▾</el-button>
+            </div>
+            <div class="mt-1 flex items-start gap-1 text-[11px] leading-4 text-gray-500" :title="event.subSession.task">
+              <span class="shrink-0">🎯 任务:</span>
+              <span class="min-w-0 flex-1">{{ event.subSession.task || '-' }}</span>
+            </div>
+            <div class="mt-1 text-[11px] text-gray-500">
+              内部: {{ event.subSession.roundCount || 0 }} 轮 ·
+              {{ subStepCount }} 步工具 ·
+              {{ formatTokens((event.subSession.promptTokens || 0) + (event.subSession.completionTokens || 0)) }} tok
+              <span v-if="(event.subSession.failRounds || 0) > 0" class="text-red-500">
+                ❌ 失败{{ event.subSession.failRounds }}轮:
+                {{ failRoundSummary }}
+              </span>
+            </div>
+            <!-- 内部执行明细迷你列表：点击定位到左轴子块对应行 -->
+            <div v-if="event.subSession.events?.length" class="mt-1.5 space-y-0.5 border-t border-blue-100/70 pt-1.5">
+              <div
+                v-for="ev in miniRows"
+                :key="ev.seq"
+                class="flex cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 text-[11px] hover:bg-blue-100/60"
+                :title="'点击定位到内部执行明细'"
+                @click="$emit('locate', `sub-${event.subSession.sessionId}-${ev.seq}`)"
+              >
+                <span class="shrink-0">{{ miniIcon(ev) }}</span>
+                <span class="shrink-0 font-mono text-gray-500">{{ miniLabel(ev) }}</span>
+                <span v-if="ev.type === 'tool'" class="min-w-0 flex-1 truncate font-mono text-gray-400" :title="ev.arguments">{{ toolArgPreview(ev) }}</span>
+                <span v-else class="min-w-0 flex-1 truncate text-gray-400">{{ firstLine(ev.assistantText || '') }}</span>
+                <span v-if="ev.success === false" class="shrink-0 text-red-500">❌ {{ ev.errorMessage || '失败' }}</span>
+                <span class="shrink-0 text-gray-400">{{ formatDuration(ev.durationMs) }}</span>
+              </div>
+            </div>
+          </div>
           <div class="mb-2 flex items-center gap-2 text-xs">
             <span :class="resultIconClass">{{ resultIcon }}</span>
             <span :class="resultTextClass">{{ resultStatusText }}</span>
@@ -258,7 +316,7 @@
             v-for="c in childTools"
             :key="c.seq"
             class="mb-2 cursor-pointer rounded-lg border border-gray-100 bg-white p-2.5 hover:border-blue-200"
-            @click="$emit('locate', c.seq)"
+            @click="$emit('locate', childKey(c))"
           >
             <div class="flex items-center gap-1.5 text-xs">
               <span>{{ resultIconOf(c) }}</span>
@@ -313,6 +371,7 @@ import MarkdownIt from 'markdown-it'
 import JsonTree from '@/components/JsonTree.vue'
 import MdPreviewDialog from '@/components/MdPreviewDialog.vue'
 import { normalizeJsonText } from '@/utils/jsonText'
+import { agentName, subStatusCn, subTagType } from '@/utils/agentNames'
 
 /** >100KB 全量输入门控（同提问详情页原 INPUT 口径） */
 const BIG_FIELD_CHARS = 100 * 1024
@@ -323,20 +382,30 @@ const BIG_FIELD_CHARS = 100 * 1024
  * → 模型思考（为什么这么决定）→ 新传入（刚收到什么信息）→ 完整上下文（刨根兜底）。
  * tool 结果按 tool_call_id 配对全文（后端 timeline 已回填 resultRefSeq 引用）。
  * 所有长文本「原文/渲染 ▸」统一走 MdPreviewDialog（自动解包 JSON 编码 + 防 XSS）。
+ *
+ * M-TT 子Agent穿透（ing-02 §4.2）：委派 tool 事件（event.subSession）渲染子会话汇总卡
+ * （任务/状态/轮次/失败轮/内部明细迷你列表，点击定位）；子事件（subSession 非空 props）
+ * 头部带 [子Agent] 徽标 + 子块内双导航（◂ 父级决策 / ↩ 返回委派处）。
+ * locate 事件统一携带事件 key 字符串（主轴 `${seq}` / 子块 `sub-{subSessionId}-{seq}`），
+ * 父组件 locateKey 统一处理跨命名空间定位。
  */
 const props = defineProps({
   /** timeline 事件（SessionTimelineVO.Event） */
   event: { type: Object, required: true },
-  /** 全部事件（tool 结果全文按 resultRefSeq 回查下轮 delta） */
+  /** 全部事件（tool 结果全文按 resultRefSeq 回查下轮 delta；主轴命名空间） */
   events: { type: Array, default: () => [] },
+  /** 选中事件为子事件时所属的 SubSession（M-TT；主轴事件为 null） */
+  subSession: { type: Object, default: null },
+  /** 选中子事件时其主轴委派 tool 事件 key（「↩ 返回委派处」导航目标；空串隐藏按钮） */
+  delegateKey: { type: String, default: '' },
   /** 拉取单轮明细（父组件缓存）：async traceId → RoundDetailVO */
   loadRound: { type: Function, required: true },
-  /** 当前提问的风险列表（自动检测结果；按轮次关联出「规则异常」Tab） */
+  /** 当前命名空间的风险列表（自动检测结果；按轮次关联出「规则异常」Tab） */
   risks: { type: Array, default: () => [] },
   /** 父组件指定的初始 Tab（如点 ⚠ 角标直达「规则异常」）；空串用事件类型默认值 */
   initialTab: { type: String, default: '' }
 })
-const emit = defineEmits(['locate'])
+const emit = defineEmits(['locate', 'toggle-sub'])
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 const tab = ref('delta')
@@ -393,10 +462,86 @@ const deltaEmptyText = computed(() => {
   return '无新增传入消息（历史行明细缺失）'
 })
 
+// ==================== M-TT 子事件命名空间 ====================
+
+/** 选中事件是否为子Agent事件（subSession prop 非空） */
+const isSubEvent = computed(() => !!props.subSession)
+
+/** 当前命名空间事件集（子事件 → 所属 subSession.events；主轴事件 → props.events） */
+const scopeEvents = computed(() => (isSubEvent.value ? props.subSession?.events || [] : props.events))
+
+/** 子命名空间事件 key：`sub-{subSessionId}-{seq}` */
+function subKey(seq) {
+  return `sub-${props.subSession?.sessionId || ''}-${seq}`
+}
+
+/** 任意事件的 key（按当前命名空间；模板定位/父链查找统一入口） */
+function childKey(ev) {
+  return isSubEvent.value ? subKey(ev.seq) : String(ev.seq)
+}
+
+const parentKey = computed(() =>
+  props.event.parentSeq != null ? childKey({ seq: props.event.parentSeq }) : '')
+
 const parentEvent = computed(() =>
-  props.event.parentSeq != null ? props.events.find((e) => e.seq === props.event.parentSeq) : null)
+  props.event.parentSeq != null ? scopeEvents.value.find((e) => e.seq === props.event.parentSeq) : null)
 const childTools = computed(() =>
-  props.events.filter((e) => e.type === 'tool' && e.parentSeq === props.event.seq))
+  scopeEvents.value.filter((e) => e.type === 'tool' && e.parentSeq === props.event.seq))
+
+/** tool 结果全文：下轮 llm 事件 delta 内按 toolCallId 查找（后端 resultRefSeq 指向；子块内自洽） */
+const resultFull = computed(() => {
+  if (props.event.type !== 'tool' || props.event.resultRefSeq == null) return null
+  const refEvent = scopeEvents.value.find((e) => e.seq === props.event.resultRefSeq)
+  const msg = refEvent?.deltaMessages?.find(
+    (m) => m.role === 'tool' && (!props.event.callId || m.toolCallId === props.event.callId))
+  return msg ? { content: msg.content, truncated: msg.truncated } : null
+})
+
+// ==================== 委派事件子会话汇总卡（M-TT §4.2） ====================
+
+/** 子Agent内部工具步数 */
+const subStepCount = computed(() =>
+  (props.event.subSession?.events || []).filter((e) => e.type === 'tool').length)
+
+/** 失败轮摘要（❌ 失败N轮: 的后半句）：首个失败轮 + 其首个失败工具/原因 */
+const failRoundSummary = computed(() => {
+  const evs = props.event.subSession?.events || []
+  const failLlm = evs.find((e) => e.type === 'llm' && e.success === false)
+  if (!failLlm) return ''
+  const failTool = evs.find((e) => e.type === 'tool' && e.round === failLlm.round && e.resultOk === false)
+  const what = failTool ? `Sub-R${failLlm.round} ${failTool.toolName}` : `Sub-R${failLlm.round}`
+  return `${what} ${failLlm.errorMessage || '执行失败'} → 点击「内部执行明细」定位`
+})
+
+/** 内部执行明细迷你列表行：llm/tool/answer 事件（去掉 user 起点） */
+const miniRows = computed(() =>
+  (props.event.subSession?.events || []).filter((e) => e.type !== 'user'))
+
+function miniIcon(ev) {
+  if (ev.type === 'llm') return '🤖'
+  if (ev.type === 'answer') return '💬'
+  return ev.resultOk == null ? '◌' : ev.resultOk === false ? '❌' : ev.resultEmpty ? 'ⓘ' : '✅'
+}
+
+function miniLabel(ev) {
+  if (ev.type === 'llm') return `Sub-R${ev.round} llm`
+  if (ev.type === 'answer') return '产出 text'
+  return `Sub-R${ev.round} ${ev.toolName}`
+}
+
+/** 迷你列表工具行参数摘要（同左轴 toolArgsPreview 口径：首键=首行值截断） */
+function toolArgPreview(ev) {
+  try {
+    const args = JSON.parse(ev.arguments || '{}')
+    const first = Object.entries(args)[0]
+    if (!first) return '{}'
+    const val = typeof first[1] === 'string' ? first[1] : JSON.stringify(first[1])
+    const one = val.split('\n')[0]
+    return `${first[0]}=${one.length > 30 ? one.slice(0, 30) + '…' : one}`
+  } catch {
+    return abbreviate(firstLine(ev.arguments || ''), 30)
+  }
+}
 
 /** 本事件所在轮次命中的检测规则（risk.round 命中或 roundsHit 包含）→「规则异常」Tab */
 const eventRisks = computed(() =>
@@ -405,15 +550,6 @@ const eventRisks = computed(() =>
 function severityCn(sev) {
   return { high: '异常', medium: '待人工确认', low: '风险提示' }[sev] || sev
 }
-
-/** tool 结果全文：下轮 llm 事件 delta 内按 toolCallId 查找（后端 resultRefSeq 指向） */
-const resultFull = computed(() => {
-  if (props.event.type !== 'tool' || props.event.resultRefSeq == null) return null
-  const refEvent = props.events.find((e) => e.seq === props.event.resultRefSeq)
-  const msg = refEvent?.deltaMessages?.find(
-    (m) => m.role === 'tool' && (!props.event.callId || m.toolCallId === props.event.callId))
-  return msg ? { content: msg.content, truncated: msg.truncated } : null
-})
 
 const resultBadge = computed(() => {
   if (props.event.type === 'tool') return props.event.resultChars != null ? formatSize(props.event.resultChars) : '缺'
@@ -439,10 +575,11 @@ const outputLabel = computed(() =>
   (props.event.type === 'tool' ? '调用参数' : '模型决策'))
 
 const headTitle = computed(() => {
+  const rPrefix = isSubEvent.value ? 'Sub-R' : 'R'
   if (props.event.type === 'user') return `提问`
-  if (props.event.type === 'answer') return `R${props.event.round} · 最终回答`
-  if (props.event.type === 'tool') return `R${props.event.round} · ${props.event.toolName}`
-  return `R${props.event.round} · LLM 调用`
+  if (props.event.type === 'answer') return `${rPrefix}${props.event.round} · 最终回答`
+  if (props.event.type === 'tool') return `${rPrefix}${props.event.round} · ${props.event.toolName}`
+  return `${rPrefix}${props.event.round} · LLM 调用`
 })
 const headTypeCn = computed(() =>
   ({ user: '提问', llm: 'LLM 调用', tool: '工具调用', answer: '文本轮' }[props.event.type]))

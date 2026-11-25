@@ -83,6 +83,31 @@ export function checkExp(exp, got) {
       const missing = exp.value.filter((key) => !(key in v))
       return { pass: missing.length === 0, msg: `${exp.path} 应含字段 [${exp.value.join(', ')}]${missing.length ? `，缺 ${missing.join(', ')}` : ''}` }
     }
+    case 'jsonSome': {
+      // 数组任一元素的 field 子路径满足全部给定条件（eq/min/match/lenMin，可组合）——
+      // 用于下标不确定的嵌套结构（如 timeline.events 中挂载 subSession 的委派 tool 事件，M-TT）
+      const arr = getJsonPath(got.json, exp.path)
+      if (!Array.isArray(arr)) return { pass: false, msg: `${exp.path} 应为数组（实际：${typeof arr}）` }
+      const pick = (o, f) => f.split('.').reduce((v, k) => (v == null ? undefined : v[k]), o)
+      const conds = []
+      if (exp.eq !== undefined) conds.push(`eq ${fmt(exp.eq)}`)
+      if (exp.min !== undefined) conds.push(`min ${exp.min}`)
+      if (exp.match !== undefined) conds.push(`match /${exp.match}/`)
+      if (exp.lenMin !== undefined) conds.push(`lenMin ${exp.lenMin}`)
+      for (const el of arr) {
+        const v = exp.field ? pick(el, exp.field) : el
+        let ok = true
+        if (exp.eq !== undefined) ok = ok && v === exp.eq
+        if (exp.min !== undefined) ok = ok && Number(v) >= exp.min
+        if (exp.match !== undefined) {
+          const s = typeof v === 'string' ? v : JSON.stringify(v ?? '')
+          ok = ok && new RegExp(exp.match).test(s)
+        }
+        if (exp.lenMin !== undefined) ok = ok && Array.isArray(v) && v.length >= exp.lenMin
+        if (ok) return { pass: true, msg: `${exp.path} 存在元素满足 ${exp.field || '元素'} ${conds.join(' 且 ')}` }
+      }
+      return { pass: false, msg: `${exp.path} 无任何元素满足 ${exp.field || '元素'} ${conds.join(' 且 ')}（共 ${arr.length} 个元素）` }
+    }
     case 'contentTypeIncludes':
       return { pass: (got.headers?.get?.('content-type') || got.contentType || '').includes(exp.value), msg: `Content-Type 含 "${exp.value}"` }
 

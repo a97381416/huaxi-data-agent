@@ -548,6 +548,61 @@ export default {
           }
         }
       ]
+    },
+    {
+      key: 'M6',
+      name: 'M-TT · 监控链路跟踪子Agent穿透（追溯视图补齐子会话轮次树）',
+      scenarios: [
+        {
+          id: 'MSA-601',
+          prio: 'P0',
+          title: '监控 timeline 子会话穿透：委派 tool 事件挂载 subSession 完整事件树且 callId 命中委派点',
+          steps: '1) multi 模式问数跑一次完整问答直至 COMPLETE；2) GET /monitor/conversations/{{convId}} 取根会话行；3) GET /monitor/sessions/{rootSid}/timeline 校验委派行 subSession 挂载与孤儿兜底结构',
+          expected: 'timeline.events 存在 toolName=call_data_analysis 且 subSession 非空的委派事件（挂载即证明 parent_tool_call_id 与委派 callId 匹配）：agentCode=data-analysis、task 非空、subSession.events ≥2 条且子事件内含 executeSql；顶层含 orphanSubSessions 数组',
+          auto: {
+            steps: [
+              {
+                kind: 'sse',
+                url: '/agent/stream',
+                body: { query: '请帮我统计一下当前库里一共有多少个项目？', conversationId: '{{convId}}', agentMode: 'multi', skill: 'data-analysis' },
+                timeoutMs: 120000,
+                expect: [
+                  { kind: 'toolNameCalled', value: 'call_data_analysis' },
+                  { kind: 'subToolCalled', value: 'executeSql' },
+                  { kind: 'terminal', value: 'COMPLETE' }
+                ]
+              },
+              {
+                method: 'GET',
+                url: '/monitor/conversations/{{convId}}',
+                expect: [
+                  { kind: 'bodyCode', value: 200 },
+                  { kind: 'jsonLen', path: 'data.sessions', min: 1 }
+                ],
+                saveVar: 'convDetail'
+              },
+              {
+                method: 'GET',
+                url: '/monitor/sessions/{{var:convDetail.sessions.0.sessionId}}/timeline',
+                timeoutMs: 60000,
+                expect: [
+                  { kind: 'bodyCode', value: 200 },
+                  { kind: 'jsonLen', path: 'data.events', min: 3 },
+                  { kind: 'jsonKeys', path: 'data', value: ['sessionId', 'conversationId', 'question', 'status', 'roundCount', 'events', 'orphanSubSessions'] },
+                  { kind: 'jsonSome', path: 'data.events', field: 'toolName', eq: 'call_data_analysis' },
+                  { kind: 'jsonSome', path: 'data.events', field: 'subSession.agentCode', eq: 'data-analysis' },
+                  { kind: 'jsonSome', path: 'data.events', field: 'subSession.sessionId', match: '.+' },
+                  { kind: 'jsonSome', path: 'data.events', field: 'subSession.task', match: '.+' },
+                  { kind: 'jsonSome', path: 'data.events', field: 'subSession.status', eq: 'completed' },
+                  { kind: 'jsonSome', path: 'data.events', field: 'subSession.roundCount', min: 1 },
+                  { kind: 'jsonSome', path: 'data.events', field: 'subSession.events', lenMin: 2 },
+                  { kind: 'jsonSome', path: 'data.events', field: 'subSession.events', match: 'executeSql' }
+                ]
+              }
+            ]
+          }
+        }
+      ]
     }
   ]
 }
