@@ -180,6 +180,12 @@ public class JdbcPauseStateStore implements PauseStateStore {
         }
         m.put("interruptMessage", s.getInterruptMessage());
         m.put("interruptedAt", s.getInterruptedAt());
+        if (s.getDecisionId() != null) {
+            m.put("decisionId", s.getDecisionId());
+        }
+        if (s.getRemainingToolCalls() != null && !s.getRemainingToolCalls().isEmpty()) {
+            m.put("remainingToolCalls", s.getRemainingToolCalls());
+        }
         return m;
     }
 
@@ -217,6 +223,15 @@ public class JdbcPauseStateStore implements PauseStateStore {
                 }
             }
         }
+        List<PauseState.PendingToolCall> remaining = new ArrayList<>();
+        if (m.get("remainingToolCalls") instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Map<?, ?> t) {
+                    remaining.add(new PauseState.PendingToolCall(
+                            str(t.get("id")), str(t.get("name")), str(t.get("arguments"))));
+                }
+            }
+        }
         return new PauseState(
                 str(m.get("conversationId")), str(m.get("sessionId")), str(m.get("query")),
                 params, messagesJson,
@@ -227,7 +242,9 @@ public class JdbcPauseStateStore implements PauseStateStore {
                 enumOf(PauseState.Reason.class, str(m.get("reason")), PauseState.Reason.USER_INTERRUPT),
                 enumOf(PauseState.SafePoint.class, str(m.get("safePoint")), PauseState.SafePoint.INIT),
                 str(m.get("interruptMessage")),
-                num(m.get("interruptedAt")).longValue());
+                num(m.get("interruptedAt")).longValue(),
+                str(m.get("decisionId")),
+                remaining);
     }
 
     private static String str(Object v) {

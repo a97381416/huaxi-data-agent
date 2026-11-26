@@ -8,6 +8,7 @@ import static com.llmetor.dataagent.dataagent.hitl.DecisionModels.*;
 import com.llmetor.miniagentx.agent.ToolExecutionContext;
 import com.llmetor.miniagentx.model.AgentStreamEvent;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -48,15 +49,26 @@ public class DecisionService {
     private final ObjectMapper objectMapper;
     private final ConfirmTokenService confirmTokenService;
     private final HitlProperties properties;
+    private final DecisionAwaitRegistry awaitRegistry;
 
     public DecisionService(DataSource dataSource,
                            ObjectMapper objectMapper,
                            ConfirmTokenService confirmTokenService,
                            HitlProperties properties) {
+        this(dataSource, objectMapper, confirmTokenService, properties, new DecisionAwaitRegistry());
+    }
+
+    @Autowired
+    public DecisionService(DataSource dataSource,
+                           ObjectMapper objectMapper,
+                           ConfirmTokenService confirmTokenService,
+                           HitlProperties properties,
+                           DecisionAwaitRegistry awaitRegistry) {
         this.jdbc = new JdbcTemplate(dataSource);
         this.objectMapper = objectMapper;
         this.confirmTokenService = confirmTokenService;
         this.properties = properties;
+        this.awaitRegistry = awaitRegistry != null ? awaitRegistry : new DecisionAwaitRegistry();
         initSchema();
     }
 
@@ -139,6 +151,18 @@ public class DecisionService {
      * 创建决策单；若允许会话级同类放行且命中有效授权，则自动扣减配额并落库 AUTO_APPROVED_BY_GRANT 记录。
      */
     public CreateResult createOrAutoApprove(CreateDecisionRequest req) {
+        // 二期 HITL 慢路径恢复：若当前处于 HITL_TOOL_REQUEST 恢复重放，复用已存在的决策单，不重复建单
+        String resumeDecId = ToolExecutionContext.currentResumeDecisionId();
+        if (StringUtils.hasText(resumeDecId)) {
+            DecisionEntity existing = findById(resumeDecId);
+            if (existing != null && existing.ownerUserId() == req.ownerUserId()
+                    && Objects.equals(existing.toolName(), req.toolName())) {
+                log.info("[hitl] 慢路径恢复复用原决策单: decisionId={}, status={}, tool={}",
+                        existing.decisionId(), existing.status(), req.toolName());
+                return new CreateResult(existing, toCardPayload(existing, null), false, null);
+            }
+        }
+
         String rootConvId = resolveConversationId(req.conversationId());
         String toolCallId = StringUtils.hasText(req.toolCallId())
                 ? req.toolCallId() : ToolExecutionContext.currentToolCallId();
@@ -181,7 +205,8 @@ public class DecisionService {
                 answeredAt != null ? Timestamp.valueOf(answeredAt) : null);
 
         DecisionEntity entity = findById(decisionId);
-        HitlCardPayload card = toCardPayload(entity, null);
+        ToolExecutionContext.HitlQueueInfo queueInfo = ToolExecutionContext.currentQueueInfo();
+        HitlCardPayload card = toCardPayload(entity, null, queueInfo);
 
         if (matchedGrant != null) {
             log.info("[hitl] 命中会话级同类放行: decisionId={}, grantId={}, tool={}, scopeKey={}, used={}/{}",
@@ -190,11 +215,34 @@ public class DecisionService {
             return new CreateResult(entity, card, true, matchedGrant);
         }
 
-        // 未命中放行：向主会话 SSE 流推送 HITL_REQUEST
+        // 未命中放行：向主会话 SSE 流推送 HITL_REQUEST（附带队列进度 1/3 与排队预览）
         ToolExecutionContext.emit(AgentStreamEvent.hitlRequest(decisionId, req.type(), card));
-        log.info("[hitl] 创建待决策单: decisionId={}, convId={}, userId={}, tool={}, allowSessionGrant={}",
-                decisionId, rootConvId, req.ownerUserId(), req.toolName(), req.allowSessionGrant());
+        log.info("[hitl] 创建待决策单: decisionId={}, convId={}, userId={}, tool={}, allowSessionGrant={}, queue={}/{}",
+                decisionId, rootConvId, req.ownerUserId(), req.toolName(), req.allowSessionGrant(),
+                queueInfo != null ? queueInfo.index() : 1, queueInfo != null ? queueInfo.total() : 1);
         return new CreateResult(entity, card, false, null);
+    }
+
+    /** 二期 HITL：进入 60s 在线原地等待（进入前预落盘 PauseState） */
+    public DecisionAwaitRegistry.AwaitResult awaitDecision(String decisionId) {
+        ToolExecutionContext.savePreParkState(decisionId);
+        return awaitRegistry.registerAndAwait(decisionId, properties.getInlineAwaitSeconds(), this::findById);
+    }
+
+    /** 二期 HITL：向 SSE 推送 HITL_RESOLVED（用于拒绝或消费完成时折叠卡片） */
+    public void emitResolved(DecisionEntity entity) {
+        if (entity != null) {
+            ToolExecutionContext.emit(AgentStreamEvent.hitlResolved(
+                    entity.decisionId(), entity.type(), toCardPayload(entity, null)));
+        }
+    }
+
+    /** 二期 HITL：向 SSE 推送 HITL_WITHDRAWN */
+    public void emitWithdrawn(DecisionEntity entity) {
+        if (entity != null) {
+            ToolExecutionContext.emit(AgentStreamEvent.hitlWithdrawn(
+                    entity.decisionId(), entity.type(), toCardPayload(entity, null)));
+        }
     }
 
     /**
@@ -207,7 +255,7 @@ public class DecisionService {
         }
         String option = req.option().trim().toUpperCase();
         if (!OPTION_ALLOW_ONCE.equals(option) && !OPTION_ALLOW_SESSION.equals(option)
-                && !OPTION_REJECTED.equals(option)) {
+                && !OPTION_REJECTED.equals(option) && !OPTION_REJECT_ALL.equals(option)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "不支持的审批选项: " + option);
         }
 
@@ -260,7 +308,8 @@ public class DecisionService {
                     "该操作属于不可逆高危审批（L3），禁止本会话同类放行");
         }
 
-        String targetStatus = OPTION_REJECTED.equals(option) ? STATUS_REJECTED : STATUS_APPROVED;
+        String targetStatus = (OPTION_REJECTED.equals(option) || OPTION_REJECT_ALL.equals(option))
+                ? STATUS_REJECTED : STATUS_APPROVED;
         String userWords = StringUtils.hasText(req.userWords()) ? req.userWords().trim() : null;
         String answerJsonStr = req.answerJson() != null ? toJson(req.answerJson()) : null;
         String cmdId = StringUtils.hasText(req.commandId()) ? req.commandId().trim() : null;
@@ -300,9 +349,15 @@ public class DecisionService {
         }
 
         DecisionEntity refreshed = findById(decisionId);
-        log.info("[hitl] 用户审批完成: decisionId={}, option={}, status={}, actor={}({}), grantId={}",
-                decisionId, option, targetStatus, currentUserName, currentUserId, grantId);
-        return buildDecideResponse(refreshed);
+        DecisionAwaitRegistry.AwaitResult awaitResult = STATUS_REJECTED.equals(targetStatus)
+                ? DecisionAwaitRegistry.AwaitResult.rejected(option, userWords)
+                : DecisionAwaitRegistry.AwaitResult.approved(option, grantId);
+        boolean inlineResumed = awaitRegistry.tryComplete(decisionId, awaitResult);
+        String mode = inlineResumed ? MODE_INLINE_RESUMED : MODE_NEED_RESUME;
+
+        log.info("[hitl] 用户审批完成: decisionId={}, option={}, status={}, mode={}, actor={}({}), grantId={}",
+                decisionId, option, targetStatus, mode, currentUserName, currentUserId, grantId);
+        return buildDecideResponse(refreshed, mode);
     }
 
     /**
@@ -378,6 +433,7 @@ public class DecisionService {
                 STATUS_SUPERSEDED, conversationId, userId, STATUS_PENDING);
         log.info("[hitl] 新消息顶掉旧审批单: convId={}, userId={}, count={}", conversationId, userId, rows);
         return pending.stream().map(e -> {
+            awaitRegistry.tryComplete(e.decisionId(), DecisionAwaitRegistry.AwaitResult.superseded());
             DecisionEntity updated = new DecisionEntity(
                     e.decisionId(), e.conversationId(), e.sessionId(), e.toolCallId(), e.agentCode(),
                     e.ownerUserId(), e.type(), STATUS_SUPERSEDED, e.revision() + 1, e.toolName(),
@@ -478,6 +534,11 @@ public class DecisionService {
     }
 
     public HitlCardPayload toCardPayload(DecisionEntity e, String convTitle) {
+        return toCardPayload(e, convTitle, null);
+    }
+
+    public HitlCardPayload toCardPayload(DecisionEntity e, String convTitle,
+                                         ToolExecutionContext.HitlQueueInfo queueInfo) {
         if (e == null) {
             return null;
         }
@@ -492,6 +553,16 @@ public class DecisionService {
         long remainingSeconds = 0L;
         if (e.expiresAt() != null && STATUS_PENDING.equals(e.status())) {
             remainingSeconds = Math.max(0L, Duration.between(LocalDateTime.now(), e.expiresAt()).getSeconds());
+        }
+
+        Integer queueIndex = queueInfo != null ? queueInfo.index() : null;
+        Integer queueTotal = queueInfo != null ? queueInfo.total() : null;
+        List<QueuePreviewItem> queuePreview = null;
+        if (queueInfo != null && queueInfo.upcoming() != null && !queueInfo.upcoming().isEmpty()) {
+            queuePreview = queueInfo.upcoming().stream()
+                    .map(item -> new QueuePreviewItem(
+                            item.toolCallId(), item.toolName(), friendlyToolLabel(item.toolName())))
+                    .toList();
         }
 
         return new HitlCardPayload(
@@ -520,8 +591,25 @@ public class DecisionService {
                 formatTs(e.answeredAt()),
                 formatTs(e.consumedAt()),
                 remainingSeconds,
-                convTitle
+                convTitle,
+                queueIndex,
+                queueTotal,
+                queuePreview
         );
+    }
+
+    private static String friendlyToolLabel(String toolName) {
+        if (toolName == null) {
+            return "高危操作";
+        }
+        return switch (toolName) {
+            case "approveTask" -> "审核通过";
+            case "rejectTask" -> "审核驳回";
+            case "partialApproveLedger" -> "台账部分通过";
+            case "submitLedgerForReview" -> "提交台账审核";
+            case "resubmitLedger" -> "重新提交台账";
+            default -> toolName;
+        };
     }
 
     /** 定时扫描过期单据（每 5 分钟兜底清理） */
@@ -577,6 +665,10 @@ public class DecisionService {
     }
 
     private DecideResponse buildDecideResponse(DecisionEntity entity) {
+        return buildDecideResponse(entity, MODE_NEED_RESUME);
+    }
+
+    private DecideResponse buildDecideResponse(DecisionEntity entity, String mode) {
         String resumePrompt;
         if (STATUS_REJECTED.equals(entity.status())) {
             String reason = StringUtils.hasText(entity.userWords()) ? entity.userWords() : "未说明具体原因";
@@ -593,7 +685,7 @@ public class DecisionService {
                 entity.decisionId(),
                 entity.status(),
                 entity.revision(),
-                "NEED_RESUME",
+                mode,
                 entity.grantId(),
                 entity.decisionOption(),
                 entity.userWords(),

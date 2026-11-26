@@ -255,8 +255,8 @@ public class SubmitLedgerForReviewTool {
                 return "⚡ 已依据本会话同类授权自动放行提审（" + scopeDesc + "）。\n\n"
                         + doExecuteSubmit(uid, ledger, v, plan, decId, token, tenant, conversationId);
             }
-            return HitlToolHelper.formatPlanHint(created, actionSummary,
-                    "ledgerId=" + ledger.ledgerId() + ", confirmToken=" + decId);
+            return hitlHelper.awaitAndExecute(created, actionSummary,
+                    approvedId -> executeRound(uid, ledger.ledgerId(), approvedId, token, tenant, conversationId));
         }
 
         ConfirmTokenService.IssuedToken issued = confirmTokenService.issue(uid, ACTION, hash);

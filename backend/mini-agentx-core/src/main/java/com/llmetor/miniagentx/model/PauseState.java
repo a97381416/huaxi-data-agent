@@ -44,6 +44,10 @@ public class PauseState {
     private final SafePoint safePoint;
     private final String interruptMessage;
     private final long interruptedAt;
+    /** 二期 HITL：挂起关联的决策单 ID */
+    private final String decisionId;
+    /** 二期 HITL：同批次中尚未开始执行的后续工具调用（串行队列截断现场） */
+    private final java.util.List<PendingToolCall> remainingToolCalls;
 
     public PauseState(String conversationId, String sessionId, String query, RunnableParams params,
                       java.util.List<String> messagesJson, int currentRound,
@@ -52,7 +56,7 @@ public class PauseState {
                       Reason reason, SafePoint safePoint, String interruptMessage) {
         this(conversationId, sessionId, query, params, messagesJson, currentRound, pendingToolCalls,
                 totalPromptTokens, totalCompletionTokens, reason, safePoint, interruptMessage,
-                System.currentTimeMillis());
+                System.currentTimeMillis(), null, java.util.List.of());
     }
 
     /** 反序列化通道：interruptedAt 从存储值还原（JdbcPauseStateStore 专用） */
@@ -62,6 +66,19 @@ public class PauseState {
                       long totalPromptTokens, long totalCompletionTokens,
                       Reason reason, SafePoint safePoint, String interruptMessage,
                       long interruptedAt) {
+        this(conversationId, sessionId, query, params, messagesJson, currentRound, pendingToolCalls,
+                totalPromptTokens, totalCompletionTokens, reason, safePoint, interruptMessage,
+                interruptedAt, null, java.util.List.of());
+    }
+
+    /** 二期 HITL 完整构造：含 decisionId 与 remainingToolCalls */
+    public PauseState(String conversationId, String sessionId, String query, RunnableParams params,
+                      java.util.List<String> messagesJson, int currentRound,
+                      java.util.List<PendingToolCall> pendingToolCalls,
+                      long totalPromptTokens, long totalCompletionTokens,
+                      Reason reason, SafePoint safePoint, String interruptMessage,
+                      long interruptedAt, String decisionId,
+                      java.util.List<PendingToolCall> remainingToolCalls) {
         this.conversationId = conversationId;
         this.sessionId = sessionId;
         this.query = query;
@@ -75,6 +92,8 @@ public class PauseState {
         this.safePoint = safePoint;
         this.interruptMessage = interruptMessage;
         this.interruptedAt = interruptedAt;
+        this.decisionId = decisionId;
+        this.remainingToolCalls = remainingToolCalls == null ? java.util.List.of() : remainingToolCalls;
     }
 
     /**

@@ -12,6 +12,7 @@ import com.llmetor.miniagentx.agent.AgentTaskManager;
 import com.llmetor.miniagentx.agent.ReactAgent;
 import com.llmetor.miniagentx.agent.LoopGuardConfig;
 import com.llmetor.miniagentx.interrupt.PauseStateStore;
+import com.llmetor.miniagentx.model.PauseState;
 import com.llmetor.miniagentx.memory.AgentxSessionStore;
 import com.llmetor.miniagentx.model.AgentStreamEvent;
 import com.llmetor.miniagentx.model.RunnableParams;
@@ -329,6 +330,12 @@ public class DodoAgent {
     /** 是否存在中断快照（存在时 /agent/stream 自动走恢复通道） */
     public boolean hasInterruptedState(String conversationId) {
         return pauseStateStore.has(conversationId);
+    }
+
+    /** 二期 HITL：判断会话快照是否为 HITL_TOOL_REQUEST 挂起态（慢路径原地重放续跑） */
+    public boolean isHitlParkedState(String conversationId) {
+        PauseState state = pauseStateStore.get(conversationId);
+        return state != null && state.getReason() == PauseState.Reason.HITL_TOOL_REQUEST;
     }
 
     /** 丢弃中断快照（takeOver 顶掉旧断点时用；M-SA2 级联清理所有 :: 子快照） */

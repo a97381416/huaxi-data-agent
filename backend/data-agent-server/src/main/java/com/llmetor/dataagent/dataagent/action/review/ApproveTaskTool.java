@@ -431,8 +431,8 @@ public class ApproveTaskTool {
             String decId = created.entity().decisionId();
             audit(uid, conversationId, "approve-plan", task, decId, true,
                     "hitl=true, needNext=" + needNext);
-            return HitlToolHelper.formatPlanHint(created, actionSummary,
-                    "taskId=" + task.taskId() + ", confirmToken=" + decId);
+            return hitlHelper.awaitAndExecute(created, actionSummary,
+                    approvedId -> executeRound(uid, task.taskId(), approvedId, token, tenant, conversationId));
         }
 
         ConfirmTokenService.IssuedToken issued = confirmTokenService.issue(uid, action, hash);

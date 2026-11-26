@@ -3,11 +3,15 @@ package com.llmetor.dataagent.dataagent.hitl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.llmetor.dataagent.dataagent.hitl.DecisionModels.*;
+import static com.llmetor.dataagent.dataagent.hitl.DecisionModels.*;
+import com.llmetor.miniagentx.agent.ToolExecutionContext;
+import com.llmetor.miniagentx.interrupt.HitlParkException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.function.Function;
 
 /**
  * 写操作工具接入一期 HITL 的统一辅助组件：
@@ -74,6 +78,69 @@ public class HitlToolHelper {
 
     public ConsumeOutcome verifyAndConsume(String decisionId, long uid, String toolName, String hash) {
         return decisionService.verifyAndConsume(decisionId, uid, toolName, hash);
+    }
+
+    /**
+     * 二期 HITL 统一原地等待与恢复闭环：
+     * <ul>
+     *   <li>若为慢路径恢复且决策单已 APPROVED：直接原地执行；</li>
+     *   <li>若为慢路径恢复且决策单已 REJECTED：发 HITL_RESOLVED（若 REJECT_ALL 则标记截断）并返回拒绝反馈；</li>
+     *   <li>否则：预落盘 PauseState 后原地 await(60s)：
+     *     <ul>
+     *       <li>60s 内批准：毫秒级原地执行（0 额外 LLM 开销）；</li>
+     *       <li>60s 内拒绝/全部拒绝：发 HITL_RESOLVED（若 REJECT_ALL 则标记截断）并返回拒绝反馈；</li>
+     *       <li>超 60s 或停机：抛出 {@link HitlParkException} 优雅挂起释放线程。</li>
+     *     </ul>
+     *   </li>
+     * </ul>
+     */
+    public String awaitAndExecute(CreateResult created, String actionLabel,
+                                  Function<String, String> approvedExecutor) {
+        DecisionEntity entity = created.entity();
+        String decId = entity.decisionId();
+
+        if (created.autoApproved() || STATUS_APPROVED.equals(entity.status())) {
+            return approvedExecutor.apply(decId);
+        }
+        if (STATUS_REJECTED.equals(entity.status())) {
+            if (OPTION_REJECT_ALL.equals(entity.decisionOption())) {
+                ToolExecutionContext.markRejectAll();
+            }
+            decisionService.emitResolved(entity);
+            return formatRejectedFeedback(actionLabel, entity.userWords());
+        }
+        if (STATUS_EXPIRED.equals(entity.status()) || STATUS_SUPERSEDED.equals(entity.status())) {
+            decisionService.emitWithdrawn(entity);
+            return "⏹️ 该审批单已过期或被新对话取代（未执行）。";
+        }
+
+        DecisionAwaitRegistry.AwaitResult res = decisionService.awaitDecision(decId);
+        return switch (res.state()) {
+            case APPROVED -> approvedExecutor.apply(decId);
+            case REJECT_ALL -> {
+                ToolExecutionContext.markRejectAll();
+                DecisionEntity updated = decisionService.findById(decId);
+                decisionService.emitResolved(updated != null ? updated : entity);
+                yield formatRejectedFeedback(actionLabel, res.userWords());
+            }
+            case REJECTED -> {
+                DecisionEntity updated = decisionService.findById(decId);
+                decisionService.emitResolved(updated != null ? updated : entity);
+                yield formatRejectedFeedback(actionLabel, res.userWords());
+            }
+            case PARKED -> throw new HitlParkException(decId, "等待人工审批超时，已转入后台挂起");
+            case EXPIRED, SUPERSEDED -> {
+                DecisionEntity updated = decisionService.findById(decId);
+                decisionService.emitWithdrawn(updated != null ? updated : entity);
+                yield "⏹️ 该审批单已过期或被新对话取代（未执行）。";
+            }
+        };
+    }
+
+    private static String formatRejectedFeedback(String actionLabel, String userWords) {
+        String reason = StringUtils.hasText(userWords) ? userWords.trim() : "未说明具体原因";
+        return "❌ 用户已在审批卡片上【拒绝】执行（" + actionLabel + "），拒绝理由：「" + reason
+                + "」。请不要调用写操作执行，并结合该拒绝理由向用户反馈调整建议或下一步方案。";
     }
 
     public static String formatPlanHint(CreateResult created, String summaryLine, String bizKeyHint) {

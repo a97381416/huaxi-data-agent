@@ -9,7 +9,10 @@
       <div class="flex items-center justify-between border-b border-amber-200/80 bg-amber-50/80 px-4 py-2.5 rounded-t-xl">
         <div class="flex items-center gap-2 text-sm font-semibold text-amber-900">
           <span class="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-xs text-white">!</span>
-          <span>需要您的授权确认</span>
+          <span v-if="isQueued">
+            待审批队列 (当前第 {{ card.queueIndex }} 项 / 共 {{ card.queueTotal }} 项)
+          </span>
+          <span v-else>需要您的授权确认</span>
           <span
             v-if="card.agentCode && card.agentCode !== 'single' && card.agentCode !== 'router'"
             class="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-normal text-amber-700"
@@ -20,6 +23,15 @@
         <span class="rounded-full bg-white/90 px-2.5 py-0.5 font-mono text-xs font-medium text-amber-700 shadow-xs">
           剩余 {{ formattedCountdown }}
         </span>
+      </div>
+
+      <!-- 二期 HITL：60s 超时降级为后台挂起时的温柔提示条（卡片依然可点击） -->
+      <div
+        v-if="card.parked"
+        class="flex items-center gap-2 border-b border-blue-200/70 bg-blue-50/80 px-4 py-1.5 text-xs text-blue-800"
+      >
+        <span>⏸</span>
+        <span>任务已转入后台等待您的审批（有效至 {{ card.expiresAt || '30分钟内' }}）</span>
       </div>
 
       <div class="space-y-2.5 px-4 py-3 text-[13px] text-gray-700">
@@ -56,6 +68,19 @@
           >{{ formattedRawPayload }}</pre>
         </div>
 
+        <!-- 二期 HITL：后续排队预览（只读） -->
+        <div
+          v-if="card.queuePreview && card.queuePreview.length"
+          class="rounded-lg border border-amber-200/70 bg-amber-50/40 px-3 py-2 text-xs text-gray-600"
+        >
+          <div class="mb-1 font-medium text-amber-900">后续排队中（需逐项审批，只读预览）：</div>
+          <ul class="space-y-0.5 pl-2">
+            <li v-for="(item, idx) in card.queuePreview" :key="item.toolCallId || idx">
+              {{ (card.queueIndex || 1) + idx + 1 }}. {{ item.label || item.toolName }}（等待中）
+            </li>
+          </ul>
+        </div>
+
         <!-- 拒绝理由轻量输入框 -->
         <div v-if="rejectMode" class="rounded-lg border border-red-200 bg-red-50/50 p-2.5">
           <div class="mb-1.5 text-xs font-medium text-red-700">请填写拒绝理由（AI 将据此调整方案）：</div>
@@ -85,6 +110,17 @@
       <div class="flex flex-wrap items-center justify-between gap-2 border-t border-amber-200/60 bg-gray-50/70 px-4 py-2.5 rounded-b-xl">
         <div class="flex items-center gap-2">
           <el-button
+            v-if="isQueued && !rejectMode"
+            size="small"
+            plain
+            type="danger"
+            :loading="submitting && activeOption === 'REJECT_ALL'"
+            :disabled="submitting"
+            @click="submitDecision('REJECT_ALL')"
+          >
+            全部拒绝
+          </el-button>
+          <el-button
             v-if="!rejectMode"
             size="small"
             plain
@@ -92,7 +128,7 @@
             :disabled="submitting"
             @click="rejectMode = true"
           >
-            拒绝 ▾
+            {{ isQueued ? '拒绝当前项 ▾' : '拒绝 ▾' }}
           </el-button>
         </div>
         <div class="flex flex-wrap items-center gap-2">
@@ -119,7 +155,7 @@
             :disabled="submitting"
             @click="submitDecision('ALLOW_ONCE')"
           >
-            仅本次允许
+            {{ isQueued ? '批准当前项' : '仅本次允许' }}
           </el-button>
         </div>
       </div>
@@ -233,6 +269,9 @@ const isPendingActive = computed(() => props.card.status === 'PENDING' && remain
 const isApprovedOrConsumed = computed(
   () => props.card.status === 'APPROVED' || props.card.status === 'CONSUMED'
 )
+const isQueued = computed(
+  () => Number(props.card.queueTotal || 0) > 1
+)
 
 const cardWrapperClass = computed(() => {
   if (props.highlighted) {
@@ -315,7 +354,11 @@ async function submitDecision(option) {
       option,
       revision: props.card.revision,
       commandId: generateCommandId(),
-      userWords: option === 'REJECTED' ? rejectReason.value.trim() : null
+      userWords: option === 'REJECTED'
+        ? rejectReason.value.trim()
+        : option === 'REJECT_ALL'
+          ? (rejectReason.value.trim() || '用户选择全部拒绝')
+          : null
     })
     rejectMode.value = false
     emit('decided', resp)

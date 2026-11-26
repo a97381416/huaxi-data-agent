@@ -170,6 +170,13 @@ public class AgentStreamEvent {
                 reason, null, null, null, sessionId, null, null);
     }
 
+    /** 二期 HITL：带 decisionId 的 Paused（HITL_TOOL_REQUEST 挂起时透传决策单 ID） */
+    public static AgentStreamEvent paused(String reason, String sessionId, String decisionId) {
+        return new AgentStreamEvent(Type.PAUSED, null, null, null, null, null, null, null, null, null,
+                reason, null, null, null, sessionId, null, null, null, null,
+                decisionId, null, null);
+    }
+
     public static AgentStreamEvent complete(long totalPromptTokens, long totalCompletionTokens,
                                             String conversationId, String sessionId) {
         return complete(totalPromptTokens, totalCompletionTokens, null, null, conversationId, sessionId);

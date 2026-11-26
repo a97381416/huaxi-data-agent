@@ -11,6 +11,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -37,17 +38,21 @@ public class DecisionController {
     private final HuaxiAuthService authService;
 
     /**
-     * 人工签字审批决策单（批准 / 拒绝 / 本会话同类放行）。
+     * 人工签字审批决策单（批准 / 拒绝 / 全部拒绝 / 本会话同类放行）。
+     * 命中在线等待线程返回 HTTP 202 (mode=INLINE_RESUMED)；未命中返回 HTTP 200 (mode=NEED_RESUME)。
      */
     @PostMapping("/decisions/{id}/decide")
-    public R<DecideResponse> decide(@PathVariable("id") String decisionId,
-                                    @RequestBody DecideRequest request,
-                                    HttpServletRequest httpRequest) {
+    public ResponseEntity<R<DecideResponse>> decide(@PathVariable("id") String decisionId,
+                                                    @RequestBody DecideRequest request,
+                                                    HttpServletRequest httpRequest) {
         Long userId = requireUserId();
         String userName = resolveUserName(userId);
         String clientIp = resolveClientIp(httpRequest);
         DecideResponse resp = decisionService.decide(decisionId, userId, userName, clientIp, request);
-        return R.ok(resp);
+        if (DecisionModels.MODE_INLINE_RESUMED.equals(resp.mode())) {
+            return ResponseEntity.accepted().body(R.ok(resp));
+        }
+        return ResponseEntity.ok(R.ok(resp));
     }
 
     /**

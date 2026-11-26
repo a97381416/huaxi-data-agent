@@ -19,11 +19,20 @@ import { useUserStore } from '@/stores/user'
  * @returns {{abort: () => void}} 中断句柄
  */
 export function openAgentStream(body, onEvent, handlers = {}) {
+  return openSseEndpoint('/agent/stream', body, onEvent, handlers)
+}
+
+/** 二期 HITL 慢路径恢复流（Park & Resume） */
+export function openAgentResume(body, onEvent, handlers = {}) {
+  return openSseEndpoint('/agent/resume', body, onEvent, handlers)
+}
+
+function openSseEndpoint(url, body, onEvent, handlers = {}) {
   const userStore = useUserStore()
   const ctrl = new AbortController()
   ;(async () => {
     try {
-      const resp = await fetch('/agent/stream', {
+      const resp = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

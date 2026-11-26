@@ -2,6 +2,7 @@ package com.llmetor.miniagentx.agent;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.llmetor.miniagentx.interrupt.HitlParkException;
 import com.llmetor.miniagentx.interrupt.InterruptContext;
 import com.llmetor.miniagentx.model.AgentStreamEvent;
 import com.llmetor.miniagentx.model.PauseState;
@@ -202,6 +203,8 @@ public class SubAgentTool implements ToolCallback {
         StringBuilder roundText = new StringBuilder();
         StringBuilder allText = new StringBuilder();
         AtomicReference<AgentStreamEvent.Type> terminalType = new AtomicReference<>();
+        AtomicReference<String> terminalPauseReason = new AtomicReference<>();
+        AtomicReference<String> terminalDecisionId = new AtomicReference<>();
         AtomicReference<Throwable> errorRef = new AtomicReference<>();
 
         Disposable disposable = subFlux.subscribe(
@@ -210,8 +213,14 @@ public class SubAgentTool implements ToolCallback {
                     if (type == AgentStreamEvent.Type.COMPLETE || type == AgentStreamEvent.Type.PAUSED) {
                         // 铁律②：严格拦截子终态，绝不推入父 sink
                         terminalType.set(type);
+                        terminalPauseReason.set(ev.getPauseReason());
+                        terminalDecisionId.set(ev.getDecisionId());
                         latch.countDown();
                         return;
+                    }
+                    if (type == AgentStreamEvent.Type.HITL_REQUEST && ev.getDecisionId() != null) {
+                        // 子 Agent 发起 HITL 请求时，同步触发外层预落盘，防等待期间进程重启丢失外层现场
+                        ToolExecutionContext.savePreParkState(ev.getDecisionId());
                     }
                     // 透传子过程事件并打上归属标记
                     if (stepEmitter != null) {
@@ -257,6 +266,10 @@ public class SubAgentTool implements ToolCallback {
             }
         }
 
+        if (terminalType.get() == AgentStreamEvent.Type.PAUSED
+                && "HITL_TOOL_REQUEST".equals(terminalPauseReason.get())) {
+            throw new HitlParkException(terminalDecisionId.get(), "子助手等待人工审批超时挂起");
+        }
         if (cascadedInterrupt.get() || terminalType.get() == AgentStreamEvent.Type.PAUSED) {
             return "{\"status\":\"PAUSED\",\"agentCode\":\"" + agentCode + "\",\"message\":\"子助手已随主任务暂停\"}";
         }

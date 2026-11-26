@@ -225,8 +225,8 @@ public class ResubmitLedgerTool {
                 return "⚡ 已依据本会话同类授权自动放行重提（" + scopeDesc + "）。\n\n"
                         + doExecuteResubmit(uid, task, view, merged, reviewers, decId, token, tenant, conversationId);
             }
-            return HitlToolHelper.formatPlanHint(created, actionSummary,
-                    "taskId=" + task.taskId() + ", confirmToken=" + decId);
+            return hitlHelper.awaitAndExecute(created, actionSummary,
+                    approvedId -> executeRound(uid, task.taskId(), approvedId, token, tenant, conversationId));
         }
 
         ConfirmTokenService.IssuedToken issued = confirmTokenService.issue(uid, ACTION, hash);

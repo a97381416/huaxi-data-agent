@@ -782,7 +782,7 @@ import {
 } from '@element-plus/icons-vue'
 import {
   deleteSession, getAgentCapabilities, getAgentStreamStatus, getSessionDetail, listChatSkills, listSessions,
-  openAgentStream, stopAgent
+  openAgentResume, openAgentStream, stopAgent
 } from '@/api/agent'
 import { listChatModels } from '@/api/model'
 import { uploadToMainPlatform } from '@/api/mainPlatform'
@@ -898,9 +898,15 @@ function onHitlDecided(resp) {
   const cid = activeCid.value
   if (!cid || !resp?.decisionId) return
   if (resp.decision) {
-    upsertHitlDecision(cid, resp.decision)
+    upsertHitlDecision(cid, { ...resp.decision, parked: false })
   }
-  // 触发续跑流（携带 decisionId，后端构造批准执行或拒绝理由反馈）
+  // 二期 HITL 快路径：命中在线等待线程，保持原 SSE 连接不动，毫秒级原地继续接收结果
+  if (resp.mode === 'INLINE_RESUMED') {
+    autoScroll.value = true
+    scrollToBottom()
+    return
+  }
+  // 慢路径（Park & Resume / 一期兜底）：自动发起 POST /agent/resume 续跑
   const s = ensureSession(cid)
   const aiMsg = newAssistantMsg()
   s.messages.push(aiMsg)
@@ -912,7 +918,7 @@ function onHitlDecided(resp) {
     online: online.value,
     thinking: thinking.value,
     ...(modelCode ? { model: modelCode } : {})
-  })
+  }, '', openAgentResume)
   scrollToBottom()
 }
 
@@ -1349,14 +1355,14 @@ async function tryResumeOnLoad(cid) {
 // ── 流式消费 ──
 
 /** 打开一条流（首发/恢复共用）：注册进 liveStreams 并发起请求 */
-function openStream(cid, aiMsg, body, question = '') {
+function openStream(cid, aiMsg, body, question = '', streamFn = openAgentStream) {
   const entry = { cid, aiMsg, question, questionTs: question ? Date.now() : null, controller: null, lastSeq: 0, retries: 0, paused: false }
   aiMsg.startAt = Date.now()
   liveStreams.set(cid, entry)
   const s = sessions[cid]
   if (s) s.streaming = true
   // openAgentStream 同步返回 abort 句柄：停止按钮随时可取消本地读取
-  entry.controller = openAgentStream(body, onStreamEvent(cid, entry), streamHandlers(cid, entry))
+  entry.controller = streamFn(body, onStreamEvent(cid, entry), streamHandlers(cid, entry))
   return entry
 }
 
@@ -1538,9 +1544,20 @@ function onStreamEvent(cid, entry) {
         break
       }
       case 'PAUSED': {
-        // 本轮被终止（点停止/被新消息顶掉）：running 工具置为中断态
+        // 本轮被终止（点停止/被新消息顶掉/HITL 超时挂起）：running 工具置为中断态
         entry.paused = true
         applyPausedState(cid, entry)
+        if (data.pauseReason === 'HITL_TOOL_REQUEST') {
+          const sHitl = sessions[cid]
+          if (sHitl && Array.isArray(sHitl.hitlDecisions)) {
+            sHitl.hitlDecisions.forEach((d) => {
+              if (d.status === 'PENDING' && (!data.decisionId || d.decisionId === data.decisionId)) {
+                d.parked = true
+              }
+            })
+          }
+          if (sHitl) sHitl.interrupted = false
+        }
         break
       }
       case 'COMPLETE': {

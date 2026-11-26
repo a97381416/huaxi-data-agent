@@ -4,6 +4,7 @@ import com.llmetor.miniagentx.context.ContextCompactor;
 import com.llmetor.miniagentx.context.ContextReloadTool;
 import com.llmetor.miniagentx.context.InMemoryOffloadStore;
 import com.llmetor.miniagentx.context.OffloadStore;
+import com.llmetor.miniagentx.interrupt.HitlParkException;
 import com.llmetor.miniagentx.interrupt.InterruptContext;
 import com.llmetor.miniagentx.interrupt.PauseStateStore;
 import com.llmetor.miniagentx.memory.AgentxSessionStore;
@@ -237,8 +238,10 @@ public class AgentLoopExecutor {
             // 绝不能阻塞 HTTP 线程，确保 SSE 响应头 1ms 内发给前端且实时推送重放事件
             Schedulers.boundedElastic().schedule(() -> {
                 try {
-                    initMessagesFromResume();
-                    scheduleRound(false);
+                    boolean shouldContinue = initMessagesFromResume();
+                    if (shouldContinue) {
+                        scheduleRound(false);
+                    }
                 } catch (Exception e) {
                     log.error("恢复会话初始化失败: convId={}", conversationId(), e);
                     errorTerminal(e);
@@ -345,7 +348,7 @@ public class AgentLoopExecutor {
      * 反序列化快照链 → 剥离链尾中断占位响应 → 按 resume 语义回灌工具结果
      * （空 query=本地重放 / 带 query=跳过占位）→ 追加澄清语 → 继续循环。
      */
-    private void initMessagesFromResume() {
+    private boolean initMessagesFromResume() {
         for (String row : resumeState.getMessagesJson()) {
             messages.addAll(serializer.fromJsonArray(row));
         }
@@ -362,7 +365,14 @@ public class AgentLoopExecutor {
         }
 
         stripTrailingPlaceholderResponses();
-        appendResumeToolResponses(resumeState.getPendingToolCalls());
+        boolean shouldContinue = appendResumeToolResponses(
+                resumeState.getPendingToolCalls(),
+                resumeState.getRemainingToolCalls(),
+                resumeState.getReason(),
+                resumeState.getDecisionId());
+        if (!shouldContinue) {
+            return false;
+        }
 
         if (resumeQuery != null && !resumeQuery.isBlank()) {
             String original = resumeState.getQuery() == null ? "无" : resumeState.getQuery();
@@ -376,11 +386,13 @@ public class AgentLoopExecutor {
                 originalChain.add(m);
             }
         }
-        log.info("恢复执行初始化: convId={}, round={}, pending={}, resumeQuery={}",
+        log.info("恢复执行初始化: convId={}, round={}, pending={}, remaining={}, resumeQuery={}",
                 conversationId(), round, resumeState.getPendingToolCalls().size(),
+                resumeState.getRemainingToolCalls() == null ? 0 : resumeState.getRemainingToolCalls().size(),
                 resumeQuery == null ? "" : resumeQuery);
         // Fix B：从快照链恢复延迟工具发现态（发现态按请求隔离，快照历史里的工具需重登记）
         restoreDiscoveredToolsFromHistory();
+        return true;
     }
 
     /**
@@ -429,6 +441,11 @@ public class AgentLoopExecutor {
         for (PauseState.PendingToolCall ptc : resumeState.getPendingToolCalls()) {
             pendingIds.add(ptc.id());
         }
+        if (resumeState.getRemainingToolCalls() != null) {
+            for (PauseState.PendingToolCall ptc : resumeState.getRemainingToolCalls()) {
+                pendingIds.add(ptc.id());
+            }
+        }
         if (pendingIds.isEmpty()) {
             return;
         }
@@ -463,32 +480,88 @@ public class AgentLoopExecutor {
         return true;
     }
 
-    /** 按恢复语义回灌 pending 工具调用：空 query=本地真实重放；带 query=跳过占位 */
-    private void appendResumeToolResponses(List<PauseState.PendingToolCall> pending) {
-        if (pending == null || pending.isEmpty()) {
-            return;
+    /** 按恢复语义回灌 pending 工具调用：空 query=本地真实重放；带 query=跳过占位；支持 HITL 串行队列续跑 */
+    private boolean appendResumeToolResponses(List<PauseState.PendingToolCall> pending,
+                                              List<PauseState.PendingToolCall> remaining,
+                                              PauseState.Reason reason,
+                                              String parkedDecisionId) {
+        List<PauseState.PendingToolCall> allCalls = new ArrayList<>();
+        if (pending != null) {
+            allCalls.addAll(pending);
+        }
+        if (remaining != null) {
+            allCalls.addAll(remaining);
+        }
+        if (allCalls.isEmpty()) {
+            return true;
         }
         boolean replay = resumeQuery == null || resumeQuery.isBlank();
         // 重放用全量可用映射：pending 可能是上个请求里发现的延迟工具
         Map<String, ToolCallback> replayMap = fullAvailableToolMap();
         List<ToolResponseMessage.ToolResponse> responses = new ArrayList<>();
-        for (PauseState.PendingToolCall ptc : pending) {
-            if (replay) {
-                ToolCallExecutor.MergedToolCall call = new ToolCallExecutor.MergedToolCall(
-                        ptc.id(), ptc.name(), ptc.arguments());
-                ToolCallExecutor.ToolExecutionOutcome o = toolExecutor.executeSync(
-                        call, replayMap, params, conversationId(), sessionId, interruptCtx, sink, emitLock);
-                // 失败也发 ToolEnd（success=false），与批量通道契约一致
-                emit(AgentStreamEvent.toolEnd(o.name(), o.id(), o.result(), o.success()));
-                responses.add(new ToolResponseMessage.ToolResponse(ptc.id(), ptc.name(), o.result()));
-                log.info("恢复重放工具: convId={}, tool={}, success={}", conversationId(), ptc.name(), o.success());
-            } else {
+        if (!replay) {
+            for (PauseState.PendingToolCall ptc : allCalls) {
                 responses.add(new ToolResponseMessage.ToolResponse(ptc.id(), ptc.name(),
                         TOOL_SKIPPED_PLACEHOLDER.formatted(ptc.name(),
                                 ptc.arguments() == null ? "" : ptc.arguments())));
             }
+            appendToolResponses(responses);
+            return true;
+        }
+
+        List<ToolCallExecutor.MergedToolCall> mergedAll = allCalls.stream()
+                .map(ptc -> new ToolCallExecutor.MergedToolCall(ptc.id(), ptc.name(), ptc.arguments()))
+                .toList();
+        List<Integer> serialIndices = new ArrayList<>();
+        for (int i = 0; i < mergedAll.size(); i++) {
+            if (toolExecutor.isSerialTool(mergedAll.get(i).name())) {
+                serialIndices.add(i);
+            }
+        }
+        int totalSerial = serialIndices.size();
+        List<ToolCallExecutor.ToolExecutionOutcome> completedOutcomes = new ArrayList<>();
+        boolean rejectAllTriggered = false;
+
+        for (int i = 0; i < mergedAll.size(); i++) {
+            ToolCallExecutor.MergedToolCall call = mergedAll.get(i);
+            if (rejectAllTriggered) {
+                ToolCallExecutor.ToolExecutionOutcome skipped = toolExecutor.markToolNotStarted(
+                        call, replayMap, params, sink, emitLock);
+                completedOutcomes.add(skipped);
+                responses.add(new ToolResponseMessage.ToolResponse(call.id(), call.name(), skipped.result()));
+                continue;
+            }
+            String resDecId = (i == 0 && reason == PauseState.Reason.HITL_TOOL_REQUEST) ? parkedDecisionId : null;
+            ToolExecutionContext.HitlQueueInfo queueInfo = ToolCallExecutor.buildQueueInfo(
+                    mergedAll, serialIndices, i, totalSerial);
+            final int idx = i;
+            java.util.function.Consumer<String> preParkSaver = decId -> preSaveHitlSnapshot(
+                    decId, mergedAll.get(idx),
+                    idx + 1 < mergedAll.size() ? mergedAll.subList(idx + 1, mergedAll.size()) : List.of(),
+                    List.copyOf(completedOutcomes));
+            java.util.concurrent.atomic.AtomicBoolean rejectAllFlag = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+            ToolCallExecutor.ToolExecutionOutcome o;
+            try {
+                o = toolExecutor.executeSync(call, replayMap, params, conversationId(), sessionId,
+                        interruptCtx, sink, emitLock, queueInfo, resDecId, preParkSaver, rejectAllFlag);
+            } catch (HitlParkException parkEx) {
+                List<ToolCallExecutor.MergedToolCall> rem = i + 1 < mergedAll.size()
+                        ? mergedAll.subList(i + 1, mergedAll.size()) : List.of();
+                handleHitlPark(parkEx.getDecisionId(), call, rem, completedOutcomes);
+                return false;
+            }
+            emit(AgentStreamEvent.toolEnd(o.name(), o.id(), o.result(), o.success()));
+            completedOutcomes.add(o);
+            responses.add(new ToolResponseMessage.ToolResponse(call.id(), call.name(), o.result()));
+            if (rejectAllFlag.get()) {
+                rejectAllTriggered = true;
+            }
+            log.info("恢复重放工具: convId={}, tool={}, success={}", conversationId(), call.name(), o.success());
         }
         appendToolResponses(responses);
+        discardSnapshot();
+        return true;
     }
 
     // ==================== 轮次调度 ====================
@@ -870,7 +943,14 @@ public class AgentLoopExecutor {
 
         // 批量调用该轮的工具集合，填充对应的工具调用结果（用本轮工具映射——含已发现的延迟工具）
         toolExecutor.executeAsync(calls, rs.toolMap, params, conversationId(), sessionId, interruptCtx, sink, emitLock,
-                toolPool, outcomes -> {
+                toolPool,
+                (decId, currentIndex, completedOutcomes) -> preSaveHitlSnapshot(
+                        decId, calls.get(currentIndex),
+                        currentIndex + 1 < calls.size() ? calls.subList(currentIndex + 1, calls.size()) : List.of(),
+                        completedOutcomes),
+                (decId, parkedCall, remainingCalls, completedOutcomes) -> handleHitlPark(
+                        decId, parkedCall, remainingCalls, completedOutcomes),
+                outcomes -> {
                     synchronized (AgentLoopExecutor.this) {
                         if (interruptCtx.isInterrupted() || terminalEmitted.get()) {
                             return; // 中断处理器已收尾
@@ -891,6 +971,7 @@ public class AgentLoopExecutor {
                             responses.add(new ToolResponseMessage.ToolResponse(o.id(), o.name(), resultText));
                         }
                         appendToolResponses(responses);
+                        discardSnapshot();
                     }
                     scheduleRound(false);
                 });
@@ -1013,6 +1094,104 @@ public class AgentLoopExecutor {
         return new PauseState(conversationId(), sessionId, query, params,
                 rows, round, pending, totalPromptTokens, totalCompletionTokens,
                 PauseState.Reason.USER_INTERRUPT, interruptCtx.getSafePoint(), interruptMessage);
+    }
+
+    /** 二期 HITL：进入 60s await 前预落盘快照（不修改内存 messages 链，快路径唤醒后自动失效） */
+    private void preSaveHitlSnapshot(String decisionId,
+                                     ToolCallExecutor.MergedToolCall currentCall,
+                                     List<ToolCallExecutor.MergedToolCall> remainingCalls,
+                                     List<ToolCallExecutor.ToolExecutionOutcome> completedOutcomes) {
+        if (stateStore == null || decisionId == null) {
+            return;
+        }
+        PauseState snapshot;
+        synchronized (this) {
+            List<Message> temp = new ArrayList<>(messages);
+            if (completedOutcomes != null && !completedOutcomes.isEmpty()) {
+                List<ToolResponseMessage.ToolResponse> doneResps = completedOutcomes.stream()
+                        .map(o -> new ToolResponseMessage.ToolResponse(o.id(), o.name(), o.result()))
+                        .toList();
+                temp.add(ToolResponseMessage.builder().responses(doneResps).build());
+            }
+            List<ToolResponseMessage.ToolResponse> phResps = new ArrayList<>();
+            phResps.add(new ToolResponseMessage.ToolResponse(
+                    currentCall.id(), currentCall.name(),
+                    PLACEHOLDER_MARKER + " 等待人工审批：" + decisionId));
+            for (ToolCallExecutor.MergedToolCall rem : remainingCalls) {
+                phResps.add(new ToolResponseMessage.ToolResponse(
+                        rem.id(), rem.name(),
+                        PLACEHOLDER_MARKER + " 排队等待前序审批：" + rem.name()));
+            }
+            temp.add(ToolResponseMessage.builder().responses(phResps).build());
+
+            List<String> rows = new ArrayList<>();
+            for (Message m : temp) {
+                rows.add(serializer.toJsonArray(List.of(m)));
+            }
+            List<PauseState.PendingToolCall> pending = List.of(
+                    new PauseState.PendingToolCall(currentCall.id(), currentCall.name(), currentCall.arguments()));
+            List<PauseState.PendingToolCall> remaining = remainingCalls.stream()
+                    .map(c -> new PauseState.PendingToolCall(c.id(), c.name(), c.arguments()))
+                    .toList();
+            snapshot = new PauseState(conversationId(), sessionId, query, params,
+                    rows, round, pending, totalPromptTokens, totalCompletionTokens,
+                    PauseState.Reason.HITL_TOOL_REQUEST, PauseState.SafePoint.TOOL_EXECUTION,
+                    "等待人工审批：" + decisionId, System.currentTimeMillis(), decisionId, remaining);
+        }
+        stateStore.save(snapshot);
+    }
+
+    /** 二期 HITL：60s 超时或优雅停机挂起收尾（落盘 HITL_TOOL_REQUEST 快照 + 发 PAUSED 释放线程） */
+    private void handleHitlPark(String decisionId,
+                                ToolCallExecutor.MergedToolCall parkedCall,
+                                List<ToolCallExecutor.MergedToolCall> remainingCalls,
+                                List<ToolCallExecutor.ToolExecutionOutcome> completedOutcomes) {
+        interruptCtx.fireInterrupt();
+        PauseState snapshot;
+        synchronized (this) {
+            if (completedOutcomes != null && !completedOutcomes.isEmpty()) {
+                List<ToolResponseMessage.ToolResponse> doneResps = completedOutcomes.stream()
+                        .map(o -> new ToolResponseMessage.ToolResponse(o.id(), o.name(), o.result()))
+                        .toList();
+                appendToolResponses(doneResps);
+            }
+            List<ToolResponseMessage.ToolResponse> phResps = new ArrayList<>();
+            phResps.add(new ToolResponseMessage.ToolResponse(
+                    parkedCall.id(), parkedCall.name(),
+                    PLACEHOLDER_MARKER + " 等待人工审批：" + decisionId));
+            for (ToolCallExecutor.MergedToolCall rem : remainingCalls) {
+                phResps.add(new ToolResponseMessage.ToolResponse(
+                        rem.id(), rem.name(),
+                        PLACEHOLDER_MARKER + " 排队等待前序审批：" + rem.name()));
+            }
+            appendToolResponses(phResps);
+
+            List<String> rows = new ArrayList<>();
+            for (Message m : messages) {
+                rows.add(serializer.toJsonArray(List.of(m)));
+            }
+            List<PauseState.PendingToolCall> pending = List.of(
+                    new PauseState.PendingToolCall(parkedCall.id(), parkedCall.name(), parkedCall.arguments()));
+            List<PauseState.PendingToolCall> remaining = remainingCalls.stream()
+                    .map(c -> new PauseState.PendingToolCall(c.id(), c.name(), c.arguments()))
+                    .toList();
+            snapshot = new PauseState(conversationId(), sessionId, query, params,
+                    rows, round, pending, totalPromptTokens, totalCompletionTokens,
+                    PauseState.Reason.HITL_TOOL_REQUEST, PauseState.SafePoint.TOOL_EXECUTION,
+                    "等待人工审批：" + decisionId, System.currentTimeMillis(), decisionId, remaining);
+        }
+        if (stateStore != null) {
+            stateStore.save(snapshot);
+        }
+        if (!terminalEmitted.compareAndSet(false, true)) {
+            return;
+        }
+        persistTerminal("interrupted");
+        emit(AgentStreamEvent.paused("HITL_TOOL_REQUEST", sessionId, decisionId));
+        resultRef.set(AgentResult.paused(snapshot));
+        finishSink();
+        log.info("[AgentLoop] HITL 等待超时挂起: convId={}, round={}, decisionId={}, remaining={}",
+                conversationId(), round, decisionId, remainingCalls.size());
     }
 
     // ==================== 终态 ====================

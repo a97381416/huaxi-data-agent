@@ -105,9 +105,11 @@ public class AgentController {
         // 斜杠命令指定的技能（可空）：存在且启用才放行，透传 DodoAgent 定向装配
         String skillName = resolveSkill(request);
 
-        // 一期 HITL：区分「审批卡片续跑」与「用户主动发新消息（TakeOver 取代旧待决单）」
+        // 一期/二期 HITL：区分「审批卡片续跑」与「用户主动发新消息（TakeOver 取代旧待决单）」
         String effectiveQuery = request.query();
         List<AgentStreamEvent> preEvents = new java.util.ArrayList<>();
+        boolean hitlParkedResume = StringUtils.hasText(request.decisionId())
+                && dodoAgent.isHitlParkedState(conversationId);
         if (StringUtils.hasText(request.decisionId())) {
             DecisionModels.DecisionEntity dec = decisionService.findById(request.decisionId().trim());
             if (dec == null) {
@@ -116,7 +118,10 @@ public class AgentController {
             if (dec.ownerUserId() != userId) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权操作该审批单");
             }
-            if (DecisionModels.STATUS_REJECTED.equals(dec.status())) {
+            if (hitlParkedResume) {
+                // 二期慢路径 Park & Resume：置空 query 走原地工具重放续跑（不先经过 LLM）
+                effectiveQuery = null;
+            } else if (DecisionModels.STATUS_REJECTED.equals(dec.status())) {
                 String reason = StringUtils.hasText(dec.userWords()) ? dec.userWords() : "未说明具体原因";
                 effectiveQuery = "【系统审批通知】用户已在界面上【拒绝】决策单 " + dec.decisionId()
                         + "（" + dec.actionSummary() + "），拒绝理由：「" + reason
@@ -175,6 +180,14 @@ public class AgentController {
         // 注册并后台驱动：返回给前端的和重连拿到的是同一个可重放流
         Flux<ServerSentEvent<AgentStreamEvent>> registered = liveStreams.register(conversationId, userId, source);
         return registered.map(this::toSse);
+    }
+
+    /**
+     * 二期 HITL 慢路径恢复入口（Park & Resume）：与 /stream 共用恢复通道。
+     */
+    @PostMapping(value = "/resume", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<String>> resume(@RequestBody ChatRequest request) {
+        return stream(request);
     }
 
     /**

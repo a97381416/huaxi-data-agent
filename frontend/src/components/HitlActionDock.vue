@@ -23,11 +23,11 @@ const props = defineProps({
 
 defineEmits(['decided', 'expired', 'revoked'])
 
-/** 单焦点槽位：优先展示待处理卡片，其次保留本会话最近一条留痕反馈 */
+/** 单焦点槽位：优先展示 1 张活跃待处理卡片（串行队列 1/3），其次保留本会话最近一条留痕反馈 */
 const visibleCards = computed(() => {
   const list = props.decisions || []
   const pending = list.filter((d) => d.status === 'PENDING')
-  if (pending.length > 0) return pending
+  if (pending.length > 0) return [pending[0]]
   if (props.focusDecisionId) {
     const focused = list.find((d) => d.decisionId === props.focusDecisionId)
     if (focused) return [focused]

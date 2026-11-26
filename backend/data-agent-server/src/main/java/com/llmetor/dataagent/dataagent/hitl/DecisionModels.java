@@ -27,6 +27,10 @@ public final class DecisionModels {
     public static final String OPTION_ALLOW_ONCE = "ALLOW_ONCE";
     public static final String OPTION_ALLOW_SESSION = "ALLOW_SESSION";
     public static final String OPTION_REJECTED = "REJECTED";
+    public static final String OPTION_REJECT_ALL = "REJECT_ALL";
+
+    public static final String MODE_INLINE_RESUMED = "INLINE_RESUMED";
+    public static final String MODE_NEED_RESUME = "NEED_RESUME";
 
     public static final String GRANT_ACTIVE = "ACTIVE";
     public static final String GRANT_REVOKED = "REVOKED";
@@ -34,6 +38,10 @@ public final class DecisionModels {
 
     /** 关键参数展示项 */
     public record KeyParamItem(String label, String value) {
+    }
+
+    /** 二期 HITL：串行排队预览项（第 2、3 项只读预览） */
+    public record QueuePreviewItem(String toolCallId, String toolName, String label) {
     }
 
     /** 推送给前端的结构化卡片载荷（对应 AgentStreamEvent.hitlPayload 与接口响应） */
@@ -64,8 +72,25 @@ public final class DecisionModels {
             String answeredAt,
             String consumedAt,
             long remainingSeconds,
-            String conversationTitle
+            String conversationTitle,
+            Integer queueIndex,
+            Integer queueTotal,
+            List<QueuePreviewItem> queuePreview
     ) {
+        public HitlCardPayload(
+                String decisionId, String conversationId, String toolCallId, String agentCode,
+                String type, String status, int revision, String toolName, String actionLabel,
+                String targetSummary, String actionSummary, List<KeyParamItem> keyParams,
+                Object rawPayload, String scopeKey, String scopeDesc, boolean allowSessionGrant,
+                String decisionOption, String userWords, String grantId, String answeredByName,
+                String expiresAt, String createdAt, String answeredAt, String consumedAt,
+                long remainingSeconds, String conversationTitle) {
+            this(decisionId, conversationId, toolCallId, agentCode, type, status, revision,
+                    toolName, actionLabel, targetSummary, actionSummary, keyParams, rawPayload,
+                    scopeKey, scopeDesc, allowSessionGrant, decisionOption, userWords, grantId,
+                    answeredByName, expiresAt, createdAt, answeredAt, consumedAt, remainingSeconds,
+                    conversationTitle, null, null, null);
+        }
     }
 
     /** 创建决策单请求（工具 planRound 调用） */

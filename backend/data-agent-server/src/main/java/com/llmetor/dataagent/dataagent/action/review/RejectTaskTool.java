@@ -169,8 +169,8 @@ public class RejectTaskTool {
             String decId = created.entity().decisionId();
             audit(uid, conversationId, "reject-plan", task, decId, true,
                     "hitl=true, target=" + (target == null || target.isBlank() ? "originator" : target));
-            return HitlToolHelper.formatPlanHint(created, actionSummary,
-                    "taskId=" + task.taskId() + ", confirmToken=" + decId);
+            return hitlHelper.awaitAndExecute(created, actionSummary,
+                    approvedId -> executeRound(uid, task.taskId(), approvedId, token, tenant, conversationId));
         }
 
         ConfirmTokenService.IssuedToken issued = confirmTokenService.issue(uid, ACTION, hash);

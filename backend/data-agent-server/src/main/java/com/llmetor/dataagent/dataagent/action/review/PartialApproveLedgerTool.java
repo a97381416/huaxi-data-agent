@@ -240,8 +240,8 @@ public class PartialApproveLedgerTool {
             String decId = created.entity().decisionId();
             audit(uid, conversationId, "partial-plan", task, decId, true,
                     "hitl=true, pass=" + passCount + ", reject=" + rejectCount);
-            return HitlToolHelper.formatPlanHint(created, actionSummary,
-                    "taskId=" + task.taskId() + ", confirmToken=" + decId);
+            return hitlHelper.awaitAndExecute(created, actionSummary,
+                    approvedId -> executeRound(uid, task.taskId(), approvedId, token, tenant, conversationId));
         }
 
         ConfirmTokenService.IssuedToken issued = confirmTokenService.issue(uid, ACTION, hash);
