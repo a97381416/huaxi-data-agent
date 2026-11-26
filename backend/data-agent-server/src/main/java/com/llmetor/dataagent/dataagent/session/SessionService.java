@@ -185,22 +185,29 @@ public class SessionService {
                 conv.createdAt(), conv.elapsedMs(), loadAttachments(conv.sessionId()));
     }
 
-    private record SubSessionRow(String sessionId, String agentCode, String parentToolCallId) {
+    private record SubSessionRow(String sessionId, String agentCode, String parentToolCallId,
+                                 String status, Long durationMs) {
     }
 
-    /** M-SA5：联查该根提问下的所有子 Agent 会话（按创建时间正序） */
+    /** M-SA5：联查该根提问下的所有子 Agent 会话（按创建时间正序，含耗时与终态） */
     private List<SubSessionRow> loadSubSessions(String rootSessionId) {
         if (rootSessionId == null || rootSessionId.isBlank()) {
             return List.of();
         }
         try {
             return jdbc.query(
-                    "SELECT session_id, agent_code, parent_tool_call_id FROM agentx_monitor_session " +
+                    "SELECT session_id, agent_code, parent_tool_call_id, status, duration_ms FROM agentx_monitor_session " +
                             "WHERE parent_session_id = ? ORDER BY created_at ASC",
-                    (rs, i) -> new SubSessionRow(
-                            rs.getString("session_id"),
-                            rs.getString("agent_code"),
-                            rs.getString("parent_tool_call_id")),
+                    (rs, i) -> {
+                        Object durObj = rs.getObject("duration_ms");
+                        Long dur = durObj instanceof Number n ? n.longValue() : null;
+                        return new SubSessionRow(
+                                rs.getString("session_id"),
+                                rs.getString("agent_code"),
+                                rs.getString("parent_tool_call_id"),
+                                rs.getString("status"),
+                                dur);
+                    },
                     rootSessionId);
         } catch (Exception e) {
             log.debug("联查子会话跳过（列或表未就绪）: rootSessionId={}, err={}", rootSessionId, e.getMessage());
@@ -285,24 +292,34 @@ public class SessionService {
         // M-SA5：按 parent_tool_call_id 将子会话步骤嵌套回父工具节点，并归并子 TodoWrite
         if (subSessions != null && !subSessions.isEmpty()) {
             Map<String, List<Map<String, Object>>> subStepsByCallId = new LinkedHashMap<>();
+            Map<String, SubSessionRow> subMetaByCallId = new LinkedHashMap<>();
             List<Map<String, Object>> subTodoSnapshots = new ArrayList<>();
             for (SubSessionRow sub : subSessions) {
                 if (sub.agentCode() == null || sub.agentCode().isBlank()) {
                     continue;
+                }
+                if (sub.parentToolCallId() != null && !sub.parentToolCallId().isBlank()) {
+                    subMetaByCallId.put(sub.parentToolCallId(), sub);
                 }
                 String subConvId = rootConvId + "::" + sub.agentCode();
                 List<Message> subMsgs = loadOriginalMessages(subConvId, sub.sessionId());
                 if (subMsgs.isEmpty()) {
                     continue;
                 }
-                List<Map<String, Object>> subEvents = buildRawEvents(subMsgs, Map.of(), sub.agentCode());
+                Map<String, Long> subThinkDurations = loadThinkDurations(subConvId, sub.sessionId());
+                List<Map<String, Object>> subEvents = buildRawEvents(subMsgs, subThinkDurations, sub.agentCode());
                 List<Map<String, Object>> steps = new ArrayList<>();
                 for (Map<String, Object> se : subEvents) {
                     if ("todo".equals(se.get("type"))) {
                         Map<String, Object> snap = new LinkedHashMap<>(se);
                         snap.put("agentCode", sub.agentCode());
                         subTodoSnapshots.add(snap);
-                    } else if ("tool".equals(se.get("type")) || "thinking".equals(se.get("type"))) {
+                    } else if ("tool".equals(se.get("type"))
+                            || "thinking".equals(se.get("type"))
+                            || "text".equals(se.get("type"))) {
+                        if ("text".equals(se.get("type")) && !se.containsKey("agentCode")) {
+                            se.put("agentCode", sub.agentCode());
+                        }
                         steps.add(se);
                     }
                 }
@@ -310,13 +327,25 @@ public class SessionService {
                     subStepsByCallId.computeIfAbsent(sub.parentToolCallId(), k -> new ArrayList<>()).addAll(steps);
                 }
             }
-            // 1. 回填 subSteps 到父工具节点
+            // 1. 回填 subSteps 及子会话元数据（agentCode / durationMs / 终态）到父工具节点
             for (Map<String, Object> ev : events) {
                 if ("tool".equals(ev.get("type"))) {
                     String callId = String.valueOf(ev.getOrDefault("toolCallId", ""));
                     List<Map<String, Object>> nested = subStepsByCallId.get(callId);
                     if (nested != null && !nested.isEmpty()) {
                         ev.put("subSteps", nested);
+                    }
+                    SubSessionRow meta = subMetaByCallId.get(callId);
+                    if (meta != null) {
+                        ev.put("agentCode", meta.agentCode());
+                        if (meta.durationMs() != null) {
+                            ev.put("durationMs", meta.durationMs());
+                        }
+                        if ("interrupted".equalsIgnoreCase(meta.status())) {
+                            ev.put("status", "interrupted");
+                        } else if ("error".equalsIgnoreCase(meta.status())) {
+                            ev.put("status", "failed");
+                        }
                     }
                 }
             }

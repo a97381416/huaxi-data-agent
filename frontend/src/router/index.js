@@ -110,6 +110,12 @@ const routes = [
       },
       ...testMenuRoutes(),
       {
+        path: 'test/multi-agent-ui',
+        name: 'test-multi-agent-ui',
+        component: () => import('@/views/MultiAgentUiDemoView.vue'),
+        meta: { title: '多Agent UI 10场景验收台' }
+      },
+      {
         path: 'test',
         redirect: '/test/m0'
       }

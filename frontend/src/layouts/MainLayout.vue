@@ -104,7 +104,9 @@ function isTabActive(path) {
 
 /** 全出血页面（去外边距铺满）：对话工作台 + 管理页表格 + 监控中心（全高页，滚动发生在页内） */
 const isFlushRoute = computed(
-  () => ['/chat', '/mcp', '/skills', '/models'].includes(route.path) || route.path.startsWith('/monitor')
+  () =>
+    ['/chat', '/mcp', '/skills', '/models', '/test/multi-agent-ui'].includes(route.path) ||
+    route.path.startsWith('/monitor')
 )
 
 // 进入主框架时刷新一次用户信息（M0 验收：/auth/me 返回角色/部门/档案）；

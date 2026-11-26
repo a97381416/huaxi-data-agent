@@ -1,5 +1,5 @@
 <template>
-  <div class="flex h-full w-full bg-gray-50">
+  <div class="relative flex h-full w-full overflow-hidden bg-gray-50">
     <!-- 左侧：历史会话 Sidebar（280px 固定宽） -->
     <aside class="flex w-[280px] shrink-0 flex-col border-r border-gray-100 bg-white">
       <div class="p-3">
@@ -157,6 +157,20 @@
                       <ArrowDown />
                     </el-icon>
                   </button>
+
+                  <!-- 多 Agent 委派卡片段（纵向紧凑堆叠，与普通工具解耦；点击打开右侧多 Tab 独立会话抽屉） -->
+                  <div v-else-if="entry.block.subAgentGroup" class="my-1.5 flex flex-col gap-1.5">
+                    <SubAgentCard
+                      v-for="(step, si) in entry.block.items"
+                      :key="step.toolCallId || si"
+                      :step="step"
+                      :now-tick="nowTick"
+                      :selected="isSubCardSelected(msg, step)"
+                      :tool-label-fn="toolLabel"
+                      :arg-preview-fn="argPreview"
+                      @inspect="openSubDrawer(msg, step)"
+                    />
+                  </div>
 
                   <!-- 工具段：段内有运行中→只显示运行中直播行（参数一行滚动、点击展开参数全文），同段已完成工具先隐藏；
                        全部完成→汇聚成组（组头按实际工具动态组装），点击某行结果就地展开在该行下方 -->
@@ -324,6 +338,14 @@
                   <!-- 正文 markdown -->
                   <div v-else-if="entry.block.item.type === 'text' && entry.block.item.content" class="chat-md report-md report-md--chat" :class="{ 'chat-md--placeholder': entry.block.item.placeholder }" v-html="renderMd(entry.block.item.content)"></div>
                 </template>
+
+                <!-- 场景 10 异步交错态：后台子专员仍在运行且主 Agent 已先输出阶段简报时，底部提示等待自动汇总 -->
+                <div v-if="asyncWaitingInfo(msg)" class="mt-2.5 flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs text-blue-700">
+                  <el-icon :size="13" class="is-loading shrink-0 text-blue-500"><Loading /></el-icon>
+                  <span>
+                    等待后台专员返回（{{ asyncWaitingInfo(msg).done }}/{{ asyncWaitingInfo(msg).total }} 已完成），结果到达后将自动汇总…
+                  </span>
+                </div>
 
                 <span v-if="msg.streaming && msg.timeline.length && !hasTailText(msg)" class="chat-cursor">▍</span>
                 <div
@@ -656,9 +678,25 @@
       </div>
     </section>
 
-    <!-- 右侧：执行计划面板（折叠时释放宽度至 w-11，避免 1280 窄屏挤压中间对话输入框） -->
+    <!-- 右侧：子 Agent 独立会话抽屉（点击主会话中任意子 Agent 卡片打开，顶部多 Tab 切换） -->
+    <SubAgentDrawer
+      :visible="subDrawerVisible"
+      :items="subDrawerItems"
+      :active-key="subDrawer.activeKey"
+      :now-tick="nowTick"
+      :model-name="currentModel?.name || '默认模型'"
+      :tool-label-fn="toolLabel"
+      :arg-preview-fn="argPreview"
+      :format-json-fn="formatToolArgs"
+      :format-result-fn="formatToolResult"
+      :render-md-fn="renderMd"
+      @select="(k) => (subDrawer.activeKey = k)"
+      @close="closeSubDrawer"
+    />
+
+    <!-- 右侧：执行计划面板（抽屉打开时自动让位；折叠时释放宽度至 w-11，避免 1280 窄屏挤压中间对话输入框） -->
     <aside
-      v-if="activePlan"
+      v-if="activePlan && !subDrawerVisible"
       class="flex shrink-0 flex-col border-l border-gray-100 bg-white transition-all duration-200"
       :class="planCollapsed ? 'w-11 items-center' : 'w-[280px]'"
     >
@@ -743,6 +781,9 @@ import { deleteFile, filePreviewUrl, isImageType, uploadFile } from '@/api/file'
 import { renderReportMarkdown } from '@/utils/reportMarkdown'
 import '@/assets/report-markdown.css'
 import TimelineNav from '@/components/TimelineNav.vue'
+import SubAgentCard from '@/components/SubAgentCard.vue'
+import SubAgentDrawer from '@/components/SubAgentDrawer.vue'
+import { isSubAgentTool, subAgentDisplayName } from '@/utils/agentNames'
 
 /** 单轮最多上传文件数（对齐后端 data-agent.file.max-count） */
 const MAX_FILES_PER_TURN = 3
@@ -1257,18 +1298,34 @@ function onStreamEvent(cid, entry) {
     const msg = entry.aiMsg
     const timeline = msg.timeline
 
-    // M-SA5：子 Agent 透传事件（携带 parentToolCallId）归入对应父委派工具的 subSteps，不污染顶层 timeline
+    // M-SA5 / todo-05：子 Agent 透传事件（携带 parentToolCallId）归入对应父委派工具的 subSteps，不污染顶层 timeline
     if (data.parentToolCallId) {
       const parent = timeline.find((it) => it.type === 'tool' && it.toolCallId === data.parentToolCallId)
       if (parent) {
         if (!Array.isArray(parent.subSteps)) parent.subSteps = []
         if (data.agentCode && !parent.agentCode) parent.agentCode = data.agentCode
+        const closeLastSubThink = () => {
+          const lastSub = parent.subSteps[parent.subSteps.length - 1]
+          if (lastSub && lastSub.type === 'thinking' && lastSub.endAt == null) {
+            lastSub.endAt = Date.now()
+            if (lastSub.startAt) lastSub.durationMs = Math.max(0, lastSub.endAt - lastSub.startAt)
+          }
+        }
         if (data.type === 'THINKING') {
           const content = data.content || ''
           const lastSub = parent.subSteps[parent.subSteps.length - 1]
-          if (lastSub && lastSub.type === 'thinking') lastSub.content += content
-          else parent.subSteps.push({ type: 'thinking', content, agentCode: data.agentCode })
+          if (lastSub && lastSub.type === 'thinking' && lastSub.endAt == null) lastSub.content += content
+          else parent.subSteps.push({ type: 'thinking', content, agentCode: data.agentCode, startAt: Date.now() })
+        } else if (data.type === 'TEXT') {
+          const content = data.content || ''
+          if (content) {
+            closeLastSubThink()
+            const lastSub = parent.subSteps[parent.subSteps.length - 1]
+            if (lastSub && lastSub.type === 'text') lastSub.content += content
+            else parent.subSteps.push({ type: 'text', content, agentCode: data.agentCode })
+          }
         } else if (data.type === 'TOOL_START') {
+          closeLastSubThink()
           if ((data.toolName || '').toLowerCase() === 'todowrite') {
             const args = safeParse(data.arguments || '{}', {})
             const todos = Array.isArray(args.todos) ? args.todos : []
@@ -1289,6 +1346,7 @@ function onStreamEvent(cid, entry) {
             })
           }
         } else if (data.type === 'TOOL_END') {
+          closeLastSubThink()
           if ((data.toolName || '').toLowerCase() !== 'todowrite') {
             const subItem = parent.subSteps.find(
               (it) => it.type === 'tool' && it.toolCallId === data.toolCallId && it.status === 'running'
@@ -1363,7 +1421,8 @@ function onStreamEvent(cid, entry) {
           result: '',
           showResult: false,
           arguments: data.arguments || '',
-          startAt: Date.now()
+          startAt: Date.now(),
+          modelName: currentModel.value?.name || '默认模型'
         })
         break
       }
@@ -1433,7 +1492,16 @@ function applyPausedState(cid, entry) {
   entry.aiMsg.timeline.forEach((it) => {
     if (it.type === 'tool' && it.status === 'running') {
       it.status = 'interrupted'
+      it.durationMs = it.startAt ? Date.now() - it.startAt : it.durationMs
       it.result = `工具调用被用户中断，未产生执行结果。\n原工具调用：${it.toolName}(${it.arguments || ''})`
+      if (Array.isArray(it.subSteps)) {
+        it.subSteps.forEach((sub) => {
+          if (sub.type === 'tool' && sub.status === 'running') {
+            sub.status = 'interrupted'
+            sub.durationMs = sub.startAt ? Date.now() - sub.startAt : sub.durationMs
+          }
+        })
+      }
     }
   })
   const s = sessions[cid]
@@ -2137,14 +2205,24 @@ function pgState(lead) {
 function groupedTimeline(msg) {
   const blocks = []
   let cur = null
+  let curSub = null
   let pendingConfirm = []
   const flushConfirm = () => {
     for (const card of pendingConfirm) blocks.push({ group: false, item: card })
     pendingConfirm = []
   }
   for (const it of msg.timeline) {
-    if (it.type === 'tool') {
-      // 工具段（含运行中）：连续工具聚成一段，运行中不再打断分组
+    if (it.type === 'tool' && isSubAgentTool(it)) {
+      // 子 Agent 委派卡片独立成组（纵向紧凑堆叠），不与普通工具混在一起
+      cur = null
+      if (!curSub) {
+        curSub = { group: false, subAgentGroup: true, lead: it, items: [] }
+        blocks.push(curSub)
+      }
+      curSub.items.push(it)
+    } else if (it.type === 'tool') {
+      // 普通工具段（含运行中）：连续工具聚成一段，运行中不再打断分组
+      curSub = null
       if (!cur) {
         cur = { group: true, lead: it, items: [] }
         blocks.push(cur)
@@ -2152,9 +2230,11 @@ function groupedTimeline(msg) {
       cur.items.push(it)
     } else if (it.type === 'card' && it.card?.__card === 'confirm') {
       cur = null
+      curSub = null
       pendingConfirm.push(it)
     } else {
       cur = null
+      curSub = null
       blocks.push({ group: false, item: it })
       if (it.type === 'text') {
         flushConfirm()
@@ -2254,16 +2334,87 @@ function toggleWork(msg) {
   msg.processCollapsed = !workCollapsed(msg)
 }
 
-/** 摘要头文案："已工作 · 26 分 25 秒"（历史取 conversation 表完成时间差，实时取 COMPLETE 事件带回的 elapsedMs） */
+/** 摘要头文案："已工作 · 32.1 秒 · 协作 2 个专员（数据分析专员、审核审批专员）" */
 function workSummaryText(msg) {
   const ms = msg.elapsedMs != null ? msg.elapsedMs
     : (msg.startAt != null && !msg.streaming ? Date.now() - msg.startAt : null)
-  if (ms == null) return '已工作'
-  const total = ms / 1000
-  const m = Math.floor(total / 60)
-  const s = Math.round(total - m * 60)
-  return m > 0 ? `已工作 · ${m} 分 ${s} 秒` : `已工作 · ${(ms / 1000).toFixed(1)} 秒`
+  let base = '已工作'
+  if (ms != null) {
+    const total = ms / 1000
+    const m = Math.floor(total / 60)
+    const s = Math.round(total - m * 60)
+    base = m > 0 ? `已工作 · ${m} 分 ${s} 秒` : `已工作 · ${(ms / 1000).toFixed(1)} 秒`
+  }
+  const subTools = (msg.timeline || []).filter((it) => isSubAgentTool(it))
+  if (subTools.length > 0) {
+    const names = [...new Set(subTools.map((t) => subAgentDisplayName(t)))]
+    return `${base} · 协作 ${subTools.length} 个专员（${names.join('、')}）`
+  }
+  return base
 }
+
+// ── 右侧子 Agent 独立会话抽屉（todo-05：主次分离、按需下钻、多 Tab 切换） ──
+const subDrawer = reactive({ open: false, msg: null, activeKey: '' })
+
+function subStepKey(step, idx) {
+  return step?.toolCallId || `sub-${idx}`
+}
+
+const subDrawerItems = computed(() => {
+  const tl = subDrawer.msg?.timeline || []
+  const list = []
+  tl.forEach((it, idx) => {
+    if (isSubAgentTool(it)) {
+      list.push({ key: subStepKey(it, idx), step: it })
+    }
+  })
+  return list
+})
+
+const subDrawerVisible = computed(() => subDrawer.open && subDrawerItems.value.length > 0)
+
+function openSubDrawer(msg, step) {
+  subDrawer.msg = msg
+  const idx = (msg?.timeline || []).indexOf(step)
+  subDrawer.activeKey = subStepKey(step, idx >= 0 ? idx : 0)
+  subDrawer.open = true
+}
+
+function closeSubDrawer() {
+  subDrawer.open = false
+}
+
+function isSubCardSelected(msg, step) {
+  if (!subDrawerVisible.value || subDrawer.msg !== msg) return false
+  const idx = (msg?.timeline || []).indexOf(step)
+  return subDrawer.activeKey === subStepKey(step, idx >= 0 ? idx : 0)
+}
+
+/** 场景 10 异步交错等待条：存在运行中子 Agent 且其后主 Agent 已产出简报/快扫步骤时显示 */
+function asyncWaitingInfo(msg) {
+  if (!msg?.streaming) return null
+  const tl = msg.timeline || []
+  const subIndices = []
+  tl.forEach((it, i) => { if (isSubAgentTool(it)) subIndices.push(i) })
+  if (!subIndices.length) return null
+  const runningSubIdx = subIndices.filter((i) => tl[i].status === 'running')
+  if (!runningSubIdx.length) return null
+  const firstRunning = runningSubIdx[0]
+  const hasInterleavedAfter = tl.slice(firstRunning + 1).some(
+    (it) => (it.type === 'text' && (it.content || '').trim()) || (it.type === 'tool' && !isSubAgentTool(it))
+  )
+  if (!hasInterleavedAfter) return null
+  return {
+    total: subIndices.length,
+    done: subIndices.length - runningSubIdx.length
+  }
+}
+
+watch(activeCid, () => {
+  subDrawer.open = false
+  subDrawer.msg = null
+  subDrawer.activeKey = ''
+})
 
 /**
  * 消息渲染块序列：最后一个非空 text 块 = 最终答案起点（含其后确认卡）。
@@ -2274,7 +2425,7 @@ function msgBlocks(msg) {
   const blocks = groupedTimeline(msg)
   let ansStart = -1
   blocks.forEach((b, i) => {
-    if (!b.group && b.item.type === 'text' && !b.item.placeholder && (b.item.content || '').trim()) ansStart = i
+    if (!b.group && !b.subAgentGroup && b.item?.type === 'text' && !b.item.placeholder && (b.item.content || '').trim()) ansStart = i
   })
   const collapsible = ansStart > 0 && !msg.streaming && !msg.interrupted
   const collapsed = collapsible && workCollapsed(msg)
