@@ -17,8 +17,9 @@ import java.util.List;
  * @param thinking       深度思考开关（可空 = 默认开启）：false 时按所选模型注入关思考请求参数
  *                       （agentx_chat_model.thinking_off_param，如 {"enable_thinking":false}）
  * @param agentMode      架构模式调试覆盖（可空）：single / multi；空则取 data-agent.agent.mode
+ * @param decisionId     一期 HITL：前端点击审批卡片后的续跑决策单 ID（可空）
  */
 public record ChatRequest(String query, String conversationId, Boolean recovery, Long startSeq,
                           List<String> fileIds, Boolean online, String skill, String model,
-                          Boolean thinking, String agentMode) {
+                          Boolean thinking, String agentMode, String decisionId) {
 }

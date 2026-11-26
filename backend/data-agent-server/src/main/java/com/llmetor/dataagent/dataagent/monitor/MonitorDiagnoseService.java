@@ -535,7 +535,7 @@ public class MonitorDiagnoseService {
                 }
                 yield Flux.just(DiagnoseEvent.error(message != null ? message : "诊断执行出错"));
             }
-            case PAUSED, COMPLETE -> Flux.empty();  // 诊断不可中断；终态由 tail 处理
+            case PAUSED, COMPLETE, HITL_REQUEST, HITL_RESOLVED, HITL_WITHDRAWN -> Flux.empty();  // 诊断不可中断；HITL 与终态忽略
         };
     }
 

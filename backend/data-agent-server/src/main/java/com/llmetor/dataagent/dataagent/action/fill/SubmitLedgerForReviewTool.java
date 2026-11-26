@@ -6,9 +6,12 @@ import com.llmetor.dataagent.dataagent.action.ActionAuditLogger;
 import com.llmetor.dataagent.dataagent.action.ConfirmTokenService;
 import com.llmetor.dataagent.dataagent.action.FunctionPermissionChecker;
 import com.llmetor.dataagent.dataagent.action.RestActionClient;
+import com.llmetor.dataagent.dataagent.hitl.DecisionModels;
+import com.llmetor.dataagent.dataagent.hitl.HitlToolHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -52,6 +55,7 @@ public class SubmitLedgerForReviewTool {
     private final FillNodeSelectionCache nodeSelectionCache;
     private final ListFillNodesTool listFillNodesTool;
     private final ActionAuditLogger auditLogger;
+    private final HitlToolHelper hitlHelper;
 
     public SubmitLedgerForReviewTool(FunctionPermissionChecker permissionChecker,
                                      RestActionClient restActionClient,
@@ -62,6 +66,21 @@ public class SubmitLedgerForReviewTool {
                                      FillNodeSelectionCache nodeSelectionCache,
                                      ListFillNodesTool listFillNodesTool,
                                      ActionAuditLogger auditLogger) {
+        this(permissionChecker, restActionClient, contextSupport, panelSupport,
+                confirmTokenService, planCache, nodeSelectionCache, listFillNodesTool, auditLogger, null);
+    }
+
+    @Autowired
+    public SubmitLedgerForReviewTool(FunctionPermissionChecker permissionChecker,
+                                     RestActionClient restActionClient,
+                                     FillContextSupport contextSupport,
+                                     FillPanelSupport panelSupport,
+                                     ConfirmTokenService confirmTokenService,
+                                     SubmitPlanCache planCache,
+                                     FillNodeSelectionCache nodeSelectionCache,
+                                     ListFillNodesTool listFillNodesTool,
+                                     ActionAuditLogger auditLogger,
+                                     HitlToolHelper hitlHelper) {
         this.permissionChecker = permissionChecker;
         this.restActionClient = restActionClient;
         this.contextSupport = contextSupport;
@@ -71,6 +90,7 @@ public class SubmitLedgerForReviewTool {
         this.nodeSelectionCache = nodeSelectionCache;
         this.listFillNodesTool = listFillNodesTool;
         this.auditLogger = auditLogger;
+        this.hitlHelper = hitlHelper;
     }
 
     @Tool(name = "submitLedgerForReview",
@@ -202,8 +222,44 @@ public class SubmitLedgerForReviewTool {
         SubmitPlanCache.Plan plan = new SubmitPlanCache.Plan(ledger.ledgerId(), ctx.project().projectId(),
                 ctx.phase().phaseId(), submitRemark.trim(),
                 List.copyOf(reviewerIds), List.copyOf(names), "", 0L);
-        ConfirmTokenService.IssuedToken issued = confirmTokenService.issue(
-                uid, ACTION, payloadHash(plan, ledger.rows()));
+        String hash = payloadHash(plan, ledger.rows());
+
+        if (hitlHelper != null && hitlHelper.isEnabled(ACTION)) {
+            String targetSummary = (ledger.projectName().isBlank() ? ctx.project().projectName() : ledger.projectName())
+                    + " / " + (ledger.phaseName().isBlank() ? ctx.phase().phaseName() : ledger.phaseName())
+                    + "（" + ledger.docNumber() + "）";
+            String scopeKey = ACTION + ":SUBMIT:project=" + plan.projectId()
+                    + ":assignees=" + String.join(",", plan.assigneeIds());
+            String scopeDesc = "仅限本会话内同项目同审核人（" + displayAssignees(plan) + "）的提审";
+            List<DecisionModels.KeyParamItem> kps = List.of(
+                    HitlToolHelper.kp("台账单号", ledger.docNumber()),
+                    HitlToolHelper.kp("审核人", displayAssignees(plan) + (reviewerNote == null ? "" : "（" + reviewerNote + "）")),
+                    HitlToolHelper.kp("本轮提交", v.toSubmit().size() + " 项（跳过待上传 " + v.skippedCategories().size() + " 项）"),
+                    HitlToolHelper.kp("提交说明", shortSummary(plan.submitRemark()))
+            );
+            String actionSummary = "提交台账审核「" + ledger.docNumber() + "」（审核人：" + displayAssignees(plan) + "）";
+            DecisionModels.CreateResult created = hitlHelper.createDecision(new DecisionModels.CreateDecisionRequest(
+                    conversationId, conversationId, null, null, uid,
+                    DecisionModels.TYPE_PERMISSION, ACTION, scopeKey, scopeDesc, true,
+                    "提交台账审核 (" + ACTION + ")", targetSummary, kps, actionSummary,
+                    plan, hash, null));
+            String decId = created.entity().decisionId();
+            audit(uid, conversationId, "submit-plan", ledger.docNumber(), decId, true,
+                    "hitl=true, rows=" + v.toSubmit().size() + ", autoApproved=" + created.autoApproved());
+
+            if (created.autoApproved()) {
+                DecisionModels.ConsumeOutcome consume = hitlHelper.verifyAndConsume(decId, uid, ACTION, hash);
+                if (!consume.ok()) {
+                    return HitlToolHelper.formatConsumeError(consume, ACTION);
+                }
+                return "⚡ 已依据本会话同类授权自动放行提审（" + scopeDesc + "）。\n\n"
+                        + doExecuteSubmit(uid, ledger, v, plan, decId, token, tenant, conversationId);
+            }
+            return HitlToolHelper.formatPlanHint(created, actionSummary,
+                    "ledgerId=" + ledger.ledgerId() + ", confirmToken=" + decId);
+        }
+
+        ConfirmTokenService.IssuedToken issued = confirmTokenService.issue(uid, ACTION, hash);
         planCache.put(issued.confirmToken(), withExpiry(plan, issued.expiresInSeconds()));
 
         audit(uid, conversationId, "submit-plan", ledger.docNumber(), issued.confirmToken(), true,
@@ -222,6 +278,29 @@ public class SubmitLedgerForReviewTool {
         if (denied != null) {
             return denied;
         }
+        if (hitlHelper != null && hitlHelper.isDecisionId(confirmToken)) {
+            SubmitPlanCache.Plan plan = hitlHelper.loadStoredPlan(confirmToken, SubmitPlanCache.Plan.class);
+            if (plan == null || !plan.ledgerId().equals(ledgerId)) {
+                return "❌ 审批单无效或与台账不匹配（" + confirmToken + "）。请重新发起 submitLedgerForReview。";
+            }
+            String currentDraft = contextSupport.findDraftLedgerId(plan.phaseId(), plan.projectId(), token, tenant);
+            if (!ledgerId.equals(currentDraft)) {
+                return "❌ 该台账已不是您名下的草稿（可能已提交或状态变化），无法重复提审。";
+            }
+            FillContextSupport.LedgerView ledger = contextSupport.loadLedgerDetail(ledgerId, token, tenant);
+            if (ledger.status() != 0) {
+                return "❌ 台账 " + ledger.docNumber() + " 已不是草稿状态（当前：" + FillLabels.ledgerStatus(ledger.status())
+                        + "），无法提审。";
+            }
+            FillPanelSupport.SubmitValidation v = panelSupport.validateForSubmit(ledger.rows());
+            String hash = payloadHash(plan, ledger.rows());
+            DecisionModels.ConsumeOutcome consume = hitlHelper.verifyAndConsume(confirmToken, uid, ACTION, hash);
+            if (!consume.ok()) {
+                return HitlToolHelper.formatConsumeError(consume, ACTION);
+            }
+            return doExecuteSubmit(uid, ledger, v, plan, confirmToken, token, tenant, conversationId);
+        }
+
         SubmitPlanCache.Plan plan = planCache.get(confirmToken);
         if (plan == null || !plan.ledgerId().equals(ledgerId)) {
             return "❌ 确认令牌无效或与台账不匹配（从未签发/已过期/已执行/台账不符）。"
@@ -282,9 +361,15 @@ public class SubmitLedgerForReviewTool {
             }
         }
 
+        return doExecuteSubmit(uid, ledger, v, plan, confirmToken, token, tenant, conversationId);
+    }
+
+    private String doExecuteSubmit(Long uid, FillContextSupport.LedgerView ledger,
+                                 FillPanelSupport.SubmitValidation v, SubmitPlanCache.Plan plan,
+                                 String confirmToken, String token, Long tenant, String conversationId) {
         // 执行提审（唯一写路径）
         ObjectNode body = contextSupport.mapper().createObjectNode();
-        body.put("ledgerId", FillContextSupport.parseLong(ledgerId));
+        body.put("ledgerId", FillContextSupport.parseLong(ledger.ledgerId()));
         // needNext 必须为 true：主平台引擎仅在 needNext=true 且 nextNodes 非空时创建审核人
         // 待办；false 会把实例直接判"通过完成"（outcome=approved、零审批任务，提交人只剩已办）
         body.put("needNext", true);
@@ -459,6 +544,7 @@ public class SubmitLedgerForReviewTool {
                 .conversationId(conversationId).userId(uid)
                 .tool(ACTION).action(action)
                 .businessObject(businessObject).confirmToken(confirmToken)
+                .decisionId(confirmToken != null && confirmToken.startsWith("dec_") ? confirmToken : null)
                 .success(success)
                 .errorMessage(success ? null : detail)
                 .detail(success ? detail : null)

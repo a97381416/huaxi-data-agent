@@ -5,9 +5,12 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.llmetor.dataagent.dataagent.action.ActionAuditLogger;
 import com.llmetor.dataagent.dataagent.action.ConfirmTokenService;
 import com.llmetor.dataagent.dataagent.action.RestActionClient;
+import com.llmetor.dataagent.dataagent.hitl.DecisionModels;
+import com.llmetor.dataagent.dataagent.hitl.HitlToolHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -36,17 +39,29 @@ public class RejectTaskTool {
     private final ConfirmTokenService confirmTokenService;
     private final ReviewPlanCache planCache;
     private final ActionAuditLogger auditLogger;
+    private final HitlToolHelper hitlHelper;
 
     public RejectTaskTool(RestActionClient restActionClient,
                           ReviewSupport support,
                           ConfirmTokenService confirmTokenService,
                           ReviewPlanCache planCache,
                           ActionAuditLogger auditLogger) {
+        this(restActionClient, support, confirmTokenService, planCache, auditLogger, null);
+    }
+
+    @Autowired
+    public RejectTaskTool(RestActionClient restActionClient,
+                          ReviewSupport support,
+                          ConfirmTokenService confirmTokenService,
+                          ReviewPlanCache planCache,
+                          ActionAuditLogger auditLogger,
+                          HitlToolHelper hitlHelper) {
         this.restActionClient = restActionClient;
         this.support = support;
         this.confirmTokenService = confirmTokenService;
         this.planCache = planCache;
         this.auditLogger = auditLogger;
+        this.hitlHelper = hitlHelper;
     }
 
     @Tool(name = "rejectTask",
@@ -133,8 +148,32 @@ public class RejectTaskTool {
                 + (task.docLedger() ? "；台账置「已驳回」，驳回意见随重提任务送达申报人"
                 : "；该节点之后的审批链被取消，目标处理人收到重新处理任务");
         String canonical = canonicalJson(body);
-        ConfirmTokenService.IssuedToken issued = confirmTokenService.issue(
-                uid, ACTION, confirmTokenService.payloadHash(List.of(ACTION, task.taskId(), canonical)));
+        String hash = confirmTokenService.payloadHash(List.of(ACTION, task.taskId(), canonical));
+        if (hitlHelper != null && hitlHelper.isEnabled(ACTION)) {
+            String docNum = task.docLedger() ? task.ledgerHeader().path("docNumber").asText("") : "";
+            String targetSummary = task.title() + (docNum.isBlank() ? "" : "（" + docNum + "）");
+            List<DecisionModels.KeyParamItem> kps = List.of(
+                    HitlToolHelper.kp("任务ID", task.taskId()),
+                    HitlToolHelper.kp("退回到", resolved.targetLabel()),
+                    HitlToolHelper.kp("驳回意见", opinion.trim()),
+                    HitlToolHelper.kp("影响", outcomeNote)
+            );
+            String actionSummary = "审核驳回「" + task.title() + "」退回至" + resolved.targetLabel();
+            HitlToolHelper.ReviewStoredPlan stored = new HitlToolHelper.ReviewStoredPlan(
+                    ACTION, task.taskId(), task.ledgerId(), canonical, outcomeNote);
+            DecisionModels.CreateResult created = hitlHelper.createDecision(new DecisionModels.CreateDecisionRequest(
+                    conversationId, conversationId, null, null, uid,
+                    DecisionModels.TYPE_PERMISSION, ACTION, null, null, false,
+                    "审核驳回 (" + ACTION + ")", targetSummary, kps, actionSummary,
+                    stored, hash, null));
+            String decId = created.entity().decisionId();
+            audit(uid, conversationId, "reject-plan", task, decId, true,
+                    "hitl=true, target=" + (target == null || target.isBlank() ? "originator" : target));
+            return HitlToolHelper.formatPlanHint(created, actionSummary,
+                    "taskId=" + task.taskId() + ", confirmToken=" + decId);
+        }
+
+        ConfirmTokenService.IssuedToken issued = confirmTokenService.issue(uid, ACTION, hash);
         planCache.put(issued.confirmToken(), ACTION, task.taskId(), task.ledgerId(), body, outcomeNote);
 
         audit(uid, conversationId, "reject-plan", task, issued.confirmToken(), true,
@@ -160,6 +199,35 @@ public class RejectTaskTool {
 
     private String executeRound(Long uid, String taskId, String confirmToken,
                                 String token, Long tenant, String conversationId) {
+        if (hitlHelper != null && hitlHelper.isDecisionId(confirmToken)) {
+            HitlToolHelper.ReviewStoredPlan stored = hitlHelper.loadStoredPlan(
+                    confirmToken, HitlToolHelper.ReviewStoredPlan.class);
+            ObjectNode reqBody = stored != null ? hitlHelper.parseObjectNode(stored.requestBodyJson()) : null;
+            if (stored == null || reqBody == null || !ACTION.equals(stored.action()) || !taskId.equals(stored.taskId())) {
+                return "❌ 审批单无效或与任务不匹配（" + confirmToken + "）。请重新发起 rejectTask。";
+            }
+            ReviewSupport.ReviewTaskRef task = support.findMyReviewTask(taskId, token, tenant);
+            try {
+                support.requireApprovalTodoTask(task);
+                support.requireLedgerInReview(task);
+            } catch (ReviewSupport.TaskFlowException e) {
+                return "❌ 任务现状已发生变化，原审批单失效（未执行）。原因：" + e.getMessage();
+            }
+            String hash = confirmTokenService.payloadHash(List.of(ACTION, taskId, stored.requestBodyJson()));
+            DecisionModels.ConsumeOutcome consume = hitlHelper.verifyAndConsume(confirmToken, uid, ACTION, hash);
+            if (!consume.ok()) {
+                return HitlToolHelper.formatConsumeError(consume, ACTION);
+            }
+            RestActionClient.ActionResult r = restActionClient.post(
+                    "/task-center/task/reject", reqBody, token, tenant);
+            if (!r.success()) {
+                audit(uid, conversationId, "reject", task, confirmToken, false, r.msg());
+                return "❌ 审核驳回执行失败：" + r.msg();
+            }
+            audit(uid, conversationId, "reject", task, confirmToken, true, "executed");
+            return "✅ 审核驳回完成\n- 任务 " + task.title() + "：已办结（驳回）\n- 影响：" + stored.outcomeNote() + "\n";
+        }
+
         ReviewPlanCache.Plan plan = planCache.get(confirmToken);
         if (plan == null || !ACTION.equals(plan.action()) || !taskId.equals(plan.taskId())) {
             return "❌ 确认令牌无效（从未签发/已过期/已执行/任务不符/**已被更新的计划取代**）。"

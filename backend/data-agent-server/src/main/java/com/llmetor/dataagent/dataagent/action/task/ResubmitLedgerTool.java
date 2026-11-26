@@ -7,9 +7,12 @@ import com.llmetor.dataagent.dataagent.action.ConfirmTokenService;
 import com.llmetor.dataagent.dataagent.action.FunctionPermissionChecker;
 import com.llmetor.dataagent.dataagent.action.RestActionClient;
 import com.llmetor.dataagent.dataagent.action.fill.FillContextSupport;
+import com.llmetor.dataagent.dataagent.hitl.DecisionModels;
+import com.llmetor.dataagent.dataagent.hitl.HitlToolHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -51,6 +54,7 @@ public class ResubmitLedgerTool {
     private final ActionPlanCache planCache;
     private final ActionAuditLogger auditLogger;
     private final FillContextSupport fillSupport;
+    private final HitlToolHelper hitlHelper;
 
     public ResubmitLedgerTool(FunctionPermissionChecker permissionChecker,
                               RestActionClient restActionClient,
@@ -60,6 +64,20 @@ public class ResubmitLedgerTool {
                               ActionPlanCache planCache,
                               ActionAuditLogger auditLogger,
                               FillContextSupport fillSupport) {
+        this(permissionChecker, restActionClient, support, patchMerger,
+                confirmTokenService, planCache, auditLogger, fillSupport, null);
+    }
+
+    @Autowired
+    public ResubmitLedgerTool(FunctionPermissionChecker permissionChecker,
+                              RestActionClient restActionClient,
+                              TaskLedgerSupport support,
+                              PatchMerger patchMerger,
+                              ConfirmTokenService confirmTokenService,
+                              ActionPlanCache planCache,
+                              ActionAuditLogger auditLogger,
+                              FillContextSupport fillSupport,
+                              HitlToolHelper hitlHelper) {
         this.permissionChecker = permissionChecker;
         this.restActionClient = restActionClient;
         this.support = support;
@@ -68,6 +86,7 @@ public class ResubmitLedgerTool {
         this.planCache = planCache;
         this.auditLogger = auditLogger;
         this.fillSupport = fillSupport;
+        this.hitlHelper = hitlHelper;
     }
 
     @Tool(name = "resubmitLedger",
@@ -176,8 +195,41 @@ public class ResubmitLedgerTool {
         }
 
         // 令牌哈希绑定解析结果（entryId+field+value 列表）+ taskId；二轮重拉现状重解析必须一致
-        ConfirmTokenService.IssuedToken issued = confirmTokenService.issue(
-                uid, ACTION, resolutionHash(task.taskId(), merged.resolved()));
+        String hash = resolutionHash(task.taskId(), merged.resolved());
+        if (hitlHelper != null && hitlHelper.isEnabled(ACTION)) {
+            ActionPlanCache.Plan storedPlan = new ActionPlanCache.Plan(
+                    task.taskId(), task.ledgerId(), List.copyOf(patches), List.copyOf(reviewers), 0L);
+            String targetSummary = view.projectName() + " / " + view.phaseName() + "（" + view.docNumber() + "）";
+            String scopeKey = ACTION + ":RESUBMIT:ledger=" + task.ledgerId() + ":assignees=" + String.join(",", reviewers);
+            String scopeDesc = "仅限本会话内同台账（" + view.docNumber() + "）同审核人的重提";
+            List<DecisionModels.KeyParamItem> kps = List.of(
+                    HitlToolHelper.kp("台账单号", view.docNumber()),
+                    HitlToolHelper.kp("任务ID", task.taskId()),
+                    HitlToolHelper.kp("审核人", reviewerDisplay),
+                    HitlToolHelper.kp("修改处数", merged.resolved().size() + " 处")
+            );
+            String actionSummary = "重新提交台账「" + view.docNumber() + "」（修改 " + merged.resolved().size() + " 处）";
+            DecisionModels.CreateResult created = hitlHelper.createDecision(new DecisionModels.CreateDecisionRequest(
+                    conversationId, conversationId, null, null, uid,
+                    DecisionModels.TYPE_PERMISSION, ACTION, scopeKey, scopeDesc, true,
+                    "重新提交审核 (" + ACTION + ")", targetSummary, kps, actionSummary,
+                    storedPlan, hash, null));
+            String decId = created.entity().decisionId();
+            audit(uid, conversationId, "resubmit-plan", view.docNumber() + "/task:" + task.taskId(),
+                    decId, true, "hitl=true, patches=" + merged.resolved().size() + ", autoApproved=" + created.autoApproved());
+            if (created.autoApproved()) {
+                DecisionModels.ConsumeOutcome consume = hitlHelper.verifyAndConsume(decId, uid, ACTION, hash);
+                if (!consume.ok()) {
+                    return HitlToolHelper.formatConsumeError(consume, ACTION);
+                }
+                return "⚡ 已依据本会话同类授权自动放行重提（" + scopeDesc + "）。\n\n"
+                        + doExecuteResubmit(uid, task, view, merged, reviewers, decId, token, tenant, conversationId);
+            }
+            return HitlToolHelper.formatPlanHint(created, actionSummary,
+                    "taskId=" + task.taskId() + ", confirmToken=" + decId);
+        }
+
+        ConfirmTokenService.IssuedToken issued = confirmTokenService.issue(uid, ACTION, hash);
         planCache.put(issued.confirmToken(), task.taskId(), task.ledgerId(), patches, reviewers);
 
         audit(uid, conversationId, "resubmit-plan", view.docNumber() + "/task:" + task.taskId(),
@@ -241,6 +293,31 @@ public class ResubmitLedgerTool {
         if (denied != null) {
             return denied;
         }
+        if (hitlHelper != null && hitlHelper.isDecisionId(confirmToken)) {
+            ActionPlanCache.Plan plan = hitlHelper.loadStoredPlan(confirmToken, ActionPlanCache.Plan.class);
+            if (plan == null || !plan.taskId().equals(taskId)) {
+                return "❌ 审批单无效或与任务不匹配（" + confirmToken + "）。请重新发起 resubmitLedger。";
+            }
+            if (plan.assigneeIds() == null || plan.assigneeIds().isEmpty()) {
+                return "❌ 该审批单缺少审核人信息，请重新发起 resubmitLedger。";
+            }
+            TaskLedgerSupport.TaskRef task = support.findMyTask(taskId, token, tenant);
+            support.requireSubmitterTodoTask(task);
+            TaskLedgerSupport.LedgerView view = support.loadLedgerView(task.ledgerId(), token, tenant);
+            support.requireRejected(view);
+            PatchMerger.MergeResult merged = patchMerger.resolve(
+                    plan.patches(), view.baseRows(), view.nodeNames(), view.lockedIds());
+            if (!merged.ok()) {
+                return "❌ 台账现状已发生变化，原审批单失效（未执行）。原因：\n" + merged.guidance();
+            }
+            String hash = resolutionHash(taskId, merged.resolved());
+            DecisionModels.ConsumeOutcome consume = hitlHelper.verifyAndConsume(confirmToken, uid, ACTION, hash);
+            if (!consume.ok()) {
+                return HitlToolHelper.formatConsumeError(consume, ACTION);
+            }
+            return doExecuteResubmit(uid, task, view, merged, plan.assigneeIds(), confirmToken, token, tenant, conversationId);
+        }
+
         ActionPlanCache.Plan plan = planCache.get(confirmToken);
         if (plan == null || !plan.taskId().equals(taskId)) {
             return "❌ 确认令牌无效（从未签发/已过期/已执行/任务不符/**已被更新的计划取代——换审核人或重新出计划后旧令牌自动作废**）。"
@@ -305,6 +382,12 @@ public class ResubmitLedgerTool {
             }
         }
 
+        return doExecuteResubmit(uid, task, view, merged, reviewers, confirmToken, token, tenant, conversationId);
+    }
+
+    private String doExecuteResubmit(Long uid, TaskLedgerSupport.TaskRef task, TaskLedgerSupport.LedgerView view,
+                                     PatchMerger.MergeResult merged, List<String> reviewers, String confirmToken,
+                                     String token, Long tenant, String conversationId) {
         // 全量组装：基准行（STAGE 优先）+ 解析结果 + 锁定行原样追加
         List<ObjectNode> fullRows = patchMerger.assembleFullRows(
                 view.baseRows(), merged.resolved(), view.lockedRows());
@@ -400,6 +483,7 @@ public class ResubmitLedgerTool {
                 .conversationId(conversationId).userId(uid)
                 .tool("resubmitLedger").action(action)
                 .businessObject(businessObject).confirmToken(confirmToken)
+                .decisionId(confirmToken != null && confirmToken.startsWith("dec_") ? confirmToken : null)
                 .success(success)
                 .errorMessage(success ? null : detail)
                 .detail(success ? detail : null)

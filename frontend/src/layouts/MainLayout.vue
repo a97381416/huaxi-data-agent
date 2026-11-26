@@ -34,8 +34,10 @@
         </template>
       </nav>
 
-      <!-- 右侧用户区 -->
-      <el-dropdown trigger="click" @command="onCommand">
+      <!-- 右侧：全局待办汇聚 + 用户区 -->
+      <div class="flex shrink-0 items-center gap-3">
+        <PendingHitlDrawer v-if="userStore.token" />
+        <el-dropdown trigger="click" @command="onCommand">
         <span class="flex h-9 cursor-pointer items-center gap-2 rounded-full pl-1 pr-2 outline-none transition-colors duration-200 hover:bg-gray-100">
           <span class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-sm font-semibold text-white">
             {{ avatarText }}
@@ -51,6 +53,7 @@
           </el-dropdown-menu>
         </template>
       </el-dropdown>
+      </div>
     </header>
 
     <el-main
@@ -71,6 +74,7 @@ import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowDown, Monitor } from '@element-plus/icons-vue'
+import PendingHitlDrawer from '@/components/PendingHitlDrawer.vue'
 import { fetchMe, logout } from '@/api/auth'
 import { useUserStore } from '@/stores/user'
 

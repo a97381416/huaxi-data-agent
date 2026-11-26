@@ -150,3 +150,61 @@ CREATE TABLE IF NOT EXISTS agentx_action_log (
 );
 CREATE INDEX IF NOT EXISTS idx_agentx_action_log_conv ON agentx_action_log (conversation_id);
 CREATE INDEX IF NOT EXISTS idx_agentx_action_log_user ON agentx_action_log (user_id);
+
+-- 9. HITL 决策单主表（一期：唯一真相，严禁物理删除）
+CREATE TABLE IF NOT EXISTS agentx_decision (
+  decision_id        varchar(64)  NOT NULL,
+  conversation_id    varchar(100) NOT NULL,
+  session_id         varchar(100) NOT NULL,
+  tool_call_id       varchar(100) DEFAULT NULL,
+  agent_code         varchar(64)  DEFAULT NULL,
+  owner_user_id      bigint       NOT NULL,
+  type               varchar(32)  NOT NULL,
+  status             varchar(32)  NOT NULL,
+  revision           int          NOT NULL DEFAULT 1,
+  tool_name          varchar(100) NOT NULL,
+  scope_key          varchar(255) DEFAULT NULL,
+  action_summary     text         NOT NULL,
+  payload_json       text         NOT NULL,
+  payload_hash       varchar(128) NOT NULL,
+  options_json       text         DEFAULT NULL,
+  decision_option    varchar(64)  DEFAULT NULL,
+  answer_json        text         DEFAULT NULL,
+  user_words         text         DEFAULT NULL,
+  grant_id           varchar(64)  DEFAULT NULL,
+  answered_by        bigint       DEFAULT NULL,
+  answered_by_name   varchar(100) DEFAULT NULL,
+  client_ip          varchar(64)  DEFAULT NULL,
+  command_id         varchar(64)  DEFAULT NULL,
+  expires_at         timestamp    NOT NULL,
+  created_at         timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  answered_at        timestamp    DEFAULT NULL,
+  consumed_at        timestamp    DEFAULT NULL,
+  PRIMARY KEY (decision_id)
+);
+CREATE INDEX IF NOT EXISTS idx_decision_conv_status ON agentx_decision (conversation_id, status);
+CREATE INDEX IF NOT EXISTS idx_decision_owner_status ON agentx_decision (owner_user_id, status, expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_decision_cmd ON agentx_decision (decision_id, command_id) WHERE command_id IS NOT NULL;
+
+-- 10. 会话级同类授权表（一期）
+CREATE TABLE IF NOT EXISTS agentx_decision_grant (
+  grant_id           varchar(64)  NOT NULL,
+  user_id            bigint       NOT NULL,
+  conversation_id    varchar(100) NOT NULL,
+  source_decision_id varchar(64)  NOT NULL,
+  tool_name          varchar(100) NOT NULL,
+  scope_key          varchar(255) NOT NULL,
+  scope_desc         varchar(500) DEFAULT NULL,
+  status             varchar(20)  NOT NULL DEFAULT 'ACTIVE',
+  max_uses           int          NOT NULL DEFAULT 20,
+  used_count         int          NOT NULL DEFAULT 0,
+  expires_at         timestamp    NOT NULL,
+  created_at         timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revoked_at         timestamp    DEFAULT NULL,
+  PRIMARY KEY (grant_id)
+);
+CREATE INDEX IF NOT EXISTS idx_grant_lookup ON agentx_decision_grant (user_id, conversation_id, scope_key, status);
+
+-- 11. 动作审计表扩展 decision_id 关联决策单
+ALTER TABLE agentx_action_log ADD COLUMN IF NOT EXISTS decision_id varchar(64) DEFAULT NULL;
+CREATE INDEX IF NOT EXISTS idx_action_log_decision ON agentx_action_log (decision_id);

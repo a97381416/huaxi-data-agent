@@ -179,7 +179,12 @@ public class ToolCallExecutor {
                 ctxMap.put("interruptContext", interruptCtx);
             }
             ToolContext toolContext = new ToolContext(ctxMap);
-            result = callback.call(effectiveArgs, toolContext);
+            ToolExecutionContext.set(params, conversationId, call.id(), stepEmitter);
+            try {
+                result = callback.call(effectiveArgs, toolContext);
+            } finally {
+                ToolExecutionContext.clear();
+            }
             if (result == null) {
                 result = "{\"error\":\"工具返回空结果\",\"tool\":\"" + call.name() + "\"}";
                 success = false;

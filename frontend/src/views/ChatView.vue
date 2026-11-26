@@ -505,6 +505,14 @@
             </div>
           </div>
 
+          <!-- HITL 授权确认卡片单焦点锚点（锚定在输入框正上方） -->
+          <HitlActionDock
+            :decisions="activeSession?.hitlDecisions || []"
+            :focus-decision-id="focusDecisionId"
+            @decided="onHitlDecided"
+            @expired="onHitlExpired"
+          />
+
           <!-- 添加上下文面板：点击输入栏「+」弹出（附件 / 业务文件 / 联网搜索，点击面板外自动关闭） -->
           <div
             v-if="ctxMenuVisible"
@@ -648,7 +656,7 @@
                 :autosize="{ minRows: 1, maxRows: 6 }"
                 resize="none"
                 class="chat-textarea"
-                placeholder="输入问题，Enter 发送（回答进行中发送新消息将自动顶掉旧回答）；可先上传文件再提问；输 / 指定技能"
+                :placeholder="hasPendingHitl ? '有待确认审批项（直接发新消息将作废原审批单）' : '输入问题，Enter 发送（回答进行中发送新消息将自动顶掉旧回答）；可先上传文件再提问；输 / 指定技能'"
                 @keydown="onDraftKeydown"
               />
               <div class="flex shrink-0 items-center gap-1.5">
@@ -766,6 +774,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   ArrowDown, CircleCheckFilled, Close, Cpu, Delete, Document, Connection, List, Loading,
@@ -783,6 +792,8 @@ import '@/assets/report-markdown.css'
 import TimelineNav from '@/components/TimelineNav.vue'
 import SubAgentCard from '@/components/SubAgentCard.vue'
 import SubAgentDrawer from '@/components/SubAgentDrawer.vue'
+import HitlActionDock from '@/components/HitlActionDock.vue'
+import { listConversationHitlDecisions } from '@/api/hitl'
 import { isSubAgentTool, subAgentDisplayName } from '@/utils/agentNames'
 
 /** 单轮最多上传文件数（对齐后端 data-agent.file.max-count） */
@@ -834,11 +845,75 @@ const sessions = reactive({})
 const activeCid = ref('')
 const activeSession = computed(() => sessions[activeCid.value])
 
+const route = useRoute()
+const focusDecisionId = ref('')
+const hasPendingHitl = computed(() =>
+  (activeSession.value?.hitlDecisions || []).some((d) => d.status === 'PENDING')
+)
+
 function ensureSession(cid) {
   if (!sessions[cid]) {
-    sessions[cid] = reactive({ id: cid, title: '', messages: [], streaming: false, loaded: false, interrupted: false })
+    sessions[cid] = reactive({
+      id: cid, title: '', messages: [], streaming: false, loaded: false, interrupted: false,
+      hitlDecisions: []
+    })
   }
   return sessions[cid]
+}
+
+function upsertHitlDecision(cid, payload) {
+  if (!payload || !payload.decisionId) return
+  const s = ensureSession(cid)
+  const idx = s.hitlDecisions.findIndex((d) => d.decisionId === payload.decisionId)
+  if (idx >= 0) {
+    s.hitlDecisions[idx] = { ...s.hitlDecisions[idx], ...payload }
+  } else {
+    s.hitlDecisions.push(payload)
+  }
+  window.dispatchEvent(new CustomEvent('hitl-pending-changed'))
+}
+
+async function loadHitlDecisions(cid) {
+  if (!cid) return
+  try {
+    const list = await listConversationHitlDecisions(cid)
+    const s = ensureSession(cid)
+    s.hitlDecisions = Array.isArray(list) ? list : []
+  } catch {
+    /* 静默失败 */
+  }
+}
+
+function onHitlExpired(decisionId) {
+  const s = activeSession.value
+  if (!s) return
+  const item = s.hitlDecisions.find((d) => d.decisionId === decisionId)
+  if (item && item.status === 'PENDING') {
+    item.status = 'EXPIRED'
+    window.dispatchEvent(new CustomEvent('hitl-pending-changed'))
+  }
+}
+
+function onHitlDecided(resp) {
+  const cid = activeCid.value
+  if (!cid || !resp?.decisionId) return
+  if (resp.decision) {
+    upsertHitlDecision(cid, resp.decision)
+  }
+  // 触发续跑流（携带 decisionId，后端构造批准执行或拒绝理由反馈）
+  const s = ensureSession(cid)
+  const aiMsg = newAssistantMsg()
+  s.messages.push(aiMsg)
+  autoScroll.value = true
+  const modelCode = effectiveModelCode.value
+  openStream(cid, aiMsg, {
+    conversationId: cid,
+    decisionId: resp.decisionId,
+    online: online.value,
+    thinking: thinking.value,
+    ...(modelCode ? { model: modelCode } : {})
+  })
+  scrollToBottom()
 }
 
 // ── 执行计划（右侧面板）：TodoWrite 参数侧信道的会话级全量快照 ──
@@ -1171,10 +1246,11 @@ async function openConversation(cid) {
       s.messages.push(live.aiMsg)
     }
     s.streaming = true
+    loadHitlDecisions(cid)
     scrollToBottom()
     return
   }
-  await loadConversation(cid)
+  await Promise.all([loadConversation(cid), loadHitlDecisions(cid)])
 }
 
 /** 拉取会话历史并按 timeline 回放渲染 */
@@ -1297,6 +1373,15 @@ function onStreamEvent(cid, entry) {
     }
     const msg = entry.aiMsg
     const timeline = msg.timeline
+
+    // 一期 HITL：优先拦截 HITL 事件（含子 Agent 穿透出来的 HITL_REQUEST），直接呈现到主聊天窗口
+    if (data.type === 'HITL_REQUEST' || data.type === 'HITL_RESOLVED' || data.type === 'HITL_WITHDRAWN') {
+      if (data.hitlPayload) {
+        upsertHitlDecision(cid, data.hitlPayload)
+      }
+      if (cid === activeCid.value) scrollToBottom()
+      return
+    }
 
     // M-SA5 / todo-05：子 Agent 透传事件（携带 parentToolCallId）归入对应父委派工具的 subSteps，不污染顶层 timeline
     if (data.parentToolCallId) {
@@ -2505,10 +2590,29 @@ function scrollToMessage(index) {
 // 历史加载/新增消息/切换会话后重算高亮位置
 watch(() => activeSession.value?.messages?.length, () => nextTick(updateActiveRound))
 
+// 监听顶部待办抽屉的跳转参数（/chat?conversationId=xxx&focusDecision=dec_xxx）
+watch(
+  () => [route.query.conversationId, route.query.focusDecision],
+  async ([cid, decId]) => {
+    focusDecisionId.value = decId ? String(decId) : ''
+    if (cid && cid !== activeCid.value) {
+      await openConversation(String(cid))
+    } else if (cid && cid === activeCid.value) {
+      await loadHitlDecisions(String(cid))
+    }
+    if (decId) {
+      await nextTick()
+      const el = document.getElementById(`hitl-card-${decId}`)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }
+)
+
 // ── 生命周期 ──
 onMounted(async () => {
   const u = new URL(window.location.href)
-  const urlCid = u.searchParams.get('conversationId')
+  const urlCid = u.searchParams.get('conversationId') || route.query.conversationId
+  focusDecisionId.value = String(u.searchParams.get('focusDecision') || route.query.focusDecision || '')
   await refreshConversationList()
   if (urlCid) {
     await openConversation(urlCid)

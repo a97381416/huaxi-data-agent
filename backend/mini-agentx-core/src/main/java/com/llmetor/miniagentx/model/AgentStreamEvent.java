@@ -30,7 +30,13 @@ public class AgentStreamEvent {
         /** 错误（LLM 异常，重试中每次都发） */
         ERROR,
         /** 终态（成功/失败都发） */
-        COMPLETE
+        COMPLETE,
+        /** HITL 请求挂起决策（授权/收集/核对/计划确认） */
+        HITL_REQUEST,
+        /** HITL 决策已处理（批准/拒绝/自动放行/已消费） */
+        HITL_RESOLVED,
+        /** HITL 决策已撤回/过期/被新消息取代 */
+        HITL_WITHDRAWN
     }
 
     private final Type type;
@@ -60,6 +66,12 @@ public class AgentStreamEvent {
     private final String agentCode;
     /** M-SA1：父级调用该子 Agent 的 toolCallId（主 Agent 为 null） */
     private final String parentToolCallId;
+    /** 一期 HITL：决策单 ID */
+    private final String decisionId;
+    /** 一期 HITL：决策单类型（PERMISSION / QUESTION / VERIFY_OUTCOME / PLAN_CONFIRM） */
+    private final String hitlType;
+    /** 一期 HITL：结构化卡片数据载荷 */
+    private final Object hitlPayload;
 
     private AgentStreamEvent(Type type, String content, String toolName, String toolCallId,
                              String arguments, String result, Boolean success, String code, String message,
@@ -68,7 +80,7 @@ public class AgentStreamEvent {
                              Long elapsedMs, Integer rounds) {
         this(type, content, toolName, toolCallId, arguments, result, success, code, message, detail,
                 pauseReason, totalPromptTokens, totalCompletionTokens, conversationId, sessionId,
-                elapsedMs, rounds, null, null);
+                elapsedMs, rounds, null, null, null, null, null);
     }
 
     private AgentStreamEvent(Type type, String content, String toolName, String toolCallId,
@@ -76,6 +88,17 @@ public class AgentStreamEvent {
                              String detail, String pauseReason, Long totalPromptTokens,
                              Long totalCompletionTokens, String conversationId, String sessionId,
                              Long elapsedMs, Integer rounds, String agentCode, String parentToolCallId) {
+        this(type, content, toolName, toolCallId, arguments, result, success, code, message, detail,
+                pauseReason, totalPromptTokens, totalCompletionTokens, conversationId, sessionId,
+                elapsedMs, rounds, agentCode, parentToolCallId, null, null, null);
+    }
+
+    private AgentStreamEvent(Type type, String content, String toolName, String toolCallId,
+                             String arguments, String result, Boolean success, String code, String message,
+                             String detail, String pauseReason, Long totalPromptTokens,
+                             Long totalCompletionTokens, String conversationId, String sessionId,
+                             Long elapsedMs, Integer rounds, String agentCode, String parentToolCallId,
+                             String decisionId, String hitlType, Object hitlPayload) {
         this.type = type;
         this.content = content;
         this.toolName = toolName;
@@ -95,13 +118,17 @@ public class AgentStreamEvent {
         this.rounds = rounds;
         this.agentCode = agentCode;
         this.parentToolCallId = parentToolCallId;
+        this.decisionId = decisionId;
+        this.hitlType = hitlType;
+        this.hitlPayload = hitlPayload;
     }
 
     /** M-SA1：为事件附加子 Agent 溯源归属标记，返回新实例 */
     public AgentStreamEvent withSource(String agentCode, String parentToolCallId) {
         return new AgentStreamEvent(type, content, toolName, toolCallId, arguments, result, success,
                 code, message, detail, pauseReason, totalPromptTokens, totalCompletionTokens,
-                conversationId, sessionId, elapsedMs, rounds, agentCode, parentToolCallId);
+                conversationId, sessionId, elapsedMs, rounds, agentCode, parentToolCallId,
+                decisionId, hitlType, hitlPayload);
     }
 
     public static AgentStreamEvent thinking(String delta) {
@@ -154,5 +181,23 @@ public class AgentStreamEvent {
                                             String conversationId, String sessionId) {
         return new AgentStreamEvent(Type.COMPLETE, null, null, null, null, null, null, null, null, null,
                 null, totalPromptTokens, totalCompletionTokens, conversationId, sessionId, elapsedMs, rounds);
+    }
+
+    public static AgentStreamEvent hitlRequest(String decisionId, String hitlType, Object hitlPayload) {
+        return new AgentStreamEvent(Type.HITL_REQUEST, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null,
+                decisionId, hitlType, hitlPayload);
+    }
+
+    public static AgentStreamEvent hitlResolved(String decisionId, String hitlType, Object hitlPayload) {
+        return new AgentStreamEvent(Type.HITL_RESOLVED, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null,
+                decisionId, hitlType, hitlPayload);
+    }
+
+    public static AgentStreamEvent hitlWithdrawn(String decisionId, String hitlType, Object hitlPayload) {
+        return new AgentStreamEvent(Type.HITL_WITHDRAWN, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null,
+                decisionId, hitlType, hitlPayload);
     }
 }

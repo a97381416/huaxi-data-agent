@@ -6,9 +6,12 @@ import com.llmetor.dataagent.dataagent.action.ActionAuditLogger;
 import com.llmetor.dataagent.dataagent.action.ConfirmTokenService;
 import com.llmetor.dataagent.dataagent.action.RestActionClient;
 import com.llmetor.dataagent.dataagent.action.task.DocLabels;
+import com.llmetor.dataagent.dataagent.hitl.DecisionModels;
+import com.llmetor.dataagent.dataagent.hitl.HitlToolHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -44,17 +47,29 @@ public class PartialApproveLedgerTool {
     private final ConfirmTokenService confirmTokenService;
     private final ReviewPlanCache planCache;
     private final ActionAuditLogger auditLogger;
+    private final HitlToolHelper hitlHelper;
 
     public PartialApproveLedgerTool(RestActionClient restActionClient,
                                     ReviewSupport support,
                                     ConfirmTokenService confirmTokenService,
                                     ReviewPlanCache planCache,
                                     ActionAuditLogger auditLogger) {
+        this(restActionClient, support, confirmTokenService, planCache, auditLogger, null);
+    }
+
+    @Autowired
+    public PartialApproveLedgerTool(RestActionClient restActionClient,
+                                    ReviewSupport support,
+                                    ConfirmTokenService confirmTokenService,
+                                    ReviewPlanCache planCache,
+                                    ActionAuditLogger auditLogger,
+                                    HitlToolHelper hitlHelper) {
         this.restActionClient = restActionClient;
         this.support = support;
         this.confirmTokenService = confirmTokenService;
         this.planCache = planCache;
         this.auditLogger = auditLogger;
+        this.hitlHelper = hitlHelper;
     }
 
     /** 逐行判定（category 或 rowNo 定位，二者至少其一；rowNo 来自 getReviewDetail 条目表序号） */
@@ -204,8 +219,32 @@ public class PartialApproveLedgerTool {
         String outcomeNote = "通过 " + passCount + " 条、退回 " + rejectCount + " 条；台账置「部分通过」，"
                 + "固定退回申报人补正（重提任务带部分通过标记），不走下一级审批";
         String canonical = canonicalJson(body);
-        ConfirmTokenService.IssuedToken issued = confirmTokenService.issue(
-                uid, ACTION, confirmTokenService.payloadHash(List.of(ACTION, task.taskId(), canonical)));
+        String hash = confirmTokenService.payloadHash(List.of(ACTION, task.taskId(), canonical));
+        if (hitlHelper != null && hitlHelper.isEnabled(ACTION)) {
+            String docNum = task.ledgerHeader().path("docNumber").asText("");
+            String targetSummary = task.title() + (docNum.isBlank() ? "" : "（" + docNum + "）");
+            List<DecisionModels.KeyParamItem> kps = List.of(
+                    HitlToolHelper.kp("任务ID", task.taskId()),
+                    HitlToolHelper.kp("判定统计", "通过 " + passCount + " 条、退回 " + rejectCount + " 条"),
+                    HitlToolHelper.kp("总体意见", op),
+                    HitlToolHelper.kp("影响", outcomeNote)
+            );
+            String actionSummary = "台账部分通过「" + task.title() + "」（通过 " + passCount + " 条，退回 " + rejectCount + " 条）";
+            HitlToolHelper.ReviewStoredPlan stored = new HitlToolHelper.ReviewStoredPlan(
+                    ACTION, task.taskId(), task.ledgerId(), canonical, outcomeNote);
+            DecisionModels.CreateResult created = hitlHelper.createDecision(new DecisionModels.CreateDecisionRequest(
+                    conversationId, conversationId, null, null, uid,
+                    DecisionModels.TYPE_PERMISSION, ACTION, null, null, false,
+                    "部分通过 (" + ACTION + ")", targetSummary, kps, actionSummary,
+                    stored, hash, null));
+            String decId = created.entity().decisionId();
+            audit(uid, conversationId, "partial-plan", task, decId, true,
+                    "hitl=true, pass=" + passCount + ", reject=" + rejectCount);
+            return HitlToolHelper.formatPlanHint(created, actionSummary,
+                    "taskId=" + task.taskId() + ", confirmToken=" + decId);
+        }
+
+        ConfirmTokenService.IssuedToken issued = confirmTokenService.issue(uid, ACTION, hash);
         planCache.put(issued.confirmToken(), ACTION, task.taskId(), task.ledgerId(), body, outcomeNote);
 
         audit(uid, conversationId, "partial-plan", task, issued.confirmToken(), true,
@@ -242,6 +281,35 @@ public class PartialApproveLedgerTool {
 
     private String executeRound(Long uid, String taskId, String confirmToken,
                                 String token, Long tenant, String conversationId) {
+        if (hitlHelper != null && hitlHelper.isDecisionId(confirmToken)) {
+            HitlToolHelper.ReviewStoredPlan stored = hitlHelper.loadStoredPlan(
+                    confirmToken, HitlToolHelper.ReviewStoredPlan.class);
+            ObjectNode reqBody = stored != null ? hitlHelper.parseObjectNode(stored.requestBodyJson()) : null;
+            if (stored == null || reqBody == null || !ACTION.equals(stored.action()) || !taskId.equals(stored.taskId())) {
+                return "❌ 审批单无效或与任务不匹配（" + confirmToken + "）。请重新发起 partialApproveLedger。";
+            }
+            ReviewSupport.ReviewTaskRef task = support.findMyReviewTask(taskId, token, tenant);
+            try {
+                support.requireApprovalTodoTask(task);
+                support.requireLedgerInReview(task);
+            } catch (ReviewSupport.TaskFlowException e) {
+                return "❌ 台账/任务现状已发生变化，原审批单失效（未执行）。原因：" + e.getMessage();
+            }
+            String hash = confirmTokenService.payloadHash(List.of(ACTION, taskId, stored.requestBodyJson()));
+            DecisionModels.ConsumeOutcome consume = hitlHelper.verifyAndConsume(confirmToken, uid, ACTION, hash);
+            if (!consume.ok()) {
+                return HitlToolHelper.formatConsumeError(consume, ACTION);
+            }
+            RestActionClient.ActionResult r = restActionClient.post(
+                    "/doc/ledger-process/partial-approve", reqBody, token, tenant);
+            if (!r.success()) {
+                audit(uid, conversationId, "partial", task, confirmToken, false, r.msg());
+                return "❌ 部分通过执行失败：" + r.msg();
+            }
+            audit(uid, conversationId, "partial", task, confirmToken, true, "executed");
+            return "✅ 部分通过完成\n- 任务 " + task.title() + "：已办结（部分通过）\n- 影响：" + stored.outcomeNote() + "\n";
+        }
+
         ReviewPlanCache.Plan plan = planCache.get(confirmToken);
         if (plan == null || !ACTION.equals(plan.action()) || !taskId.equals(plan.taskId())) {
             return "❌ 确认令牌无效（从未签发/已过期/已执行/任务不符/**已被更新的计划取代**）。"

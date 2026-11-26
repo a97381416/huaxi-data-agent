@@ -24,8 +24,8 @@ public class ActionAuditLogger {
 
     /** 一条动作审计记录（builder 风格拼装，字段对齐表列） */
     public record Entry(String conversationId, Long userId, String tool, String action,
-                        String businessObject, String confirmToken, boolean success,
-                        String errorMessage, String detail) {
+                        String businessObject, String confirmToken, String decisionId,
+                        boolean success, String errorMessage, String detail) {
     }
 
     public static Builder entry() {
@@ -59,6 +59,8 @@ public class ActionAuditLogger {
                     """);
             jdbc.execute("CREATE INDEX IF NOT EXISTS idx_agentx_action_log_conv ON agentx_action_log (conversation_id)");
             jdbc.execute("CREATE INDEX IF NOT EXISTS idx_agentx_action_log_user ON agentx_action_log (user_id)");
+            jdbc.execute("ALTER TABLE agentx_action_log ADD COLUMN IF NOT EXISTS decision_id varchar(64) DEFAULT NULL");
+            jdbc.execute("CREATE INDEX IF NOT EXISTS idx_action_log_decision ON agentx_action_log (decision_id)");
         } catch (Exception e) {
             // 建表失败不阻断启动（如只读账号）：审计写不进去会逐条 warn
             log.warn("[action] agentx_action_log 建表失败（审计将降级为日志输出）: {}", e.getMessage());
@@ -73,11 +75,11 @@ public class ActionAuditLogger {
         try {
             jdbc.update("INSERT INTO agentx_action_log "
                             + "(id, conversation_id, user_id, tool, action, business_object, "
-                            + "confirm_token, success, error_message, detail) "
-                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            + "confirm_token, decision_id, success, error_message, detail) "
+                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     SnowflakeIdGenerator.nextId(),
                     entry.conversationId(), entry.userId(), entry.tool(), entry.action(),
-                    truncate(entry.businessObject(), 500), entry.confirmToken(),
+                    truncate(entry.businessObject(), 500), entry.confirmToken(), entry.decisionId(),
                     entry.success() ? 1 : 0, entry.errorMessage(), entry.detail());
         } catch (Exception e) {
             log.warn("[action] 动作日志写入失败（不影响主流程）: tool={}, userId={}, err={}",
@@ -104,6 +106,7 @@ public class ActionAuditLogger {
         private String action;
         private String businessObject;
         private String confirmToken;
+        private String decisionId;
         private boolean success = true;
         private String errorMessage;
         private String detail;
@@ -114,6 +117,7 @@ public class ActionAuditLogger {
         public Builder action(String v) { this.action = v; return this; }
         public Builder businessObject(String v) { this.businessObject = v; return this; }
         public Builder confirmToken(String v) { this.confirmToken = v; return this; }
+        public Builder decisionId(String v) { this.decisionId = v; return this; }
         public Builder success(boolean v) { this.success = v; return this; }
         public Builder errorMessage(String v) { this.errorMessage = v; return this; }
         public Builder detail(String v) { this.detail = v; return this; }
@@ -123,7 +127,7 @@ public class ActionAuditLogger {
                 throw new IllegalArgumentException("审计条目必须携带 tool");
             }
             return new Entry(conversationId, userId, tool, action, businessObject,
-                    confirmToken, success, errorMessage, detail);
+                    confirmToken, decisionId, success, errorMessage, detail);
         }
     }
 }

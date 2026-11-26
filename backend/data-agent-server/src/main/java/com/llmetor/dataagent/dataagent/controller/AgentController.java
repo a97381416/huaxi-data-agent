@@ -5,6 +5,8 @@ import com.llmetor.dataagent.auth.service.HuaxiAuthService;
 import com.llmetor.dataagent.common.R;
 import com.llmetor.dataagent.dataagent.agent.DodoAgent;
 import com.llmetor.dataagent.dataagent.dto.ChatRequest;
+import com.llmetor.dataagent.dataagent.hitl.DecisionModels;
+import com.llmetor.dataagent.dataagent.hitl.DecisionService;
 import com.llmetor.dataagent.dataagent.model.ChatModelManager;
 import com.llmetor.dataagent.dataagent.model.ChatModelOption;
 import com.llmetor.dataagent.dataagent.skill.ChatSkillInfo;
@@ -62,6 +64,7 @@ public class AgentController {
     private final SkillManager skillManager;
     private final ChatModelManager chatModelManager;
     private final ObjectMapper objectMapper;
+    private final DecisionService decisionService;
     /** 多 Agent 架构开关（single / multi），M-SA0 仅透出，M-SA4 起参与分流 */
     @org.springframework.beans.factory.annotation.Value("${data-agent.agent.mode:single}")
     private String agentMode;
@@ -102,24 +105,62 @@ public class AgentController {
         // 斜杠命令指定的技能（可空）：存在且启用才放行，透传 DodoAgent 定向装配
         String skillName = resolveSkill(request);
 
+        // 一期 HITL：区分「审批卡片续跑」与「用户主动发新消息（TakeOver 取代旧待决单）」
+        String effectiveQuery = request.query();
+        List<AgentStreamEvent> preEvents = new java.util.ArrayList<>();
+        if (StringUtils.hasText(request.decisionId())) {
+            DecisionModels.DecisionEntity dec = decisionService.findById(request.decisionId().trim());
+            if (dec == null) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "审批单不存在");
+            }
+            if (dec.ownerUserId() != userId) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权操作该审批单");
+            }
+            if (DecisionModels.STATUS_REJECTED.equals(dec.status())) {
+                String reason = StringUtils.hasText(dec.userWords()) ? dec.userWords() : "未说明具体原因";
+                effectiveQuery = "【系统审批通知】用户已在界面上【拒绝】决策单 " + dec.decisionId()
+                        + "（" + dec.actionSummary() + "），拒绝理由：「" + reason
+                        + "」。请不要执行该写操作，并结合该拒绝理由给出调整建议。";
+                preEvents.add(AgentStreamEvent.hitlResolved(
+                        dec.decisionId(), dec.type(), decisionService.toCardPayload(dec, null)));
+            } else if (DecisionModels.STATUS_APPROVED.equals(dec.status())) {
+                effectiveQuery = "【系统审批通知】用户已在界面上【批准】决策单 " + dec.decisionId()
+                        + "（" + dec.actionSummary() + "）。请立即调用 `" + dec.toolName()
+                        + "` 执行操作，confirmToken 请传入 \"" + dec.decisionId()
+                        + "\"（若为多专员模式请转交对应专员传入 confirmToken=\"" + dec.decisionId() + "\" 执行），"
+                        + "并向用户汇报结果。";
+            } else if (!StringUtils.hasText(effectiveQuery)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "审批单当前状态不支持续跑: " + dec.status());
+            }
+        } else if (StringUtils.hasText(effectiveQuery)) {
+            List<DecisionModels.HitlCardPayload> superseded = decisionService.markSuperseded(conversationId, userId);
+            for (DecisionModels.HitlCardPayload card : superseded) {
+                preEvents.add(AgentStreamEvent.hitlWithdrawn(card.decisionId(), card.type(), card));
+            }
+        }
+
         Flux<AgentStreamEvent> source;
         // ③ 存在中断快照 → 恢复执行（本次 query 作为 resumeQuery 传入，空 = 纯恢复）
         if (dodoAgent.hasInterruptedState(conversationId)) {
-            source = dodoAgent.resumeStream(conversationId, userId, request.query(),
+            source = dodoAgent.resumeStream(conversationId, userId, effectiveQuery,
                     request.fileIds(), isOnline(request), skillName, resolveModelCode(request),
                     request.thinking(), request.agentMode());
         } else {
             // ④ 全新执行
-            if (!StringUtils.hasText(request.query())) {
+            if (!StringUtils.hasText(effectiveQuery)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "query 不能为空");
             }
             log.info("[data-agent] 收到查询: convId={}, userId={}, query={}, fileIds={}, online={}, skill={}, model={}, mode={}",
-                    conversationId, userId, request.query(),
+                    conversationId, userId, effectiveQuery,
                     request.fileIds() == null ? 0 : request.fileIds().size(), isOnline(request), skillName,
                     resolveModelCode(request), request.agentMode());
-            source = dodoAgent.stream(request.query(), conversationId, userId,
+            source = dodoAgent.stream(effectiveQuery, conversationId, userId,
                     request.fileIds(), isOnline(request), skillName, resolveModelCode(request),
                     !Boolean.FALSE.equals(request.thinking()), request.agentMode());
+        }
+        if (!preEvents.isEmpty()) {
+            source = Flux.concat(Flux.fromIterable(preEvents), source);
         }
 
         // 流级兜底：内核异常转 ERROR + COMPLETE 事件（注册表 doFinally 会按流终止摘除）

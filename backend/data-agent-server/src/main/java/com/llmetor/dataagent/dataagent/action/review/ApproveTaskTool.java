@@ -8,9 +8,12 @@ import com.llmetor.dataagent.dataagent.action.ConfirmTokenService;
 import com.llmetor.dataagent.dataagent.action.RestActionClient;
 import com.llmetor.dataagent.dataagent.action.fill.FillContextSupport;
 import com.llmetor.dataagent.dataagent.action.task.DocLabels;
+import com.llmetor.dataagent.dataagent.hitl.DecisionModels;
+import com.llmetor.dataagent.dataagent.hitl.HitlToolHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -53,6 +56,7 @@ public class ApproveTaskTool {
     private final ReviewPlanCache planCache;
     private final ActionAuditLogger auditLogger;
     private final FillContextSupport fillSupport;
+    private final HitlToolHelper hitlHelper;
 
     public ApproveTaskTool(RestActionClient restActionClient,
                            ReviewSupport support,
@@ -60,12 +64,24 @@ public class ApproveTaskTool {
                            ReviewPlanCache planCache,
                            ActionAuditLogger auditLogger,
                            FillContextSupport fillSupport) {
+        this(restActionClient, support, confirmTokenService, planCache, auditLogger, fillSupport, null);
+    }
+
+    @Autowired
+    public ApproveTaskTool(RestActionClient restActionClient,
+                           ReviewSupport support,
+                           ConfirmTokenService confirmTokenService,
+                           ReviewPlanCache planCache,
+                           ActionAuditLogger auditLogger,
+                           FillContextSupport fillSupport,
+                           HitlToolHelper hitlHelper) {
         this.restActionClient = restActionClient;
         this.support = support;
         this.confirmTokenService = confirmTokenService;
         this.planCache = planCache;
         this.auditLogger = auditLogger;
         this.fillSupport = fillSupport;
+        this.hitlHelper = hitlHelper;
     }
 
     /** PM 逐条意见（category 或 rowNo 定位，二者至少其一；rowNo 来自 getReviewDetail 条目表序号） */
@@ -393,8 +409,33 @@ public class ApproveTaskTool {
                                       String pmNote, boolean needNext, String approverNames,
                                       String token, Long tenant, String conversationId) {
         String canonical = canonicalJson(body);
-        ConfirmTokenService.IssuedToken issued = confirmTokenService.issue(
-                uid, action, confirmTokenService.payloadHash(List.of(action, task.taskId(), canonical)));
+        String hash = confirmTokenService.payloadHash(List.of(action, task.taskId(), canonical));
+
+        if (hitlHelper != null && hitlHelper.isEnabled(ACTION)) {
+            String docNum = task.docLedger() ? task.ledgerHeader().path("docNumber").asText("") : "";
+            String targetSummary = task.title() + (docNum.isBlank() ? "" : "（" + docNum + "）");
+            List<DecisionModels.KeyParamItem> kps = HitlToolHelper.cleanKeyParams(java.util.Arrays.asList(
+                    HitlToolHelper.kp("任务ID", task.taskId()),
+                    HitlToolHelper.kp("总体意见", opinion),
+                    needNext ? HitlToolHelper.kp("下级审批人", approverNames) : null,
+                    HitlToolHelper.kp("影响", outcomeNote)
+            ));
+            String actionSummary = "审核通过「" + task.title() + "」（" + opinion + "）";
+            HitlToolHelper.ReviewStoredPlan stored = new HitlToolHelper.ReviewStoredPlan(
+                    action, task.taskId(), task.ledgerId(), canonical, outcomeNote);
+            DecisionModels.CreateResult created = hitlHelper.createDecision(new DecisionModels.CreateDecisionRequest(
+                    conversationId, conversationId, null, null, uid,
+                    DecisionModels.TYPE_PERMISSION, ACTION, null, null, false,
+                    "审核通过 (" + ACTION + ")", targetSummary, kps, actionSummary,
+                    stored, hash, null));
+            String decId = created.entity().decisionId();
+            audit(uid, conversationId, "approve-plan", task, decId, true,
+                    "hitl=true, needNext=" + needNext);
+            return HitlToolHelper.formatPlanHint(created, actionSummary,
+                    "taskId=" + task.taskId() + ", confirmToken=" + decId);
+        }
+
+        ConfirmTokenService.IssuedToken issued = confirmTokenService.issue(uid, action, hash);
         planCache.put(issued.confirmToken(), action, task.taskId(), task.ledgerId(), body, outcomeNote);
 
         audit(uid, conversationId, "approve-plan", task, issued.confirmToken(), true,
@@ -425,6 +466,35 @@ public class ApproveTaskTool {
 
     private String executeRound(Long uid, String taskId, String confirmToken,
                                 String token, Long tenant, String conversationId) {
+        if (hitlHelper != null && hitlHelper.isDecisionId(confirmToken)) {
+            HitlToolHelper.ReviewStoredPlan stored = hitlHelper.loadStoredPlan(
+                    confirmToken, HitlToolHelper.ReviewStoredPlan.class);
+            ObjectNode reqBody = stored != null ? hitlHelper.parseObjectNode(stored.requestBodyJson()) : null;
+            if (stored == null || reqBody == null || !ACTION.equals(stored.action()) || !taskId.equals(stored.taskId())) {
+                return "❌ 审批单无效或与任务不匹配（" + confirmToken + "）。请重新发起 approveTask。";
+            }
+            ReviewSupport.ReviewTaskRef task = support.findMyReviewTask(taskId, token, tenant);
+            try {
+                support.requireApprovalTodoTask(task);
+                support.requireLedgerInReview(task);
+            } catch (ReviewSupport.TaskFlowException e) {
+                return "❌ 台账/任务现状已发生变化，原审批单失效（未执行）。原因：" + e.getMessage();
+            }
+            String hash = confirmTokenService.payloadHash(List.of(ACTION, taskId, stored.requestBodyJson()));
+            DecisionModels.ConsumeOutcome consume = hitlHelper.verifyAndConsume(confirmToken, uid, ACTION, hash);
+            if (!consume.ok()) {
+                return HitlToolHelper.formatConsumeError(consume, ACTION);
+            }
+            String path = task.docLedger() ? "/doc/ledger-process/approve" : "/task-center/task/approve";
+            RestActionClient.ActionResult r = restActionClient.post(path, reqBody, token, tenant);
+            if (!r.success()) {
+                audit(uid, conversationId, "approve", task, confirmToken, false, r.msg());
+                return "❌ 审核通过执行失败：" + r.msg();
+            }
+            audit(uid, conversationId, "approve", task, confirmToken, true, "executed");
+            return "✅ 审核通过完成\n- 任务 " + task.title() + "：已办结\n- 影响：" + stored.outcomeNote() + "\n";
+        }
+
         ReviewPlanCache.Plan plan = planCache.get(confirmToken);
         if (plan == null || !ACTION.equals(plan.action()) || !taskId.equals(plan.taskId())) {
             return "❌ 确认令牌无效（从未签发/已过期/已执行/任务不符/**已被更新的计划取代**）。"
