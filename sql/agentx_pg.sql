@@ -180,8 +180,10 @@ CREATE TABLE IF NOT EXISTS agentx_decision (
   created_at         timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   answered_at        timestamp    DEFAULT NULL,
   consumed_at        timestamp    DEFAULT NULL,
+  resolution_mode    varchar(32)  DEFAULT NULL,
   PRIMARY KEY (decision_id)
 );
+ALTER TABLE agentx_decision ADD COLUMN IF NOT EXISTS resolution_mode varchar(32) DEFAULT NULL;
 CREATE INDEX IF NOT EXISTS idx_decision_conv_status ON agentx_decision (conversation_id, status);
 CREATE INDEX IF NOT EXISTS idx_decision_owner_status ON agentx_decision (owner_user_id, status, expires_at);
 CREATE UNIQUE INDEX IF NOT EXISTS uk_decision_cmd ON agentx_decision (decision_id, command_id) WHERE command_id IS NOT NULL;

@@ -119,24 +119,21 @@ public class AgentController {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权操作该审批单");
             }
             if (hitlParkedResume) {
-                // 二期慢路径 Park & Resume：置空 query 走原地工具重放续跑（不先经过 LLM）
+                // 二期/三期慢路径 Park & Resume：置空 query 走原地工具重放续跑（不先经过 LLM）
                 effectiveQuery = null;
-            } else if (DecisionModels.STATUS_REJECTED.equals(dec.status())) {
-                String reason = StringUtils.hasText(dec.userWords()) ? dec.userWords() : "未说明具体原因";
-                effectiveQuery = "【系统审批通知】用户已在界面上【拒绝】决策单 " + dec.decisionId()
-                        + "（" + dec.actionSummary() + "），拒绝理由：「" + reason
-                        + "」。请不要执行该写操作，并结合该拒绝理由给出调整建议。";
-                preEvents.add(AgentStreamEvent.hitlResolved(
-                        dec.decisionId(), dec.type(), decisionService.toCardPayload(dec, null)));
-            } else if (DecisionModels.STATUS_APPROVED.equals(dec.status())) {
-                effectiveQuery = "【系统审批通知】用户已在界面上【批准】决策单 " + dec.decisionId()
-                        + "（" + dec.actionSummary() + "）。请立即调用 `" + dec.toolName()
-                        + "` 执行操作，confirmToken 请传入 \"" + dec.decisionId()
-                        + "\"（若为多专员模式请转交对应专员传入 confirmToken=\"" + dec.decisionId() + "\" 执行），"
-                        + "并向用户汇报结果。";
-            } else if (!StringUtils.hasText(effectiveQuery)) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        "审批单当前状态不支持续跑: " + dec.status());
+            } else {
+                String fallbackPrompt = decisionService.buildResumePrompt(dec);
+                if (StringUtils.hasText(fallbackPrompt)) {
+                    effectiveQuery = fallbackPrompt;
+                    if (!DecisionModels.STATUS_APPROVED.equals(dec.status())
+                            || DecisionModels.TYPE_PLAN_CONFIRM.equals(dec.type())) {
+                        preEvents.add(AgentStreamEvent.hitlResolved(
+                                dec.decisionId(), dec.type(), decisionService.toCardPayload(dec, null)));
+                    }
+                } else if (!StringUtils.hasText(effectiveQuery)) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            "审批单当前状态不支持续跑: " + dec.status());
+                }
             }
         } else if (StringUtils.hasText(effectiveQuery)) {
             List<DecisionModels.HitlCardPayload> superseded = decisionService.markSuperseded(conversationId, userId);

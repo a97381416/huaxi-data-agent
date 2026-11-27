@@ -348,6 +348,16 @@
                 </div>
 
                 <span v-if="msg.streaming && msg.timeline.length && !hasTailText(msg)" class="chat-cursor">▍</span>
+                <!-- HITL 已处理决策单折叠留痕条（随所属消息内联回显） -->
+                <div v-if="resolvedHitlForMsg(msg, i).length" class="mt-2.5 space-y-1.5">
+                  <component
+                    v-for="dec in resolvedHitlForMsg(msg, i)"
+                    :key="dec.decisionId"
+                    :is="hitlCardComponent(dec.type)"
+                    :card="dec"
+                    :highlighted="focusDecisionId === dec.decisionId"
+                  />
+                </div>
                 <div
                   v-if="msg.interrupted"
                   class="mt-2 w-fit rounded-md bg-amber-50 px-2.5 py-1.5 text-xs text-amber-600"
@@ -591,79 +601,81 @@
               </button>
             </div>
           </div>
-          <!-- 输入容器：附件 | 无边框输入 | 圆形发送（textarea 单行高与按钮等高，天然居中对齐） -->
+          <!-- 输入容器：上行全宽输入 + 下行工具栏与发送按钮（避免窄屏/右侧栏展开时挤压输入框） -->
           <div
             class="input-shell rounded-2xl border border-gray-200 bg-white px-3 py-2 shadow-lg shadow-gray-200/60 transition-all duration-200 focus-within:border-blue-300"
           >
-            <div class="flex items-center gap-2">
-              <!-- 添加上下文：+ 号弹出菜单（附件 / 业务文件 / 联网搜索）；联网开启时常亮蓝底保留状态可见性 -->
-              <el-tooltip content="添加上下文" placement="top" :show-after="300">
-                <button
-                  type="button"
-                  class="ctx-menu-anchor flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all duration-200 active:scale-90"
-                  :class="online || ctxMenuVisible
-                    ? 'bg-blue-50 text-blue-600 hover:bg-blue-100'
-                    : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'"
-                  @click.stop="toggleCtxMenu"
+            <el-input
+              ref="draftInputRef"
+              v-model="draft"
+              type="textarea"
+              :autosize="{ minRows: 1, maxRows: 6 }"
+              resize="none"
+              class="chat-textarea w-full"
+              :placeholder="hasPendingHitl ? '有待确认审批项（直接发新消息将作废原审批单）' : '输入问题，Enter 发送（回答进行中发送新消息将自动顶掉旧回答）；可先上传文件再提问；输 / 指定技能'"
+              @keydown="onDraftKeydown"
+            />
+            <div class="mt-1 flex items-center justify-between gap-2">
+              <div class="flex min-w-0 items-center gap-1.5">
+                <!-- 添加上下文：+ 号弹出菜单（附件 / 业务文件 / 联网搜索）；联网开启时常亮蓝底保留状态可见性 -->
+                <el-tooltip content="添加上下文" placement="top" :show-after="300">
+                  <button
+                    type="button"
+                    class="ctx-menu-anchor flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all duration-200 active:scale-90"
+                    :class="online || ctxMenuVisible
+                      ? 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+                      : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'"
+                    @click.stop="toggleCtxMenu"
+                  >
+                    <el-icon :size="18"><Plus /></el-icon>
+                  </button>
+                </el-tooltip>
+                <input ref="fileInputRef" type="file" multiple style="display: none" @change="onFilesSelected" />
+                <input ref="bizFileInputRef" type="file" multiple style="display: none" @change="onBizFilesSelected" />
+                <!-- 模型选择：本轮回答使用的对话模型；后端清单为空时隐藏（走默认），选中非默认时蓝色高亮 -->
+                <el-tooltip
+                  v-if="chatModels.length"
+                  content="选择本轮回答使用的大模型"
+                  placement="top"
+                  :show-after="300"
                 >
-                  <el-icon :size="18"><Plus /></el-icon>
-                </button>
-              </el-tooltip>
-              <input ref="fileInputRef" type="file" multiple style="display: none" @change="onFilesSelected" />
-              <input ref="bizFileInputRef" type="file" multiple style="display: none" @change="onBizFilesSelected" />
-              <!-- 模型选择：本轮回答使用的对话模型；后端清单为空时隐藏（走默认），选中非默认时蓝色高亮 -->
-              <el-tooltip
-                v-if="chatModels.length"
-                content="选择本轮回答使用的大模型"
-                placement="top"
-                :show-after="300"
-              >
-                <button
-                  type="button"
-                  class="online-toggle model-picker-anchor flex h-9 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs transition-all duration-200"
-                  :class="effectiveModelCode
-                    ? 'bg-blue-50 text-blue-600 active:scale-95'
-                    : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600 active:scale-95'"
-                  @click.stop="toggleModelMenu"
+                  <button
+                    type="button"
+                    class="online-toggle model-picker-anchor flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs transition-all duration-200"
+                    :class="effectiveModelCode
+                      ? 'bg-blue-50 text-blue-600 active:scale-95'
+                      : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600 active:scale-95'"
+                    @click.stop="toggleModelMenu"
+                  >
+                    <el-icon :size="14"><Cpu /></el-icon>
+                    <span class="max-w-[110px] truncate">{{ currentModel?.name || '默认模型' }}</span>
+                    <el-icon :size="10"><ArrowDown /></el-icon>
+                  </button>
+                </el-tooltip>
+                <!-- 深度思考快捷开关：常驻可见，与「添加上下文」菜单里的条目同状态；开启时蓝色高亮 -->
+                <el-tooltip
+                  :content="thinking ? '深度思考已开启：模型先推理再回答，关闭响应更快' : '深度思考已关闭：开启后模型先推理再回答'"
+                  placement="top"
+                  :show-after="300"
                 >
-                  <el-icon :size="14"><Cpu /></el-icon>
-                  <span class="max-w-[96px] truncate">{{ currentModel?.name || '默认模型' }}</span>
-                  <el-icon :size="10"><ArrowDown /></el-icon>
-                </button>
-              </el-tooltip>
-              <!-- 深度思考快捷开关：常驻可见，与「添加上下文」菜单里的条目同状态；开启时蓝色高亮 -->
-              <el-tooltip
-                :content="thinking ? '深度思考已开启：模型先推理再回答，关闭响应更快' : '深度思考已关闭：开启后模型先推理再回答'"
-                placement="top"
-                :show-after="300"
-              >
-                <button
-                  type="button"
-                  class="thinking-toggle flex h-9 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs transition-all duration-200"
-                  :class="thinking
-                    ? 'bg-blue-50 text-blue-600 active:scale-95'
-                    : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600 active:scale-95'"
-                  @click.stop="toggleThinking"
-                >
-                  <el-icon :size="14"><MagicStick /></el-icon>
-                  <span>深度思考</span>
-                </button>
-              </el-tooltip>
-              <el-input
-                ref="draftInputRef"
-                v-model="draft"
-                type="textarea"
-                :autosize="{ minRows: 1, maxRows: 6 }"
-                resize="none"
-                class="chat-textarea"
-                :placeholder="hasPendingHitl ? '有待确认审批项（直接发新消息将作废原审批单）' : '输入问题，Enter 发送（回答进行中发送新消息将自动顶掉旧回答）；可先上传文件再提问；输 / 指定技能'"
-                @keydown="onDraftKeydown"
-              />
+                  <button
+                    type="button"
+                    class="thinking-toggle flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs transition-all duration-200"
+                    :class="thinking
+                      ? 'bg-blue-50 text-blue-600 active:scale-95'
+                      : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600 active:scale-95'"
+                    @click.stop="toggleThinking"
+                  >
+                    <el-icon :size="14"><MagicStick /></el-icon>
+                    <span>深度思考</span>
+                  </button>
+                </el-tooltip>
+              </div>
               <div class="flex shrink-0 items-center gap-1.5">
                 <el-tooltip v-if="activeSession?.streaming" content="停止生成" placement="top" :show-after="300">
                   <button
                     type="button"
-                    class="flex h-9 w-9 items-center justify-center rounded-full bg-red-50 text-red-500 transition-all duration-200 hover:bg-red-100 active:scale-90"
+                    class="flex h-8 w-8 items-center justify-center rounded-full bg-red-50 text-red-500 transition-all duration-200 hover:bg-red-100 active:scale-90"
                     @click="onStop"
                   >
                     <el-icon :size="16"><VideoPause /></el-icon>
@@ -672,7 +684,7 @@
                 <el-tooltip v-else :content="sendTip" placement="top" :show-after="300">
                   <button
                     type="button"
-                    class="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-white transition-all duration-200 hover:bg-blue-700 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
+                    class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-white transition-all duration-200 hover:bg-blue-700 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
                     :disabled="sendDisabled"
                     @click="send"
                   >
@@ -793,6 +805,10 @@ import TimelineNav from '@/components/TimelineNav.vue'
 import SubAgentCard from '@/components/SubAgentCard.vue'
 import SubAgentDrawer from '@/components/SubAgentDrawer.vue'
 import HitlActionDock from '@/components/HitlActionDock.vue'
+import HitlPermissionCard from '@/components/HitlPermissionCard.vue'
+import HitlQuestionCard from '@/components/HitlQuestionCard.vue'
+import HitlVerifyCard from '@/components/HitlVerifyCard.vue'
+import HitlPlanCard from '@/components/HitlPlanCard.vue'
 import { listConversationHitlDecisions } from '@/api/hitl'
 import { isSubAgentTool, subAgentDisplayName } from '@/utils/agentNames'
 
@@ -861,14 +877,79 @@ function ensureSession(cid) {
   return sessions[cid]
 }
 
+function hitlCardComponent(type) {
+  if (type === 'QUESTION') return HitlQuestionCard
+  if (type === 'VERIFY_OUTCOME') return HitlVerifyCard
+  if (type === 'PLAN_CONFIRM') return HitlPlanCard
+  return HitlPermissionCard
+}
+
+function collectMsgToolCallIds(msg) {
+  const ids = new Set()
+  for (const it of msg?.timeline || []) {
+    if (it.type === 'tool') {
+      if (it.toolCallId) ids.add(it.toolCallId)
+      if (Array.isArray(it.subSteps)) {
+        for (const sub of it.subSteps) {
+          if (sub.type === 'tool' && sub.toolCallId) ids.add(sub.toolCallId)
+        }
+      }
+    }
+  }
+  return ids
+}
+
+function resolvedHitlForMsg(msg, msgIdx) {
+  const s = activeSession.value
+  const all = (s?.hitlDecisions || []).filter((d) => d.status !== 'PENDING')
+  if (!all.length || !msg || msg.role !== 'ai') return []
+  const msgs = s.messages || []
+  const aiIndices = msgs.map((m, idx) => (m.role === 'ai' ? idx : -1)).filter((x) => x >= 0)
+  if (!aiIndices.length) return []
+  const lastAiIdx = aiIndices[aiIndices.length - 1]
+
+  return all.filter((d) => {
+    // 1. 优先归属首个明确绑定该 decisionId 或相同 toolCallId 的 AI 消息（防止慢路径重放重复挂载）
+    let ownerIdx = msgs.findIndex((m) => {
+      if (m.role !== 'ai') return false
+      if (Array.isArray(m.hitlDecisionIds) && m.hitlDecisionIds.includes(d.decisionId)) return true
+      return Boolean(d.toolCallId && collectMsgToolCallIds(m).has(d.toolCallId))
+    })
+
+    // 2. 兜底匹配（如刷新历史后未落库的 toolCallId）：按决策创建时间定位到所属轮次的 AI 消息
+    if (ownerIdx < 0) {
+      const dTs = dbTimeToTs(d.createdAt)
+      if (dTs != null) {
+        let candidate = -1
+        for (let k = 0; k < msgs.length; k++) {
+          const m = msgs[k]
+          if (m.role === 'user' && m.ts != null && m.ts > dTs + 2000 && candidate >= 0) {
+            break
+          }
+          if (m.role === 'ai') candidate = k
+        }
+        ownerIdx = candidate >= 0 ? candidate : aiIndices[0]
+      } else if (d.status === 'SUPERSEDED' && aiIndices.length >= 2) {
+        ownerIdx = aiIndices[aiIndices.length - 2]
+      } else {
+        ownerIdx = lastAiIdx
+      }
+    }
+    return ownerIdx === msgIdx
+  })
+}
+
 function upsertHitlDecision(cid, payload) {
   if (!payload || !payload.decisionId) return
   const s = ensureSession(cid)
   const idx = s.hitlDecisions.findIndex((d) => d.decisionId === payload.decisionId)
+  const prev = idx >= 0 ? s.hitlDecisions[idx] : null
+  const merged = { ...(prev || {}), ...payload }
+  merged.parked = merged.status === 'PENDING' ? Boolean(payload.parked ?? prev?.parked) : false
   if (idx >= 0) {
-    s.hitlDecisions[idx] = { ...s.hitlDecisions[idx], ...payload }
+    s.hitlDecisions[idx] = merged
   } else {
-    s.hitlDecisions.push(payload)
+    s.hitlDecisions.push(merged)
   }
   window.dispatchEvent(new CustomEvent('hitl-pending-changed'))
 }
@@ -878,7 +959,15 @@ async function loadHitlDecisions(cid) {
   try {
     const list = await listConversationHitlDecisions(cid)
     const s = ensureSession(cid)
-    s.hitlDecisions = Array.isArray(list) ? list : []
+    const prevById = new Map((s.hitlDecisions || []).map((d) => [d.decisionId, d]))
+    const isIdleParked = !liveStreams.has(cid) && !s.streaming
+    s.hitlDecisions = Array.isArray(list)
+      ? list.map((d) => {
+          const prev = prevById.get(d.decisionId)
+          const parked = d.status === 'PENDING' ? Boolean(d.parked || prev?.parked || isIdleParked) : false
+          return { ...d, parked }
+        })
+      : []
   } catch {
     /* 静默失败 */
   }
@@ -1384,6 +1473,22 @@ function onStreamEvent(cid, entry) {
     if (data.type === 'HITL_REQUEST' || data.type === 'HITL_RESOLVED' || data.type === 'HITL_WITHDRAWN') {
       if (data.hitlPayload) {
         upsertHitlDecision(cid, data.hitlPayload)
+        const decId = data.hitlPayload.decisionId
+        const sCur = sessions[cid]
+        if (data.type === 'HITL_WITHDRAWN') {
+          // TakeOver 打断原工作流开启新话题：清除被接管任务的执行计划面板，避免残留旧进度
+          if (sCur) sCur.plan = null
+        } else if (data.type === 'HITL_REQUEST' && decId) {
+          const alreadyClaimed = (sCur?.messages || []).some(
+            (m) => m !== msg && m.role === 'ai' && Array.isArray(m.hitlDecisionIds) && m.hitlDecisionIds.includes(decId)
+          )
+          if (!alreadyClaimed) {
+            if (!Array.isArray(msg.hitlDecisionIds)) msg.hitlDecisionIds = []
+            if (!msg.hitlDecisionIds.includes(decId)) {
+              msg.hitlDecisionIds.push(decId)
+            }
+          }
+        }
       }
       if (cid === activeCid.value) scrollToBottom()
       return
@@ -1544,10 +1649,9 @@ function onStreamEvent(cid, entry) {
         break
       }
       case 'PAUSED': {
-        // 本轮被终止（点停止/被新消息顶掉/HITL 超时挂起）：running 工具置为中断态
-        entry.paused = true
-        applyPausedState(cid, entry)
         if (data.pauseReason === 'HITL_TOOL_REQUEST') {
+          entry.hitlParked = true
+          applyHitlParkedState(cid, entry)
           const sHitl = sessions[cid]
           if (sHitl && Array.isArray(sHitl.hitlDecisions)) {
             sHitl.hitlDecisions.forEach((d) => {
@@ -1557,7 +1661,11 @@ function onStreamEvent(cid, entry) {
             })
           }
           if (sHitl) sHitl.interrupted = false
+          break
         }
+        // 本轮被终止（点停止/被新消息顶掉）：running 工具置为中断态
+        entry.paused = true
+        applyPausedState(cid, entry)
         break
       }
       case 'COMPLETE': {
@@ -1583,6 +1691,32 @@ function onStreamEvent(cid, entry) {
     }
     if (cid === activeCid.value) scrollToBottom()
   }
+}
+
+/** HITL 超时转后台挂起落地：不标中断报错，仅结束当前流等待用户点选卡片 */
+function applyHitlParkedState(cid, entry) {
+  const msg = entry.aiMsg
+  closeThink(msg.timeline)
+  msg.streaming = false
+  msg.interrupted = false
+  entry.aiMsg.timeline.forEach((it) => {
+    if (it.type === 'tool' && it.status === 'running') {
+      it.status = 'completed'
+      it.durationMs = it.startAt ? Date.now() - it.startAt : it.durationMs
+      it.result = '⏸️ 等待用户在交互卡片上完成选择或审批后自动续跑'
+      if (Array.isArray(it.subSteps)) {
+        it.subSteps.forEach((sub) => {
+          if (sub.type === 'tool' && sub.status === 'running') {
+            sub.status = 'completed'
+            sub.durationMs = sub.startAt ? Date.now() - sub.startAt : sub.durationMs
+          }
+        })
+      }
+    }
+  })
+  const s = sessions[cid]
+  if (s && liveStreams.get(cid) === entry) s.interrupted = false
+  markConversationIdle(cid)
 }
 
 /** PAUSED 落地：中断态标注（幂等，onClose 收尾时再兜底一次） */
@@ -2102,6 +2236,8 @@ const TOOL_LABELS = {
   listreviewoptions: '查审核人',
   listcoauditoptions: '查会签人',
   cancelconfirm: '取消确认',
+  ask_user_question: '需求澄清提问',
+  confirm_plan: '执行计划确认',
   getreviewdetail: '查审核详情',
   gettaskdetail: '查任务详情',
   listmytasks: '查我的待办',

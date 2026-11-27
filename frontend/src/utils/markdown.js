@@ -81,8 +81,31 @@ function alignDelimiterRow(text) {
   return lines.join('\n')
 }
 
+/** 中文标点紧贴 **...** 时 CommonMark 边界偶发不闭合兜底：仅在非 pre/code 文本节点补全成对加粗 */
+function fixUnclosedCjkStrong(html) {
+  if (!html || !html.includes('**')) return html
+  const parts = html.split(/(<[^>]+>)/g)
+  let inPre = 0
+  let inCode = 0
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]
+    if (!part) continue
+    if (part.startsWith('<')) {
+      const tag = part.toLowerCase()
+      if (/^<pre[\s>]/.test(tag)) inPre++
+      else if (/^<\/pre>/.test(tag)) inPre = Math.max(0, inPre - 1)
+      else if (/^<code[\s>]/.test(tag)) inCode++
+      else if (/^<\/code>/.test(tag)) inCode = Math.max(0, inCode - 1)
+      continue
+    }
+    if (inPre > 0 || inCode > 0) continue
+    parts[i] = part.replace(/\*\*([^*\n<>]+?)\*\*/g, '<strong>$1</strong>')
+  }
+  return parts.join('')
+}
+
 // 归一化顺序：先断开粘连标题，再合并断行表头（合并后分隔行才能紧随表头），最后对齐分隔行列数
 const rawRender = md.render.bind(md)
-md.render = (text) => rawRender(alignDelimiterRow(mergeWrappedTableHeader(breakGluedTable(text))))
+md.render = (text) => fixUnclosedCjkStrong(rawRender(alignDelimiterRow(mergeWrappedTableHeader(breakGluedTable(text)))))
 
 export default md

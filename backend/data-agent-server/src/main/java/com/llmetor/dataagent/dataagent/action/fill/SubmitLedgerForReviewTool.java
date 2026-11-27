@@ -150,6 +150,12 @@ public class SubmitLedgerForReviewTool {
     private String planRound(Long uid, String projectIdOrName, String phaseIdOrNameOrCode,
                              String submitRemark, List<String> assigneeIds, List<String> assigneeNames,
                              String token, Long tenant, String conversationId) {
+        if (hitlHelper != null) {
+            String verifyDone = hitlHelper.checkVerifyOutcomeShortCircuit(ACTION);
+            if (verifyDone != null) {
+                return verifyDone;
+            }
+        }
         String denied = permissionChecker.checkPermission(uid, ListFillNodesTool.PERMISSION);
         if (denied != null) {
             return denied;
@@ -225,6 +231,11 @@ public class SubmitLedgerForReviewTool {
         String hash = payloadHash(plan, ledger.rows());
 
         if (hitlHelper != null && hitlHelper.isEnabled(ACTION)) {
+            if (hitlHelper.isResumingVerifyRetry(ACTION)) {
+                return doExecuteSubmit(uid, ledger, v, plan,
+                        com.llmetor.miniagentx.agent.ToolExecutionContext.currentResumeDecisionId(),
+                        token, tenant, conversationId);
+            }
             String targetSummary = (ledger.projectName().isBlank() ? ctx.project().projectName() : ledger.projectName())
                     + " / " + (ledger.phaseName().isBlank() ? ctx.phase().phaseName() : ledger.phaseName())
                     + "（" + ledger.docNumber() + "）";

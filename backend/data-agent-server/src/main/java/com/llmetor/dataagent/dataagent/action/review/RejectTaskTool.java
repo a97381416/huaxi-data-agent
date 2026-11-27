@@ -109,6 +109,12 @@ public class RejectTaskTool {
 
     private String planRound(Long uid, String taskId, String opinion, String target, String targetNodeName,
                              String token, Long tenant, String conversationId) {
+        if (hitlHelper != null) {
+            String verifyDone = hitlHelper.checkVerifyOutcomeShortCircuit(ACTION);
+            if (verifyDone != null) {
+                return verifyDone;
+            }
+        }
         ReviewSupport.ReviewTaskRef task = support.findMyReviewTask(taskId, token, tenant);
         support.requireApprovalTodoTask(task);
         if (opinion == null || opinion.isBlank()) {
@@ -150,6 +156,11 @@ public class RejectTaskTool {
         String canonical = canonicalJson(body);
         String hash = confirmTokenService.payloadHash(List.of(ACTION, task.taskId(), canonical));
         if (hitlHelper != null && hitlHelper.isEnabled(ACTION)) {
+            if (hitlHelper.isResumingVerifyRetry(ACTION)) {
+                return doExecuteReject(uid, task, body, outcomeNote,
+                        com.llmetor.miniagentx.agent.ToolExecutionContext.currentResumeDecisionId(),
+                        token, tenant, conversationId);
+            }
             String docNum = task.docLedger() ? task.ledgerHeader().path("docNumber").asText("") : "";
             String targetSummary = task.title() + (docNum.isBlank() ? "" : "（" + docNum + "）");
             List<DecisionModels.KeyParamItem> kps = List.of(
@@ -218,14 +229,7 @@ public class RejectTaskTool {
             if (!consume.ok()) {
                 return HitlToolHelper.formatConsumeError(consume, ACTION);
             }
-            RestActionClient.ActionResult r = restActionClient.post(
-                    "/task-center/task/reject", reqBody, token, tenant);
-            if (!r.success()) {
-                audit(uid, conversationId, "reject", task, confirmToken, false, r.msg());
-                return "❌ 审核驳回执行失败：" + r.msg();
-            }
-            audit(uid, conversationId, "reject", task, confirmToken, true, "executed");
-            return "✅ 审核驳回完成\n- 任务 " + task.title() + "：已办结（驳回）\n- 影响：" + stored.outcomeNote() + "\n";
+            return doExecuteReject(uid, task, reqBody, stored.outcomeNote(), confirmToken, token, tenant, conversationId);
         }
 
         ReviewPlanCache.Plan plan = planCache.get(confirmToken);
@@ -269,20 +273,38 @@ public class RejectTaskTool {
             }
         }
 
-        RestActionClient.ActionResult r = restActionClient.post(
-                "/task-center/task/reject", plan.requestBody(), token, tenant);
-        if (!r.success()) {
-            planCache.remove(confirmToken);
-            audit(uid, conversationId, "reject", task, confirmToken, false, r.msg());
-            return "❌ 审核驳回执行失败：" + r.msg() + "\n（计划已作废；如需重试请重新发起首轮。）";
-        }
-        planCache.remove(confirmToken);
-        audit(uid, conversationId, "reject", task, confirmToken, true, "executed");
+        return doExecuteReject(uid, task, plan.requestBody(), plan.outcomeNote(), confirmToken, token, tenant, conversationId);
+    }
 
-        StringBuilder sb = new StringBuilder("✅ 审核驳回完成\n");
-        sb.append("- 任务 ").append(task.title()).append("：已办结（驳回）\n");
-        sb.append("- 影响：").append(plan.outcomeNote()).append('\n');
-        return sb.toString();
+    private String doExecuteReject(Long uid, ReviewSupport.ReviewTaskRef task, JsonNode reqBody,
+                                   String outcomeNote, String confirmToken,
+                                   String token, Long tenant, String conversationId) {
+        String bizId = task.docLedger() && !task.ledgerHeader().path("docNumber").asText("").isBlank()
+                ? task.ledgerHeader().path("docNumber").asText("") : "task:" + task.taskId();
+        if (hitlHelper != null) {
+            return hitlHelper.executeWithVerifyOutcome(
+                    ACTION,
+                    "审核驳回",
+                    bizId,
+                    uid,
+                    conversationId,
+                    () -> restActionClient.post("/task-center/task/reject", reqBody, token, tenant),
+                    r -> formatRejectResult(uid, task, outcomeNote, confirmToken, conversationId, r)
+            );
+        }
+        RestActionClient.ActionResult r = restActionClient.post("/task-center/task/reject", reqBody, token, tenant);
+        return formatRejectResult(uid, task, outcomeNote, confirmToken, conversationId, r);
+    }
+
+    private String formatRejectResult(Long uid, ReviewSupport.ReviewTaskRef task, String outcomeNote,
+                                      String confirmToken, String conversationId, RestActionClient.ActionResult r) {
+        planCache.remove(confirmToken);
+        if (!r.success()) {
+            audit(uid, conversationId, "reject", task, confirmToken, false, r.msg());
+            return "❌ 审核驳回执行失败：" + r.msg();
+        }
+        audit(uid, conversationId, "reject", task, confirmToken, true, "executed");
+        return "✅ 审核驳回完成\n- 任务 " + task.title() + "：已办结（驳回）\n- 影响：" + outcomeNote + "\n";
     }
 
     /** 同计划重签新令牌（现状守卫已通过、参数未变） */
@@ -329,6 +351,7 @@ public class RejectTaskTool {
                 .conversationId(conversationId).userId(uid)
                 .tool("rejectTask").action(action)
                 .businessObject(biz).confirmToken(confirmToken)
+                .decisionId(confirmToken != null && confirmToken.startsWith("dec_") ? confirmToken : null)
                 .success(success)
                 .errorMessage(success ? null : detail)
                 .detail(success ? detail : null)

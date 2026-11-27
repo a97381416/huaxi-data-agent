@@ -399,6 +399,16 @@
   margin: 12px 0;
 }
 
+.report-md.report-md--chat thead th {
+  padding: 8px 10px;
+}
+
+.report-md.report-md--chat tbody td {
+  padding: 8px 10px;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
 .report-md.report-md--chat tbody td:first-child {
   white-space: normal;
 }

@@ -37,7 +37,7 @@ import java.util.function.Supplier;
  *       （含 token / tenantId），并将 toolParams.conversationId 强绑为外层 rootConvId；</li>
  *   <li><b>流透传 + 终态拦截</b>：子事件打上 {@code (agentCode, parentToolCallId)} 实时写入父 sink，
  *       严格拦截子 {@code COMPLETE / PAUSED} 不外泄，确保父流终态唯一；</li>
- *   <li><b>硬超时保护</b>：默认 180s 超时自动终止子任务并返回结构化超时 JSON，不挂死父循环；</li>
+ *   <li><b>硬超时保护</b>：默认 600s（10分钟）超时自动终止子任务并返回结构化超时 JSON，不挂死父循环；</li>
  *   <li><b>级联中断与智能恢复</b>：订阅父 {@code InterruptContext}，父停子必停；
  *       存在子快照且 {@code parentToolCallId} 匹配时续跑，不匹配则丢弃旧快照防诈尸。</li>
  * </ul>
@@ -46,7 +46,7 @@ public class SubAgentTool implements ToolCallback {
 
     private static final Logger log = LoggerFactory.getLogger(SubAgentTool.class);
 
-    public static final long DEFAULT_TIMEOUT_MS = 180_000L;
+    public static final long DEFAULT_TIMEOUT_MS = 600_000L;
 
     private static final String INPUT_SCHEMA = """
             {

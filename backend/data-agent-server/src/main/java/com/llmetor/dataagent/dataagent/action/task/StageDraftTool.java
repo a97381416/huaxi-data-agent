@@ -5,9 +5,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.llmetor.dataagent.dataagent.action.ActionAuditLogger;
 import com.llmetor.dataagent.dataagent.action.FunctionPermissionChecker;
 import com.llmetor.dataagent.dataagent.action.RestActionClient;
+import com.llmetor.dataagent.dataagent.hitl.HitlToolHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -25,6 +27,7 @@ import java.util.List;
 @Component
 public class StageDraftTool {
 
+    static final String ACTION = "stageDraft";
     /** 权限点：资料填报（与主后端按钮权限对齐） */
     static final String PERMISSION = "doc:project:file:fill";
 
@@ -33,17 +36,29 @@ public class StageDraftTool {
     private final TaskLedgerSupport support;
     private final PatchMerger patchMerger;
     private final ActionAuditLogger auditLogger;
+    private final HitlToolHelper hitlHelper;
 
     public StageDraftTool(FunctionPermissionChecker permissionChecker,
                           RestActionClient restActionClient,
                           TaskLedgerSupport support,
                           PatchMerger patchMerger,
                           ActionAuditLogger auditLogger) {
+        this(permissionChecker, restActionClient, support, patchMerger, auditLogger, null);
+    }
+
+    @Autowired
+    public StageDraftTool(FunctionPermissionChecker permissionChecker,
+                          RestActionClient restActionClient,
+                          TaskLedgerSupport support,
+                          PatchMerger patchMerger,
+                          ActionAuditLogger auditLogger,
+                          HitlToolHelper hitlHelper) {
         this.permissionChecker = permissionChecker;
         this.restActionClient = restActionClient;
         this.support = support;
         this.patchMerger = patchMerger;
         this.auditLogger = auditLogger;
+        this.hitlHelper = hitlHelper;
     }
 
     @Tool(name = "stageDraft",
@@ -69,6 +84,12 @@ public class StageDraftTool {
         Long tenant = TaskIds.parseLong(tenantId);
 
         try {
+            if (hitlHelper != null) {
+                String verifyDone = hitlHelper.checkVerifyOutcomeShortCircuit(ACTION);
+                if (verifyDone != null) {
+                    return verifyDone;
+                }
+            }
             String denied = permissionChecker.checkPermission(uid, PERMISSION);
             if (denied != null) {
                 return denied;
@@ -91,29 +112,50 @@ public class StageDraftTool {
             body.put("taskId", task.taskId());
             ArrayNode arr = body.putArray("fileEntries");
             fullRows.forEach(arr::add);
+            if (hitlHelper != null) {
+                return hitlHelper.executeWithVerifyOutcome(
+                        ACTION,
+                        "驳回暂存草稿",
+                        view.docNumber(),
+                        uid,
+                        conversationId,
+                        () -> {
+                            RestActionClient.ActionResult r = restActionClient.put(
+                                    "/doc/ledger/stage-draft", body, token, tenant);
+                            support.requireOk(r, "暂存修改");
+                            return r;
+                        },
+                        r -> formatStageSuccess(uid, conversationId, task, view, merged, fullRows)
+                );
+            }
             RestActionClient.ActionResult r = restActionClient.put(
                     "/doc/ledger/stage-draft", body, token, tenant);
             support.requireOk(r, "暂存修改");
-
-            auditLogger.log(ActionAuditLogger.entry()
-                    .conversationId(conversationId).userId(uid)
-                    .tool("stageDraft").action("stage-draft")
-                    .businessObject(view.docNumber() + "/task:" + task.taskId())
-                    .success(true)
-                    .detail("patches=" + merged.resolved().size() + ", fullRows=" + fullRows.size())
-                    .build());
-
-            StringBuilder sb = new StringBuilder("✅ 已暂存 ").append(merged.resolved().size()).append(" 处修改（未提交，流程未推进）：\n");
-            for (PatchMerger.ResolvedPatch rp : merged.resolved()) {
-                sb.append("- ").append(rp.category()).append(".").append(rp.field())
-                        .append("：").append(rp.oldValue()).append(" → ").append(rp.newValue()).append('\n');
-            }
-            sb.append("台账 ").append(view.docNumber()).append(" 状态仍为「")
-                    .append(DocLabels.ledgerStatus(view.status()))
-                    .append("」。可继续攒批修改；用户明确说「提交」时再调用 resubmitLedger 发起重提确认。");
-            return sb.toString();
+            return formatStageSuccess(uid, conversationId, task, view, merged, fullRows);
         } catch (TaskLedgerSupport.TaskFlowException e) {
             return e.getMessage();
         }
+    }
+
+    private String formatStageSuccess(Long uid, String conversationId, TaskLedgerSupport.TaskRef task,
+                                      TaskLedgerSupport.LedgerView view, PatchMerger.MergeResult merged,
+                                      List<ObjectNode> fullRows) {
+        auditLogger.log(ActionAuditLogger.entry()
+                .conversationId(conversationId).userId(uid)
+                .tool("stageDraft").action("stage-draft")
+                .businessObject(view.docNumber() + "/task:" + task.taskId())
+                .success(true)
+                .detail("patches=" + merged.resolved().size() + ", fullRows=" + fullRows.size())
+                .build());
+
+        StringBuilder sb = new StringBuilder("✅ 已暂存 ").append(merged.resolved().size()).append(" 处修改（未提交，流程未推进）：\n");
+        for (PatchMerger.ResolvedPatch rp : merged.resolved()) {
+            sb.append("- ").append(rp.category()).append(".").append(rp.field())
+                    .append("：").append(rp.oldValue()).append(" → ").append(rp.newValue()).append('\n');
+        }
+        sb.append("台账 ").append(view.docNumber()).append(" 状态仍为「")
+                .append(DocLabels.ledgerStatus(view.status()))
+                .append("」。可继续攒批修改；用户明确说「提交」时再调用 resubmitLedger 发起重提确认。");
+        return sb.toString();
     }
 }

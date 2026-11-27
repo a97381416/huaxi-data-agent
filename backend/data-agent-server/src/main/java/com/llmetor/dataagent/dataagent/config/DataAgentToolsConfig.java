@@ -133,6 +133,8 @@ public class DataAgentToolsConfig {
         ToolCallback lookupGlossary = LookupGlossaryTool.builder().terms(glossaryCatalog.listAll()).build();
         ToolCallback todoWrite = TodoWriteTool.create();
         ToolCallback cancelConfirm = ToolCallbacks.from(cancelConfirmTool)[0];
+        ToolCallback askUserQuestion = ToolCallbacks.from(askUserQuestionTool)[0];
+        ToolCallback confirmPlan = ToolCallbacks.from(confirmPlanTool)[0];
 
         List<ToolCallback> dataAnalysis = new ArrayList<>();
         dataAnalysis.add(lookupGlossary);
@@ -140,23 +142,31 @@ public class DataAgentToolsConfig {
                 listTablesTool, describeTablesTool, validateSqlTool,
                 executeSqlTool, calculateTool, timeTool, myPermissionsTool)));
         dataAnalysis.add(todoWrite);
+        dataAnalysis.add(askUserQuestion);
+        dataAnalysis.add(confirmPlan);
 
         List<ToolCallback> declarantFill = new ArrayList<>(Arrays.asList(ToolCallbacks.from(
                 listMyProjectsTool, listPhaseTreeTool, listFillNodesTool, listMyDraftsTool,
                 listReviewOptionsTool, fillFileEntryTool, submitLedgerForReviewTool)));
         declarantFill.add(cancelConfirm);
         declarantFill.add(todoWrite);
+        declarantFill.add(askUserQuestion);
+        declarantFill.add(confirmPlan);
 
         List<ToolCallback> reviewerWorkflow = new ArrayList<>(Arrays.asList(ToolCallbacks.from(
                 listReviewTasksTool, getReviewDetailTool, listCoauditOptionsTool,
                 approveTaskTool, rejectTaskTool, partialApproveLedgerTool)));
         reviewerWorkflow.add(cancelConfirm);
         reviewerWorkflow.add(todoWrite);
+        reviewerWorkflow.add(askUserQuestion);
+        reviewerWorkflow.add(confirmPlan);
 
         List<ToolCallback> declarantWorkflow = new ArrayList<>(Arrays.asList(ToolCallbacks.from(
                 listMyTasksTool, getTaskDetailTool, stageDraftTool, resubmitLedgerTool)));
         declarantWorkflow.add(cancelConfirm);
         declarantWorkflow.add(todoWrite);
+        declarantWorkflow.add(askUserQuestion);
+        declarantWorkflow.add(confirmPlan);
 
         return new SubAgentToolGroups(
                 List.copyOf(dataAnalysis),
@@ -165,7 +175,7 @@ public class DataAgentToolsConfig {
                 List.copyOf(declarantWorkflow),
                 cancelConfirm,
                 todoWrite,
-                ToolCallbacks.from(askUserQuestionTool)[0],
-                ToolCallbacks.from(confirmPlanTool)[0]);
+                askUserQuestion,
+                confirmPlan);
     }
 }

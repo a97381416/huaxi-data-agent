@@ -136,6 +136,12 @@ public class ResubmitLedgerTool {
 
     private String planRound(Long uid, String taskId, List<PatchMerger.PatchSpec> patches,
                              List<String> assigneeIds, String token, Long tenant, String conversationId) {
+        if (hitlHelper != null) {
+            String verifyDone = hitlHelper.checkVerifyOutcomeShortCircuit(ACTION, "/doc/ledger/stage-draft");
+            if (verifyDone != null) {
+                return verifyDone;
+            }
+        }
         String denied = permissionChecker.checkPermission(uid, StageDraftTool.PERMISSION);
         if (denied != null) {
             return denied;
@@ -197,6 +203,11 @@ public class ResubmitLedgerTool {
         // 令牌哈希绑定解析结果（entryId+field+value 列表）+ taskId；二轮重拉现状重解析必须一致
         String hash = resolutionHash(task.taskId(), merged.resolved());
         if (hitlHelper != null && hitlHelper.isEnabled(ACTION)) {
+            if (hitlHelper.isResumingVerifyRetry(ACTION)) {
+                return doExecuteResubmit(uid, task, view, merged, reviewers,
+                        com.llmetor.miniagentx.agent.ToolExecutionContext.currentResumeDecisionId(),
+                        token, tenant, conversationId);
+            }
             ActionPlanCache.Plan storedPlan = new ActionPlanCache.Plan(
                     task.taskId(), task.ledgerId(), List.copyOf(patches), List.copyOf(reviewers), 0L);
             String targetSummary = view.projectName() + " / " + view.phaseName() + "（" + view.docNumber() + "）";
@@ -399,9 +410,31 @@ public class ResubmitLedgerTool {
         stageBody.put("taskId", task.taskId());
         ArrayNode stageArr = stageBody.putArray("fileEntries");
         fullRows.forEach(stageArr::add);
-        RestActionClient.ActionResult stage = restActionClient.put(
-                "/doc/ledger/stage-draft", stageBody, token, tenant);
-        support.requireOk(stage, "落最终暂存");
+        if (hitlHelper != null) {
+            String stageStatus = hitlHelper.executeWithVerifyOutcome(
+                    ACTION,
+                    "重提落最终暂存",
+                    view.docNumber(),
+                    uid,
+                    conversationId,
+                    "/doc/ledger/stage-draft",
+                    true,
+                    () -> {
+                        RestActionClient.ActionResult stage = restActionClient.put(
+                                "/doc/ledger/stage-draft", stageBody, token, tenant);
+                        support.requireOk(stage, "落最终暂存");
+                        return stage;
+                    },
+                    r -> "STAGE_OK"
+            );
+            if (!"STAGE_OK".equals(stageStatus)) {
+                return stageStatus;
+            }
+        } else {
+            RestActionClient.ActionResult stage = restActionClient.put(
+                    "/doc/ledger/stage-draft", stageBody, token, tenant);
+            support.requireOk(stage, "落最终暂存");
+        }
 
         // 写 2/2：重提（resubmit 走 STAGE 分支，以刚刷入的最终版为准）。
         // needNext=true + nextNodes 必传：引擎只在此时创建审核人待办，否则实例直接"通过完成"
@@ -417,10 +450,33 @@ public class ResubmitLedgerTool {
         reviewers.forEach(a -> assigneeArr.add(Long.parseLong(a)));
         ArrayNode arr = resubmitBody.putArray("fileEntries");
         fullRows.forEach(arr::add);
+        if (hitlHelper != null) {
+            return hitlHelper.executeWithVerifyOutcome(
+                    ACTION,
+                    "重新提交审核",
+                    view.docNumber(),
+                    uid,
+                    conversationId,
+                    "/doc/ledger/resubmit",
+                    false,
+                    () -> {
+                        RestActionClient.ActionResult r = restActionClient.put(
+                                "/doc/ledger/resubmit", resubmitBody, token, tenant);
+                        support.requireOk(r, "重新提交");
+                        return r;
+                    },
+                    r -> formatResubmitSuccess(uid, task, view, merged, reviewers, fullRows, confirmToken, conversationId)
+            );
+        }
         RestActionClient.ActionResult r = restActionClient.put(
                 "/doc/ledger/resubmit", resubmitBody, token, tenant);
         support.requireOk(r, "重新提交");
+        return formatResubmitSuccess(uid, task, view, merged, reviewers, fullRows, confirmToken, conversationId);
+    }
 
+    private String formatResubmitSuccess(Long uid, TaskLedgerSupport.TaskRef task, TaskLedgerSupport.LedgerView view,
+                                         PatchMerger.MergeResult merged, List<String> reviewers,
+                                         List<ObjectNode> fullRows, String confirmToken, String conversationId) {
         planCache.remove(confirmToken);
         audit(uid, conversationId, "resubmit", view.docNumber() + "/task:" + task.taskId(),
                 confirmToken, true, "patches=" + merged.resolved().size()

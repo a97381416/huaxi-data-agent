@@ -16,6 +16,7 @@ import org.springframework.util.StringUtils;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -165,19 +166,93 @@ public class HitlToolHelper {
     }
 
     /**
+     * 三期 HITL：核对型（VERIFY_OUTCOME）慢路径恢复前置分流。
+     * <p>若当前线程正在从一张 VERIFY_OUTCOME 挂起快照恢复，且用户已选择「已生效」或「放弃」，
+     * 直接完成核对收口（不再重复跑工具首轮状态守卫，因为主平台生效后单据状态可能已流转）。
+     *
+     * @return 非 null 表示已收口可直接返回给工具上层；null 表示非核对恢复或需要进入重试执行
+     */
+    public String checkVerifyOutcomeShortCircuit(String toolName) {
+        return checkVerifyOutcomeShortCircuit(toolName, null);
+    }
+
+    public String checkVerifyOutcomeShortCircuit(String toolName, String continueOnSucceededPath) {
+        String resumeDecId = ToolExecutionContext.currentResumeDecisionId();
+        if (!StringUtils.hasText(resumeDecId)) {
+            return null;
+        }
+        DecisionEntity resumeEntity = decisionService.findById(resumeDecId);
+        if (resumeEntity == null || !TYPE_VERIFY_OUTCOME.equals(resumeEntity.type())
+                || !Objects.equals(resumeEntity.toolName(), toolName)) {
+            return null;
+        }
+        Map<String, Object> payload = parsePayloadMap(resumeEntity.payloadJson());
+        String storedPath = stringVal(payload.get("path"));
+        if (StringUtils.hasText(continueOnSucceededPath)
+                && continueOnSucceededPath.equals(storedPath)
+                && STATUS_CONFIRMED_SUCCEEDED.equals(resumeEntity.status())) {
+            return null;
+        }
+        String bizId = stringVal(payload.get("bizId"));
+        if (!StringUtils.hasText(bizId)) {
+            bizId = StringUtils.hasText(resumeEntity.actionSummary()) ? resumeEntity.actionSummary() : "—";
+        }
+        Long uid = resumeEntity.ownerUserId();
+        String convId = resumeEntity.conversationId();
+        return switch (resumeEntity.status()) {
+            case STATUS_CONFIRMED_SUCCEEDED -> finalizeVerifySucceeded(resumeEntity, toolName, bizId, uid, convId);
+            case STATUS_ABORTED -> finalizeVerifyAborted(resumeEntity, toolName, bizId, uid, convId);
+            case STATUS_EXPIRED, STATUS_SUPERSEDED -> {
+                decisionService.emitWithdrawn(resumeEntity);
+                yield "⏹️ 该核对单已过期或被新对话取代（未重发请求）。";
+            }
+            case STATUS_CONFIRMED_NOT_APPLIED -> null;
+            default -> throw new HitlParkException(resumeDecId, "等待人工核对主平台结果");
+        };
+    }
+
+    /** 判断当前是否处于 VERIFY_OUTCOME 慢路径恢复且需要直接进执行/重试通道（跳过重新建 PERMISSION 审批单） */
+    public boolean isResumingVerifyRetry(String toolName) {
+        String resumeDecId = ToolExecutionContext.currentResumeDecisionId();
+        if (!StringUtils.hasText(resumeDecId)) {
+            return false;
+        }
+        DecisionEntity resumeEntity = decisionService.findById(resumeDecId);
+        if (resumeEntity == null || !TYPE_VERIFY_OUTCOME.equals(resumeEntity.type())
+                || !Objects.equals(resumeEntity.toolName(), toolName)) {
+            return false;
+        }
+        return STATUS_CONFIRMED_NOT_APPLIED.equals(resumeEntity.status())
+                || STATUS_CONFIRMED_SUCCEEDED.equals(resumeEntity.status());
+    }
+
+    /**
      * 三期 HITL：统一截获写请求 {@link UnknownOutcomeException}，拉起 {@code VERIFY_OUTCOME} 核对型 HITL。
      * 严禁自动重试！仅当用户去主平台核对后明确选择「确认未生效，重新执行」时才安全重发一次。
      */
     public <T> String executeWithVerifyOutcome(
             String toolName, String actionLabel, String bizId, Long uid, String conversationId,
             Supplier<T> writeCall, Function<T, String> onSuccess) {
+        return executeWithVerifyOutcome(toolName, actionLabel, bizId, uid, conversationId,
+                null, false, writeCall, onSuccess);
+    }
+
+    public <T> String executeWithVerifyOutcome(
+            String toolName, String actionLabel, String bizId, Long uid, String conversationId,
+            String expectedPath, boolean continueOnVerifySucceeded,
+            Supplier<T> writeCall, Function<T, String> onSuccess) {
         // 慢路径恢复：若当前正在恢复一张 VERIFY_OUTCOME 决策单，直接按其终态分流，不重发首轮请求
         String resumeDecId = ToolExecutionContext.currentResumeDecisionId();
         if (StringUtils.hasText(resumeDecId)) {
             DecisionEntity resumeEntity = decisionService.findById(resumeDecId);
-            if (resumeEntity != null && TYPE_VERIFY_OUTCOME.equals(resumeEntity.type())) {
-                return handleVerifyOutcomeState(resumeEntity, toolName, actionLabel, bizId, uid, conversationId,
-                        writeCall, onSuccess);
+            if (resumeEntity != null && TYPE_VERIFY_OUTCOME.equals(resumeEntity.type())
+                    && Objects.equals(resumeEntity.toolName(), toolName)) {
+                String storedPath = stringVal(parsePayloadMap(resumeEntity.payloadJson()).get("path"));
+                if (!StringUtils.hasText(expectedPath) || !StringUtils.hasText(storedPath)
+                        || expectedPath.equals(storedPath)) {
+                    return handleVerifyOutcomeState(resumeEntity, toolName, actionLabel, bizId, uid, conversationId,
+                            continueOnVerifySucceeded, writeCall, onSuccess);
+                }
             }
         }
         try {
@@ -210,7 +285,13 @@ public class HitlToolHelper {
             String decId = entity.decisionId();
             DecisionAwaitRegistry.AwaitResult res = decisionService.awaitDecision(decId, true);
             return switch (res.state()) {
-                case CONFIRMED_SUCCEEDED -> finalizeVerifySucceeded(entity, toolName, bizId, uid, conversationId);
+                case CONFIRMED_SUCCEEDED -> {
+                    if (continueOnVerifySucceeded) {
+                        finalizeVerifySucceeded(entity, toolName, bizId, uid, conversationId);
+                        yield onSuccess.apply(null);
+                    }
+                    yield finalizeVerifySucceeded(entity, toolName, bizId, uid, conversationId);
+                }
                 case CONFIRMED_NOT_APPLIED -> finalizeVerifyRetry(entity, toolName, bizId, uid, conversationId, writeCall, onSuccess);
                 case ABORTED -> finalizeVerifyAborted(entity, toolName, bizId, uid, conversationId);
                 case PARKED -> throw new HitlParkException(decId, "等待人工核对主平台结果超时，已转入后台挂起");
@@ -226,9 +307,16 @@ public class HitlToolHelper {
 
     private <T> String handleVerifyOutcomeState(
             DecisionEntity entity, String toolName, String actionLabel, String bizId,
-            Long uid, String conversationId, Supplier<T> writeCall, Function<T, String> onSuccess) {
+            Long uid, String conversationId, boolean continueOnVerifySucceeded,
+            Supplier<T> writeCall, Function<T, String> onSuccess) {
         return switch (entity.status()) {
-            case STATUS_CONFIRMED_SUCCEEDED -> finalizeVerifySucceeded(entity, toolName, bizId, uid, conversationId);
+            case STATUS_CONFIRMED_SUCCEEDED -> {
+                if (continueOnVerifySucceeded) {
+                    finalizeVerifySucceeded(entity, toolName, bizId, uid, conversationId);
+                    yield onSuccess.apply(null);
+                }
+                yield finalizeVerifySucceeded(entity, toolName, bizId, uid, conversationId);
+            }
             case STATUS_CONFIRMED_NOT_APPLIED -> finalizeVerifyRetry(entity, toolName, bizId, uid, conversationId, writeCall, onSuccess);
             case STATUS_ABORTED -> finalizeVerifyAborted(entity, toolName, bizId, uid, conversationId);
             case STATUS_EXPIRED, STATUS_SUPERSEDED -> {
@@ -237,6 +325,22 @@ public class HitlToolHelper {
             }
             default -> throw new HitlParkException(entity.decisionId(), "等待人工核对主平台结果");
         };
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parsePayloadMap(String json) {
+        if (!StringUtils.hasText(json)) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(json, Map.class);
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
+    private static String stringVal(Object v) {
+        return v == null ? null : String.valueOf(v);
     }
 
     private String finalizeVerifySucceeded(DecisionEntity entity, String toolName, String bizId,

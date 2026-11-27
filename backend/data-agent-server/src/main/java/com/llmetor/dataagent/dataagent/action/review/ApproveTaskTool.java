@@ -140,6 +140,12 @@ public class ApproveTaskTool {
     private String planRound(Long uid, String taskId, String opinion, List<PmOpinionSpec> pmOpinions,
                              List<String> nextApproverIds, Boolean finishFlow,
                              String token, Long tenant, String conversationId) {
+        if (hitlHelper != null) {
+            String verifyDone = hitlHelper.checkVerifyOutcomeShortCircuit(ACTION);
+            if (verifyDone != null) {
+                return verifyDone;
+            }
+        }
         ReviewSupport.ReviewTaskRef task = support.findMyReviewTask(taskId, token, tenant);
         support.requireApprovalTodoTask(task);
         String op = (opinion == null || opinion.isBlank()) ? DEFAULT_OPINION : opinion.trim();
@@ -412,6 +418,11 @@ public class ApproveTaskTool {
         String hash = confirmTokenService.payloadHash(List.of(action, task.taskId(), canonical));
 
         if (hitlHelper != null && hitlHelper.isEnabled(ACTION)) {
+            if (hitlHelper.isResumingVerifyRetry(ACTION)) {
+                return doExecuteApprove(uid, task, body, outcomeNote,
+                        com.llmetor.miniagentx.agent.ToolExecutionContext.currentResumeDecisionId(),
+                        token, tenant, conversationId);
+            }
             String docNum = task.docLedger() ? task.ledgerHeader().path("docNumber").asText("") : "";
             String targetSummary = task.title() + (docNum.isBlank() ? "" : "（" + docNum + "）");
             List<DecisionModels.KeyParamItem> kps = HitlToolHelper.cleanKeyParams(java.util.Arrays.asList(
@@ -485,14 +496,7 @@ public class ApproveTaskTool {
             if (!consume.ok()) {
                 return HitlToolHelper.formatConsumeError(consume, ACTION);
             }
-            String path = task.docLedger() ? "/doc/ledger-process/approve" : "/task-center/task/approve";
-            RestActionClient.ActionResult r = restActionClient.post(path, reqBody, token, tenant);
-            if (!r.success()) {
-                audit(uid, conversationId, "approve", task, confirmToken, false, r.msg());
-                return "❌ 审核通过执行失败：" + r.msg();
-            }
-            audit(uid, conversationId, "approve", task, confirmToken, true, "executed");
-            return "✅ 审核通过完成\n- 任务 " + task.title() + "：已办结\n- 影响：" + stored.outcomeNote() + "\n";
+            return doExecuteApprove(uid, task, reqBody, stored.outcomeNote(), confirmToken, token, tenant, conversationId);
         }
 
         ReviewPlanCache.Plan plan = planCache.get(confirmToken);
@@ -538,22 +542,39 @@ public class ApproveTaskTool {
         }
 
         // 提交（唯一写路径）：doc → ledger-process；非 doc → task-center
-        String path = task.docLedger()
-                ? "/doc/ledger-process/approve"
-                : "/task-center/task/approve";
-        RestActionClient.ActionResult r = restActionClient.post(path, plan.requestBody(), token, tenant);
-        if (!r.success()) {
-            planCache.remove(confirmToken);
-            audit(uid, conversationId, "approve", task, confirmToken, false, r.msg());
-            return "❌ 审核通过执行失败：" + r.msg() + "\n（计划已作废；如需重试请重新发起首轮。）";
-        }
-        planCache.remove(confirmToken);
-        audit(uid, conversationId, "approve", task, confirmToken, true, "executed");
+        return doExecuteApprove(uid, task, plan.requestBody(), plan.outcomeNote(), confirmToken, token, tenant, conversationId);
+    }
 
-        StringBuilder sb = new StringBuilder("✅ 审核通过完成\n");
-        sb.append("- 任务 ").append(task.title()).append("：已办结\n");
-        sb.append("- 影响：").append(plan.outcomeNote()).append('\n');
-        return sb.toString();
+    private String doExecuteApprove(Long uid, ReviewSupport.ReviewTaskRef task, JsonNode reqBody,
+                                    String outcomeNote, String confirmToken,
+                                    String token, Long tenant, String conversationId) {
+        String path = task.docLedger() ? "/doc/ledger-process/approve" : "/task-center/task/approve";
+        String bizId = task.docLedger() && !task.ledgerHeader().path("docNumber").asText("").isBlank()
+                ? task.ledgerHeader().path("docNumber").asText("") : "task:" + task.taskId();
+        if (hitlHelper != null) {
+            return hitlHelper.executeWithVerifyOutcome(
+                    ACTION,
+                    "审核通过",
+                    bizId,
+                    uid,
+                    conversationId,
+                    () -> restActionClient.post(path, reqBody, token, tenant),
+                    r -> formatApproveResult(uid, task, outcomeNote, confirmToken, conversationId, r)
+            );
+        }
+        RestActionClient.ActionResult r = restActionClient.post(path, reqBody, token, tenant);
+        return formatApproveResult(uid, task, outcomeNote, confirmToken, conversationId, r);
+    }
+
+    private String formatApproveResult(Long uid, ReviewSupport.ReviewTaskRef task, String outcomeNote,
+                                       String confirmToken, String conversationId, RestActionClient.ActionResult r) {
+        planCache.remove(confirmToken);
+        if (!r.success()) {
+            audit(uid, conversationId, "approve", task, confirmToken, false, r.msg());
+            return "❌ 审核通过执行失败：" + r.msg();
+        }
+        audit(uid, conversationId, "approve", task, confirmToken, true, "executed");
+        return "✅ 审核通过完成\n- 任务 " + task.title() + "：已办结\n- 影响：" + outcomeNote + "\n";
     }
 
     /** 同计划重签新令牌（现状守卫已通过、参数未变） */
@@ -600,6 +621,7 @@ public class ApproveTaskTool {
                 .conversationId(conversationId).userId(uid)
                 .tool("approveTask").action(action)
                 .businessObject(biz).confirmToken(confirmToken)
+                .decisionId(confirmToken != null && confirmToken.startsWith("dec_") ? confirmToken : null)
                 .success(success)
                 .errorMessage(success ? null : detail)
                 .detail(success ? detail : null)

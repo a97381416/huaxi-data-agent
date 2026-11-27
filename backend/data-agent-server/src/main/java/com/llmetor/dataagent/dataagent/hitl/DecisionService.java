@@ -12,8 +12,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.DefaultTransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -46,6 +50,7 @@ public class DecisionService {
     private static final DateTimeFormatter TS_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final JdbcTemplate jdbc;
+    private final TransactionTemplate txTemplate;
     private final ObjectMapper objectMapper;
     private final ConfirmTokenService confirmTokenService;
     private final HitlProperties properties;
@@ -65,6 +70,9 @@ public class DecisionService {
                            HitlProperties properties,
                            DecisionAwaitRegistry awaitRegistry) {
         this.jdbc = new JdbcTemplate(dataSource);
+        DefaultTransactionDefinition txDef = new DefaultTransactionDefinition();
+        txDef.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
+        this.txTemplate = new TransactionTemplate(new DataSourceTransactionManager(dataSource), txDef);
         this.objectMapper = objectMapper;
         this.confirmTokenService = confirmTokenService;
         this.properties = properties;
@@ -73,64 +81,70 @@ public class DecisionService {
     }
 
     private void initSchema() {
-        try {
-            jdbc.execute("""
-                    CREATE TABLE IF NOT EXISTS agentx_decision (
-                      decision_id        varchar(64)  NOT NULL,
-                      conversation_id    varchar(100) NOT NULL,
-                      session_id         varchar(100) NOT NULL,
-                      tool_call_id       varchar(100) DEFAULT NULL,
-                      agent_code         varchar(64)  DEFAULT NULL,
-                      owner_user_id      bigint       NOT NULL,
-                      type               varchar(32)  NOT NULL,
-                      status             varchar(32)  NOT NULL,
-                      revision           int          NOT NULL DEFAULT 1,
-                      tool_name          varchar(100) NOT NULL,
-                      scope_key          varchar(255) DEFAULT NULL,
-                      action_summary     text         NOT NULL,
-                      payload_json       text         NOT NULL,
-                      payload_hash       varchar(128) NOT NULL,
-                      options_json       text         DEFAULT NULL,
-                      decision_option    varchar(64)  DEFAULT NULL,
-                      answer_json        text         DEFAULT NULL,
-                      user_words         text         DEFAULT NULL,
-                      grant_id           varchar(64)  DEFAULT NULL,
-                      answered_by        bigint       DEFAULT NULL,
-                      answered_by_name   varchar(100) DEFAULT NULL,
-                      client_ip          varchar(64)  DEFAULT NULL,
-                      command_id         varchar(64)  DEFAULT NULL,
-                      expires_at         timestamp    NOT NULL,
-                      created_at         timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                      answered_at        timestamp    DEFAULT NULL,
-                      consumed_at        timestamp    DEFAULT NULL,
-                      PRIMARY KEY (decision_id)
-                    )
-                    """);
-            jdbc.execute("CREATE INDEX IF NOT EXISTS idx_decision_conv_status ON agentx_decision (conversation_id, status)");
-            jdbc.execute("CREATE INDEX IF NOT EXISTS idx_decision_owner_status ON agentx_decision (owner_user_id, status, expires_at)");
-            jdbc.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_decision_cmd ON agentx_decision (decision_id, command_id) WHERE command_id IS NOT NULL");
+        execDdl("""
+                CREATE TABLE IF NOT EXISTS agentx_decision (
+                  decision_id        varchar(64)  NOT NULL,
+                  conversation_id    varchar(100) NOT NULL,
+                  session_id         varchar(100) NOT NULL,
+                  tool_call_id       varchar(100) DEFAULT NULL,
+                  agent_code         varchar(64)  DEFAULT NULL,
+                  owner_user_id      bigint       NOT NULL,
+                  type               varchar(32)  NOT NULL,
+                  status             varchar(32)  NOT NULL,
+                  revision           int          NOT NULL DEFAULT 1,
+                  tool_name          varchar(100) NOT NULL,
+                  scope_key          varchar(255) DEFAULT NULL,
+                  action_summary     text         NOT NULL,
+                  payload_json       text         NOT NULL,
+                  payload_hash       varchar(128) NOT NULL,
+                  options_json       text         DEFAULT NULL,
+                  decision_option    varchar(64)  DEFAULT NULL,
+                  answer_json        text         DEFAULT NULL,
+                  user_words         text         DEFAULT NULL,
+                  grant_id           varchar(64)  DEFAULT NULL,
+                  answered_by        bigint       DEFAULT NULL,
+                  answered_by_name   varchar(100) DEFAULT NULL,
+                  client_ip          varchar(64)  DEFAULT NULL,
+                  command_id         varchar(64)  DEFAULT NULL,
+                  expires_at         timestamp    NOT NULL,
+                  created_at         timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  answered_at        timestamp    DEFAULT NULL,
+                  consumed_at        timestamp    DEFAULT NULL,
+                  resolution_mode    varchar(32)  DEFAULT NULL,
+                  PRIMARY KEY (decision_id)
+                )
+                """);
+        execDdl("ALTER TABLE agentx_decision ADD COLUMN IF NOT EXISTS resolution_mode varchar(32) DEFAULT NULL");
+        execDdl("CREATE INDEX IF NOT EXISTS idx_decision_conv_status ON agentx_decision (conversation_id, status)");
+        execDdl("CREATE INDEX IF NOT EXISTS idx_decision_owner_status ON agentx_decision (owner_user_id, status, expires_at)");
+        execDdl("CREATE UNIQUE INDEX IF NOT EXISTS uk_decision_cmd ON agentx_decision (decision_id, command_id) WHERE command_id IS NOT NULL");
 
-            jdbc.execute("""
-                    CREATE TABLE IF NOT EXISTS agentx_decision_grant (
-                      grant_id           varchar(64)  NOT NULL,
-                      user_id            bigint       NOT NULL,
-                      conversation_id    varchar(100) NOT NULL,
-                      source_decision_id varchar(64)  NOT NULL,
-                      tool_name          varchar(100) NOT NULL,
-                      scope_key          varchar(255) NOT NULL,
-                      scope_desc         varchar(500) DEFAULT NULL,
-                      status             varchar(20)  NOT NULL DEFAULT 'ACTIVE',
-                      max_uses           int          NOT NULL DEFAULT 20,
-                      used_count         int          NOT NULL DEFAULT 0,
-                      expires_at         timestamp    NOT NULL,
-                      created_at         timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                      revoked_at         timestamp    DEFAULT NULL,
-                      PRIMARY KEY (grant_id)
-                    )
-                    """);
-            jdbc.execute("CREATE INDEX IF NOT EXISTS idx_grant_lookup ON agentx_decision_grant (user_id, conversation_id, scope_key, status)");
+        execDdl("""
+                CREATE TABLE IF NOT EXISTS agentx_decision_grant (
+                  grant_id           varchar(64)  NOT NULL,
+                  user_id            bigint       NOT NULL,
+                  conversation_id    varchar(100) NOT NULL,
+                  source_decision_id varchar(64)  NOT NULL,
+                  tool_name          varchar(100) NOT NULL,
+                  scope_key          varchar(255) NOT NULL,
+                  scope_desc         varchar(500) DEFAULT NULL,
+                  status             varchar(20)  NOT NULL DEFAULT 'ACTIVE',
+                  max_uses           int          NOT NULL DEFAULT 20,
+                  used_count         int          NOT NULL DEFAULT 0,
+                  expires_at         timestamp    NOT NULL,
+                  created_at         timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  revoked_at         timestamp    DEFAULT NULL,
+                  PRIMARY KEY (grant_id)
+                )
+                """);
+        execDdl("CREATE INDEX IF NOT EXISTS idx_grant_lookup ON agentx_decision_grant (user_id, conversation_id, scope_key, status)");
+    }
+
+    private void execDdl(String sql) {
+        try {
+            jdbc.execute(sql);
         } catch (Exception e) {
-            log.warn("[hitl] 初始化 HITL 表结构失败（若已建表可忽略）: {}", e.getMessage());
+            log.debug("[hitl] DDL 执行跳过（若已存在或方言不支持可忽略）: {}", e.getMessage());
         }
     }
 
@@ -294,10 +308,12 @@ public class DecisionService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权操作他人的审批单");
         }
 
-        // 2. commandId 幂等键检查（防双击并发重放）
+        // 2. commandId 幂等键检查（防双击并发重放，保留原决议模式）
         if (StringUtils.hasText(req.commandId()) && req.commandId().equals(entity.commandId())) {
             log.info("[hitl] 命中幂等重放: decisionId={}, commandId={}", decisionId, req.commandId());
-            return buildDecideResponse(entity);
+            String prevMode = StringUtils.hasText(entity.resolutionMode())
+                    ? entity.resolutionMode() : MODE_NEED_RESUME;
+            return buildDecideResponse(entity, prevMode);
         }
 
         // 3. 过期校验
@@ -337,46 +353,51 @@ public class DecisionService {
         String answerJsonStr = req.answerJson() != null ? toJson(req.answerJson()) : null;
         String cmdId = StringUtils.hasText(req.commandId()) ? req.commandId().trim() : null;
 
-        // 7. 仅 PERMISSION 类型且选择本会话同类放行时才写授权表（QUESTION 等绝不写 grant 表）
-        String grantId = null;
-        if (TYPE_PERMISSION.equals(entity.type())
+        // 7-8. 事务内原子执行 CAS 更新与授权单写入（防 CAS 冲突时残留脏 grant 记录）
+        final boolean shouldInsertGrant = TYPE_PERMISSION.equals(entity.type())
                 && OPTION_ALLOW_SESSION.equals(option)
-                && StringUtils.hasText(entity.scopeKey())) {
-            grantId = "gr_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
-            String scopeDesc = stringVal(optsMeta.get("scopeDesc"));
-            LocalDateTime grantExpires = now.plusHours(properties.getGrantTtlHours());
-            jdbc.update("""
-                    INSERT INTO agentx_decision_grant (
-                      grant_id, user_id, conversation_id, source_decision_id, tool_name,
-                      scope_key, scope_desc, status, max_uses, used_count, expires_at, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                && StringUtils.hasText(entity.scopeKey());
+        final String grantId = shouldInsertGrant
+                ? "gr_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16) : null;
+        final String scopeDesc = shouldInsertGrant ? stringVal(optsMeta.get("scopeDesc")) : null;
+        final LocalDateTime grantExpires = shouldInsertGrant ? now.plusHours(properties.getGrantTtlHours()) : null;
+
+        txTemplate.executeWithoutResult(txStatus -> {
+            int updated = jdbc.update("""
+                    UPDATE agentx_decision
+                    SET status = ?, decision_option = ?, user_words = ?, answer_json = ?,
+                        grant_id = ?, answered_by = ?, answered_by_name = ?, client_ip = ?,
+                        command_id = ?, answered_at = ?, revision = revision + 1
+                    WHERE decision_id = ? AND status = ? AND revision = ?
                     """,
-                    grantId, currentUserId, entity.conversationId(), decisionId, entity.toolName(),
-                    entity.scopeKey(), scopeDesc, GRANT_ACTIVE, properties.getGrantMaxUses(),
-                    Timestamp.valueOf(grantExpires), Timestamp.valueOf(now));
-        }
+                    targetStatus, option, userWords, answerJsonStr,
+                    grantId, currentUserId, currentUserName, clientIp,
+                    cmdId, Timestamp.valueOf(now),
+                    decisionId, STATUS_PENDING, expectedRev);
 
-        // 8. CAS 更新
-        int updated = jdbc.update("""
-                UPDATE agentx_decision
-                SET status = ?, decision_option = ?, user_words = ?, answer_json = ?,
-                    grant_id = ?, answered_by = ?, answered_by_name = ?, client_ip = ?,
-                    command_id = ?, answered_at = ?, revision = revision + 1
-                WHERE decision_id = ? AND status = ? AND revision = ?
-                """,
-                targetStatus, option, userWords, answerJsonStr,
-                grantId, currentUserId, currentUserName, clientIp,
-                cmdId, Timestamp.valueOf(now),
-                decisionId, STATUS_PENDING, expectedRev);
+            if (updated == 0) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "并发冲突：审批单已被其他操作处理");
+            }
 
-        if (updated == 0) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "并发冲突：审批单已被其他操作处理");
-        }
+            if (shouldInsertGrant) {
+                jdbc.update("""
+                        INSERT INTO agentx_decision_grant (
+                          grant_id, user_id, conversation_id, source_decision_id, tool_name,
+                          scope_key, scope_desc, status, max_uses, used_count, expires_at, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                        """,
+                        grantId, currentUserId, entity.conversationId(), decisionId, entity.toolName(),
+                        entity.scopeKey(), scopeDesc, GRANT_ACTIVE, properties.getGrantMaxUses(),
+                        Timestamp.valueOf(grantExpires), Timestamp.valueOf(now));
+            }
+        });
 
-        DecisionEntity refreshed = findById(decisionId);
+        // 事务已提交后再唤醒等待线程，确保被唤醒线程可见最新终态
         DecisionAwaitRegistry.AwaitResult awaitResult = buildAwaitResult(targetStatus, option, userWords, grantId, answerJsonStr);
         boolean inlineResumed = awaitRegistry.tryComplete(decisionId, awaitResult);
         String mode = inlineResumed ? MODE_INLINE_RESUMED : MODE_NEED_RESUME;
+        jdbc.update("UPDATE agentx_decision SET resolution_mode = ? WHERE decision_id = ?", mode, decisionId);
+        DecisionEntity refreshed = findById(decisionId);
 
         log.info("[hitl] 用户决策完成: decisionId={}, type={}, option={}, status={}, mode={}, actor={}({}), grantId={}",
                 decisionId, entity.type(), option, targetStatus, mode, currentUserName, currentUserId, grantId);
@@ -507,7 +528,7 @@ public class DecisionService {
                     e.scopeKey(), e.actionSummary(), e.payloadJson(), e.payloadHash(), e.optionsJson(),
                     e.decisionOption(), e.answerJson(), e.userWords(), e.grantId(), e.answeredBy(),
                     e.answeredByName(), e.clientIp(), e.commandId(), e.expiresAt(), e.createdAt(),
-                    e.answeredAt(), e.consumedAt());
+                    e.answeredAt(), e.consumedAt(), e.resolutionMode());
             return toCardPayload(updated, null);
         }).toList();
     }
@@ -690,46 +711,71 @@ public class DecisionService {
         };
     }
 
-    /** 三期 HITL：查询监控中心 HITL 专项统计指标 */
+    /** 三期 HITL：查询监控中心 HITL 专项统计指标（单条聚合 SQL + 快慢路径占比） */
     public Map<String, Object> getHitlMetrics(int hours) {
         LocalDateTime since = LocalDateTime.now().minusHours(Math.max(1, hours));
         Timestamp ts = Timestamp.valueOf(since);
-        Map<String, Object> result = new LinkedHashMap<>();
-        Long total = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM agentx_decision WHERE created_at >= ?", Long.class, ts);
-        long totalCount = total == null ? 0L : total;
-        result.put("total", totalCount);
+        Map<String, Object> row = jdbc.queryForMap("""
+                SELECT
+                  COUNT(*) AS total,
+                  COALESCE(SUM(CASE WHEN type = 'PERMISSION' THEN 1 ELSE 0 END), 0) AS cnt_permission,
+                  COALESCE(SUM(CASE WHEN type = 'QUESTION' THEN 1 ELSE 0 END), 0) AS cnt_question,
+                  COALESCE(SUM(CASE WHEN type = 'VERIFY_OUTCOME' THEN 1 ELSE 0 END), 0) AS cnt_verify,
+                  COALESCE(SUM(CASE WHEN type = 'PLAN_CONFIRM' THEN 1 ELSE 0 END), 0) AS cnt_plan,
+                  AVG(CASE WHEN answered_at IS NOT NULL THEN EXTRACT(EPOCH FROM (answered_at - created_at)) * 1000 ELSE NULL END) AS avg_resp_ms,
+                  COALESCE(SUM(CASE WHEN status IN ('APPROVED','CONSUMED','AUTO_APPROVED_BY_GRANT','ANSWERED','CONFIRMED_SUCCEEDED','CONFIRMED_NOT_APPLIED') THEN 1 ELSE 0 END), 0) AS cnt_approved,
+                  COALESCE(SUM(CASE WHEN status IN ('REJECTED','REVISED','ABORTED') THEN 1 ELSE 0 END), 0) AS cnt_rejected,
+                  COALESCE(SUM(CASE WHEN status IN ('SKIPPED','TIMED_OUT_SOFT') THEN 1 ELSE 0 END), 0) AS cnt_skipped,
+                  COALESCE(SUM(CASE WHEN resolution_mode = 'INLINE_RESUMED' THEN 1 ELSE 0 END), 0) AS cnt_inline,
+                  COALESCE(SUM(CASE WHEN resolution_mode = 'NEED_RESUME' THEN 1 ELSE 0 END), 0) AS cnt_slow,
+                  COALESCE(SUM(CASE WHEN status = 'AUTO_APPROVED_BY_GRANT' THEN 1 ELSE 0 END), 0) AS cnt_auto_grant
+                FROM agentx_decision
+                WHERE created_at >= ?
+                """, ts);
+
+        long totalCount = toLong(row.get("total"));
+        long permCnt = toLong(row.get("cnt_permission"));
+        long qCnt = toLong(row.get("cnt_question"));
+        long verifyCnt = toLong(row.get("cnt_verify"));
+        long planCnt = toLong(row.get("cnt_plan"));
+        long approved = toLong(row.get("cnt_approved"));
+        long rejected = toLong(row.get("cnt_rejected"));
+        long skipped = toLong(row.get("cnt_skipped"));
+        long inlineCnt = toLong(row.get("cnt_inline"));
+        long slowCnt = toLong(row.get("cnt_slow"));
+        long decidedModeTotal = inlineCnt + slowCnt;
+        long autoGrantCnt = toLong(row.get("cnt_auto_grant"));
+        Object avgObj = row.get("avg_resp_ms");
+        long avgRespMs = avgObj instanceof Number n ? Math.round(n.doubleValue()) : 0L;
 
         Map<String, Long> byType = new LinkedHashMap<>();
-        for (String t : List.of(TYPE_PERMISSION, TYPE_QUESTION, TYPE_VERIFY_OUTCOME, TYPE_PLAN_CONFIRM)) {
-            Long c = jdbc.queryForObject(
-                    "SELECT COUNT(*) FROM agentx_decision WHERE type = ? AND created_at >= ?",
-                    Long.class, t, ts);
-            byType.put(t, c == null ? 0L : c);
-        }
+        byType.put(TYPE_PERMISSION, permCnt);
+        byType.put(TYPE_QUESTION, qCnt);
+        byType.put(TYPE_VERIFY_OUTCOME, verifyCnt);
+        byType.put(TYPE_PLAN_CONFIRM, planCnt);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("total", totalCount);
         result.put("byType", byType);
-
-        Double avgRespMs = jdbc.queryForObject(
-                "SELECT AVG(EXTRACT(EPOCH FROM (answered_at - created_at)) * 1000) "
-                        + "FROM agentx_decision WHERE answered_at IS NOT NULL AND created_at >= ?",
-                Double.class, ts);
-        result.put("avgResponseMs", avgRespMs != null ? Math.round(avgRespMs) : 0L);
-
-        Long approved = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM agentx_decision WHERE status IN ('APPROVED','CONSUMED','AUTO_APPROVED_BY_GRANT','ANSWERED','CONFIRMED_SUCCEEDED','CONFIRMED_NOT_APPLIED') AND created_at >= ?",
-                Long.class, ts);
-        Long rejected = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM agentx_decision WHERE status IN ('REJECTED','REVISED','ABORTED') AND created_at >= ?",
-                Long.class, ts);
-        Long skipped = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM agentx_decision WHERE status IN ('SKIPPED','TIMED_OUT_SOFT') AND created_at >= ?",
-                Long.class, ts);
-        result.put("approveRate", totalCount > 0 ? Math.round((approved == null ? 0 : approved) * 1000.0 / totalCount) / 10.0 : 0.0);
-        result.put("rejectRate", totalCount > 0 ? Math.round((rejected == null ? 0 : rejected) * 1000.0 / totalCount) / 10.0 : 0.0);
-        result.put("skipRate", totalCount > 0 ? Math.round((skipped == null ? 0 : skipped) * 1000.0 / totalCount) / 10.0 : 0.0);
-        long verifyCnt = byType.getOrDefault(TYPE_VERIFY_OUTCOME, 0L);
-        result.put("verifyOutcomeRate", totalCount > 0 ? Math.round(verifyCnt * 1000.0 / totalCount) / 10.0 : 0.0);
+        result.put("avgResponseMs", avgRespMs);
+        result.put("approveRate", pct(approved, totalCount));
+        result.put("rejectRate", pct(rejected, totalCount));
+        result.put("skipRate", pct(skipped, totalCount));
+        result.put("verifyOutcomeRate", pct(verifyCnt, totalCount));
+        result.put("inlineCount", inlineCnt);
+        result.put("slowPathCount", slowCnt);
+        result.put("inlineRate", pct(inlineCnt, decidedModeTotal));
+        result.put("slowPathRate", pct(slowCnt, decidedModeTotal));
+        result.put("autoApprovedCount", autoGrantCnt);
         return result;
+    }
+
+    private static long toLong(Object v) {
+        return v instanceof Number n ? n.longValue() : 0L;
+    }
+
+    private static double pct(long num, long den) {
+        return den > 0 ? Math.round(num * 1000.0 / den) / 10.0 : 0.0;
     }
 
     /** 定时扫描过期单据（每 5 分钟兜底清理） */
@@ -784,48 +830,61 @@ public class DecisionService {
                 grant.maxUses(), grant.usedCount() + 1, grant.expiresAt(), grant.createdAt(), grant.revokedAt());
     }
 
-    private DecideResponse buildDecideResponse(DecisionEntity entity) {
-        return buildDecideResponse(entity, MODE_NEED_RESUME);
-    }
-
-    private DecideResponse buildDecideResponse(DecisionEntity entity, String mode) {
-        String resumePrompt;
+    /** 根据已决决策单生成兜底续跑提示词（供 decide 响应与 AgentController 无断点兜底续跑共用） */
+    public String buildResumePrompt(DecisionEntity entity) {
+        if (entity == null) {
+            return null;
+        }
         if (TYPE_QUESTION.equals(entity.type())) {
             if (STATUS_ANSWERED.equals(entity.status())) {
-                resumePrompt = "用户已完成需求细节补充（decisionId=" + entity.decisionId()
+                return "用户已完成需求细节补充（decisionId=" + entity.decisionId()
                         + "），答案 JSON：" + entity.answerJson() + "。请基于这些明确需求继续完成任务。";
-            } else {
-                resumePrompt = "用户选择跳过需求补充（decisionId=" + entity.decisionId()
+            }
+            if (STATUS_SKIPPED.equals(entity.status()) || STATUS_TIMED_OUT_SOFT.equals(entity.status())) {
+                return "用户选择跳过需求补充（decisionId=" + entity.decisionId()
                         + "），请说明您的默认假设口径并继续完成任务。";
             }
-        } else if (TYPE_VERIFY_OUTCOME.equals(entity.type())) {
-            resumePrompt = switch (entity.status()) {
+            return null;
+        }
+        if (TYPE_VERIFY_OUTCOME.equals(entity.type())) {
+            return switch (entity.status()) {
                 case STATUS_CONFIRMED_SUCCEEDED -> "用户已人工核对主平台确认操作已生效（decisionId="
                         + entity.decisionId() + "），无需重复执行，请继续后续流程。";
                 case STATUS_CONFIRMED_NOT_APPLIED -> "用户已人工核对主平台确认未生效（decisionId="
-                        + entity.decisionId() + "），请安全重发一次写操作。";
-                default -> "用户已放弃本次核对操作（decisionId=" + entity.decisionId() + "），请终止该写操作。";
+                        + entity.decisionId() + "），请安全重发一次写操作（tool=" + entity.toolName() + "）。";
+                case STATUS_ABORTED -> "用户已放弃本次核对操作（decisionId=" + entity.decisionId() + "），请终止该写操作。";
+                default -> null;
             };
-        } else if (TYPE_PLAN_CONFIRM.equals(entity.type())) {
+        }
+        if (TYPE_PLAN_CONFIRM.equals(entity.type())) {
             if (STATUS_REVISED.equals(entity.status())) {
                 String words = StringUtils.hasText(entity.userWords()) ? entity.userWords() : "请调整计划";
-                resumePrompt = "用户打回了执行计划（decisionId=" + entity.decisionId()
+                return "用户打回了执行计划（decisionId=" + entity.decisionId()
                         + "），修改意见：「" + words + "」。请按用户意见调整计划并重新确认。";
-            } else {
-                resumePrompt = "用户已批准执行计划（decisionId=" + entity.decisionId()
+            }
+            if (STATUS_APPROVED.equals(entity.status())) {
+                return "用户已批准执行计划（decisionId=" + entity.decisionId()
                         + "），请按计划开始逐步执行。";
             }
-        } else if (STATUS_REJECTED.equals(entity.status())) {
+            return null;
+        }
+        if (STATUS_REJECTED.equals(entity.status())) {
             String reason = StringUtils.hasText(entity.userWords()) ? entity.userWords() : "未说明具体原因";
-            resumePrompt = "用户已在审批卡片上【拒绝】执行决策单 " + entity.decisionId()
+            return "【系统审批通知】用户已在审批卡片上【拒绝】执行决策单 " + entity.decisionId()
                     + "（" + entity.actionSummary() + "），拒绝理由：「" + reason
                     + "」。请不要调用写操作执行，并结合该拒绝理由向用户反馈调整建议或下一步方案。";
-        } else {
-            resumePrompt = "用户已在审批卡片上【批准】决策单 " + entity.decisionId()
+        }
+        if (STATUS_APPROVED.equals(entity.status())) {
+            return "【系统审批通知】用户已在审批卡片上【批准】决策单 " + entity.decisionId()
                     + "（" + entity.actionSummary() + "）。请立即调用工具 `" + entity.toolName()
                     + "` 完成执行（confirmToken 请传入 \"" + entity.decisionId()
-                    + "\"，并确保关联业务主键如 taskId/ledgerId 一致），然后向用户汇报执行结果。";
+                    + "\"，若为多专员模式请转交对应专员传入该 confirmToken 执行，并确保关联业务主键如 taskId/ledgerId 一致），然后向用户汇报执行结果。";
         }
+        return null;
+    }
+
+    private DecideResponse buildDecideResponse(DecisionEntity entity, String mode) {
+        String resumePrompt = buildResumePrompt(entity);
         return new DecideResponse(
                 entity.decisionId(),
                 entity.status(),
@@ -945,7 +1004,8 @@ public class DecisionService {
                     toLocalDateTime(rs.getTimestamp("expires_at")),
                     toLocalDateTime(rs.getTimestamp("created_at")),
                     toLocalDateTime(rs.getTimestamp("answered_at")),
-                    toLocalDateTime(rs.getTimestamp("consumed_at"))
+                    toLocalDateTime(rs.getTimestamp("consumed_at")),
+                    rs.getString("resolution_mode")
             );
         }
     };

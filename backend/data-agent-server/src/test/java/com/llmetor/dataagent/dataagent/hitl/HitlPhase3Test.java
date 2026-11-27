@@ -16,11 +16,20 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.net.ConnectException;
+import java.net.NoRouteToHostException;
+import java.net.SocketException;
 import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
+import javax.net.ssl.SSLHandshakeException;
+import java.io.EOFException;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import com.llmetor.miniagentx.agent.ToolExecutionContext;
+import com.llmetor.miniagentx.interrupt.HitlParkException;
+import com.llmetor.miniagentx.model.RunnableParams;
 
 import static com.llmetor.dataagent.dataagent.hitl.DecisionModels.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -139,10 +148,16 @@ class HitlPhase3Test {
                 client.post("/doc/ledger/submit-for-review", Map.of("id", 1), "tok", 1L));
         server.verify();
 
-        // ConnectException -> 未发送，不抛 UnknownOutcomeException
+        // ConnectException / UnknownHostException / NoRouteToHostException / SSLHandshakeException -> 未发送
         assertFalse(RestActionClient.isUnknownOutcomeCause(new ConnectException("Connection refused")));
-        // SocketTimeoutException(Read timed out) -> 已发送结果未知，抛 UnknownOutcomeException
+        assertFalse(RestActionClient.isUnknownOutcomeCause(new UnknownHostException("api.example.com")));
+        assertFalse(RestActionClient.isUnknownOutcomeCause(new NoRouteToHostException("No route to host")));
+        assertFalse(RestActionClient.isUnknownOutcomeCause(new SSLHandshakeException("PKIX path building failed")));
+        assertFalse(RestActionClient.isUnknownOutcomeCause(new SocketTimeoutException("connect timed out")));
+        // Read timed out / EOF / Connection reset -> 已发送结果未知，抛 UnknownOutcomeException
         assertTrue(RestActionClient.isUnknownOutcomeCause(new SocketTimeoutException("Read timed out")));
+        assertTrue(RestActionClient.isUnknownOutcomeCause(new EOFException("Unexpected EOF")));
+        assertTrue(RestActionClient.isUnknownOutcomeCause(new SocketException("Connection reset")));
     }
 
     @Test
@@ -224,6 +239,193 @@ class HitlPhase3Test {
         assertEquals(TYPE_PERMISSION, ordered.get(1).type());
         assertEquals(TYPE_PLAN_CONFIRM, ordered.get(2).type());
         assertEquals(TYPE_QUESTION, ordered.get(3).type());
+    }
+
+    @Test
+    void verifyOutcome_slowPathParkAndResume_succeededAndRetry() {
+        props.setInlineAwaitSeconds(1);
+        AtomicInteger calls = new AtomicInteger(0);
+
+        // 1. 首次调用超时并超 1s 未核对 -> 抛出 HitlParkException 挂起
+        HitlParkException parkEx = assertThrows(HitlParkException.class, () ->
+                hitlToolHelper.executeWithVerifyOutcome("submitLedgerForReview", "提交台账审核", "L-PARK-01",
+                        1001L, "conv-v-park",
+                        () -> {
+                            calls.incrementAndGet();
+                            throw new UnknownOutcomeException("POST", "/doc/ledger/submit-for-review",
+                                    "2026-11-27 10:00:00", "Read timed out", 0, new SocketTimeoutException("Read timed out"));
+                        },
+                        res -> "OK"));
+        String decId = parkEx.getDecisionId();
+        assertNotNull(decId);
+
+        // 2. 挂起后慢路径核对：主平台已生效 -> 短路收口且严禁重发
+        DecisionEntity pending = decisionService.findById(decId);
+        DecideResponse resp1 = decisionService.decide(decId, 1001L, "张三", "127.0.0.1",
+                new DecideRequest(OPTION_CONFIRMED_SUCCEEDED, pending.revision(), "cmd-park-1", null, null));
+        assertEquals(MODE_NEED_RESUME, resp1.mode());
+
+        RunnableParams rp = RunnableParams.builder().conversationId("conv-v-park").userId("1001").build();
+        ToolExecutionContext.set(rp, "conv-v-park", "tc-1", null, null, decId, null, null);
+        try {
+            String shortCircuit = hitlToolHelper.checkVerifyOutcomeShortCircuit("submitLedgerForReview");
+            assertNotNull(shortCircuit);
+            assertTrue(shortCircuit.contains("主平台已生效"));
+            assertEquals(1, calls.get());
+        } finally {
+            ToolExecutionContext.clear();
+        }
+
+        // 3. 另一单挂起后选择「确认未生效，重新执行」-> 放行并精确重发 1 次
+        HitlParkException parkEx2 = assertThrows(HitlParkException.class, () ->
+                hitlToolHelper.executeWithVerifyOutcome("approveTask", "审核通过", "T-PARK-02",
+                        1001L, "conv-v-park2",
+                        () -> {
+                            calls.incrementAndGet();
+                            throw new UnknownOutcomeException("POST", "/doc/ledger-process/approve",
+                                    "2026-11-27 10:01:00", "HTTP 504", 504, null);
+                        },
+                        res -> "APPROVED:" + res));
+        String decId2 = parkEx2.getDecisionId();
+        DecisionEntity pending2 = decisionService.findById(decId2);
+        decisionService.decide(decId2, 1001L, "张三", "127.0.0.1",
+                new DecideRequest(OPTION_CONFIRMED_NOT_APPLIED, pending2.revision(), "cmd-park-2", null, null));
+
+        RunnableParams rp2 = RunnableParams.builder().conversationId("conv-v-park2").userId("1001").build();
+        ToolExecutionContext.set(rp2, "conv-v-park2", "tc-2", null, null, decId2, null, null);
+        try {
+            assertNull(hitlToolHelper.checkVerifyOutcomeShortCircuit("approveTask"));
+            assertTrue(hitlToolHelper.isResumingVerifyRetry("approveTask"));
+            String out = hitlToolHelper.executeWithVerifyOutcome("approveTask", "审核通过", "T-PARK-02",
+                    1001L, "conv-v-park2",
+                    () -> {
+                        calls.incrementAndGet();
+                        return "DONE";
+                    },
+                    res -> "APPROVED:" + res);
+            assertTrue(out.contains("APPROVED:DONE"));
+            assertEquals(3, calls.get());
+        } finally {
+            ToolExecutionContext.clear();
+        }
+    }
+
+    @Test
+    void decide_conflictDoesNotLeakGrant_andMetricsIncludeFastSlowRates() throws Exception {
+        CreateResult created = decisionService.createOrAutoApprove(new CreateDecisionRequest(
+                "conv-grant-1", "conv-grant-1", null, null, 3001L,
+                TYPE_PERMISSION, "submitLedgerForReview",
+                "submitLedgerForReview:SUBMIT:project=P1", "仅限 P1", true,
+                "提审", "P1", List.of(), "提审 P1", Map.of("p", 1), "h-g1", 30));
+        String decId = created.entity().decisionId();
+
+        // 乐观锁版本冲突（revision=999）必须回滚，不能残留 grant 记录
+        assertThrows(ResponseStatusException.class, () -> decisionService.decide(
+                decId, 3001L, "李四", "127.0.0.1",
+                new DecideRequest(OPTION_ALLOW_SESSION, 999, "cmd-bad-rev", null, null)));
+        Integer grantCount = jdbc.queryForObject("SELECT COUNT(*) FROM agentx_decision_grant", Integer.class);
+        assertEquals(0, grantCount);
+
+        // 正常提交 ALLOW_SESSION（模拟快路径唤醒）
+        CompletableFuture<DecisionAwaitRegistry.AwaitResult> waiter = CompletableFuture.supplyAsync(() ->
+                decisionService.awaitDecision(decId, false));
+        Thread.sleep(60);
+        DecideResponse okResp = decisionService.decide(
+                decId, 3001L, "李四", "127.0.0.1",
+                new DecideRequest(OPTION_ALLOW_SESSION, 1, "cmd-ok-g1", null, null));
+        assertEquals(MODE_INLINE_RESUMED, okResp.mode());
+        assertNotNull(okResp.grantId());
+        assertEquals(DecisionAwaitRegistry.AwaitState.APPROVED, waiter.get().state());
+
+        // commandId 幂等重放应保留 INLINE_RESUMED 模式
+        DecideResponse replayResp = decisionService.decide(
+                decId, 3001L, "李四", "127.0.0.1",
+                new DecideRequest(OPTION_ALLOW_SESSION, 1, "cmd-ok-g1", null, null));
+        assertEquals(MODE_INLINE_RESUMED, replayResp.mode());
+
+        // 验证监控指标聚合包含快慢路径统计
+        Map<String, Object> metrics = decisionService.getHitlMetrics(24);
+        assertTrue(((Number) metrics.get("total")).longValue() >= 1L);
+        assertTrue(((Number) metrics.get("inlineCount")).longValue() >= 1L);
+        assertNotNull(metrics.get("inlineRate"));
+        assertNotNull(metrics.get("slowPathRate"));
+
+        // 验证 buildResumePrompt 覆盖三期所有终态
+        DecisionEntity qAns = new DecisionEntity(
+                "d1", "c1", "s1", null, null, 1L, TYPE_QUESTION, STATUS_ANSWERED, 2,
+                "ask_user_question", null, "提问", "{}", "h", null, OPTION_SUBMIT_ANSWERS,
+                "{\"Q1\":\"A\"}", null, null, 1L, "U", null, "c", null, null, null, null, MODE_NEED_RESUME);
+        assertTrue(decisionService.buildResumePrompt(qAns).contains("答案 JSON"));
+
+        DecisionEntity pApp = new DecisionEntity(
+                "d2", "c1", "s1", null, null, 1L, TYPE_PLAN_CONFIRM, STATUS_APPROVED, 2,
+                "confirm_plan", null, "计划", "{}", "h", null, OPTION_APPROVE_PLAN,
+                null, null, null, 1L, "U", null, "c", null, null, null, null, MODE_NEED_RESUME);
+        assertFalse(decisionService.buildResumePrompt(pApp).contains("confirmToken"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void questionRequired_fastPathAndOptionDescriptions_andSlowPathParkResume() throws Exception {
+        // 1. required=true + optionDescriptions 快路径作答
+        Map<String, Object> descs = Map.of(
+                "1012测试 / 前期配套文件", "草稿批次 DOC-202611 · 已填 2/8 项",
+                "南三高速公路 / 合同管理", "草稿批次 DOC-202610 · 已填 5/6 项");
+        CompletableFuture<String> fastFuture = CompletableFuture.supplyAsync(() -> askTool.askUserQuestion(
+                List.of(new AskUserQuestionTool.QuestionItem(
+                        "Q1", "请选择要填报的草稿：", "single",
+                        List.of("1012测试 / 前期配套文件", "南三高速公路 / 合同管理"),
+                        descs, true)),
+                "请选择要填报的项目 / 草稿",
+                true,
+                "1001",
+                "conv-req-fast"));
+
+        HitlCardPayload fastPending = waitForPending("conv-req-fast");
+        assertEquals(TYPE_QUESTION, fastPending.type());
+        assertFalse(fastPending.allowSessionGrant());
+        assertTrue(fastPending.remainingSeconds() > 600); // 默认 30 分钟有效期
+        Map<String, Object> raw = (Map<String, Object>) fastPending.rawPayload();
+        assertEquals(Boolean.TRUE, raw.get("required"));
+        List<Map<String, Object>> qList = (List<Map<String, Object>>) raw.get("questions");
+        assertEquals("草稿批次 DOC-202611 · 已填 2/8 项",
+                ((Map<String, Object>) qList.get(0).get("optionDescriptions")).get("1012测试 / 前期配套文件"));
+
+        DecideResponse fastResp = decisionService.decide(
+                fastPending.decisionId(), 1001L, "张三", "127.0.0.1",
+                new DecideRequest(OPTION_SUBMIT_ANSWERS, fastPending.revision(), "cmd-req-1", null,
+                        Map.of("Q1", "1012测试 / 前期配套文件")));
+        assertEquals(MODE_INLINE_RESUMED, fastResp.mode());
+        assertTrue(fastFuture.get().contains("1012测试 / 前期配套文件"));
+
+        // 2. required=true 超时转 HitlParkException 挂起，不软跳过，且慢路径恢复前置短路不二次弹窗
+        props.setInlineAwaitSeconds(1);
+        List<AskUserQuestionTool.QuestionItem> reqQuestions = List.of(
+                new AskUserQuestionTool.QuestionItem("Q1", "请选择审核结论：", "single", List.of("审批通过", "驳回退回"), false));
+        HitlParkException parkEx = assertThrows(HitlParkException.class, () ->
+                askTool.askUserQuestion(reqQuestions, "请确认审核处理方式", true, "1001", "conv-req-park"));
+        String decId = parkEx.getDecisionId();
+        assertNotNull(decId);
+
+        List<HitlCardPayload> stillPending = decisionService.listPending(1001L, "conv-req-park");
+        assertEquals(1, stillPending.size());
+        assertEquals(STATUS_PENDING, stillPending.get(0).status());
+
+        DecideResponse slowResp = decisionService.decide(
+                decId, 1001L, "张三", "127.0.0.1",
+                new DecideRequest(OPTION_SUBMIT_ANSWERS, stillPending.get(0).revision(), "cmd-req-2", null,
+                        Map.of("Q1", "驳回退回")));
+        assertEquals(MODE_NEED_RESUME, slowResp.mode());
+
+        RunnableParams rp = RunnableParams.builder().conversationId("conv-req-park").userId("1001").build();
+        ToolExecutionContext.set(rp, "conv-req-park", "tc-req", null, null, decId, null, null);
+        try {
+            String resumedOut = askTool.askUserQuestion(reqQuestions, "请确认审核处理方式", true, "1001", "conv-req-park");
+            assertTrue(resumedOut.contains("驳回退回"));
+            assertEquals(1, decisionService.listByConversation(1001L, "conv-req-park").size());
+        } finally {
+            ToolExecutionContext.clear();
+        }
     }
 
     private HitlCardPayload waitForPending(String convId) throws InterruptedException {

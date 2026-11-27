@@ -17,8 +17,11 @@ import org.springframework.web.client.RestClientResponseException;
 import java.io.EOFException;
 import java.io.IOException;
 import java.net.ConnectException;
+import java.net.NoRouteToHostException;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
+import javax.net.ssl.SSLHandshakeException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -234,7 +237,11 @@ public class RestActionClient {
     public static boolean isUnknownOutcomeCause(Throwable t) {
         Throwable cur = t;
         while (cur != null) {
-            if (cur instanceof ConnectException) {
+            // 连接建立前即失败（DNS / 路由不可达 / 连接拒绝 / TLS 握手失败）：请求确定未发出
+            if (cur instanceof ConnectException
+                    || cur instanceof UnknownHostException
+                    || cur instanceof NoRouteToHostException
+                    || cur instanceof SSLHandshakeException) {
                 return false;
             }
             if (cur instanceof SocketTimeoutException ste) {
@@ -249,8 +256,11 @@ public class RestActionClient {
             }
             if (cur instanceof IOException ioe) {
                 String msg = ioe.getMessage();
-                if (msg != null && msg.toLowerCase().contains("connect")) {
-                    return false;
+                if (msg != null) {
+                    String lower = msg.toLowerCase();
+                    if (lower.contains("connect") || lower.contains("handshake") || lower.contains("unknown host")) {
+                        return false;
+                    }
                 }
                 return true;
             }

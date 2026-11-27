@@ -22,15 +22,15 @@
       v-model="visible"
       title="待我处理"
       direction="rtl"
-      size="400px"
+      size="420px"
       append-to-body
     >
       <template #header>
-        <div class="flex items-center justify-between pr-2">
+        <div class="flex flex-col gap-2 pr-2">
           <div class="flex items-center gap-2 text-sm font-semibold text-gray-900">
             <span>待我处理 ({{ pendingList.length }})</span>
           </div>
-          <div class="flex flex-wrap items-center gap-1 rounded-lg bg-gray-100 p-0.5 text-xs">
+          <div class="flex flex-wrap items-center gap-1 self-start rounded-lg bg-gray-100 p-0.5 text-xs">
             <button
               v-for="tab in filterTabs"
               :key="tab.value"
@@ -59,19 +59,19 @@
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5 text-xs font-semibold" :class="cardTitleClass(item.type)">
-                <span class="rounded px-1.5 py-0.5 text-[11px]" :class="badgeClass(item.type)">
+                <span class="shrink-0 rounded px-1.5 py-0.5 text-[11px]" :class="badgeClass(item.type)">
                   [{{ typeText(item.type) }}]
                 </span>
-                <span class="truncate">{{ item.actionSummary || item.actionLabel || item.toolName }}</span>
+                <span class="min-w-0 truncate">{{ item.actionSummary || item.actionLabel || item.toolName }}</span>
               </div>
-              <div class="mt-1.5 text-xs text-gray-500">
+              <div class="mt-1.5 truncate text-xs text-gray-500" :title="item.conversationTitle || item.conversationId">
                 会话：{{ item.conversationTitle || item.conversationId }}
               </div>
               <div class="mt-1 text-[11px]" :class="remainClass(item.type)">
                 剩余 {{ formatRemain(item.remainingSeconds) }}
               </div>
             </div>
-            <el-button size="small" type="primary" plain @click="goHandle(item)">
+            <el-button class="shrink-0" size="small" type="primary" plain @click="goHandle(item)">
               去处理
             </el-button>
           </div>

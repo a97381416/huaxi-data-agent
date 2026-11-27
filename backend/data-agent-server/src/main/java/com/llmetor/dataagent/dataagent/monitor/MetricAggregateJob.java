@@ -176,6 +176,14 @@ public class MetricAggregateJob {
                 if (hitlAvgMs != null) {
                     rows.add(metricRow(bucket, "hitl_avg_response_ms", hitlAvgMs));
                 }
+                Long inlineCnt = jdbc.queryForObject(
+                        "SELECT COUNT(*) FROM agentx_decision WHERE resolution_mode = 'INLINE_RESUMED' AND created_at >= ? AND created_at < ?",
+                        Long.class, start, end);
+                Long slowCnt = jdbc.queryForObject(
+                        "SELECT COUNT(*) FROM agentx_decision WHERE resolution_mode = 'NEED_RESUME' AND created_at >= ? AND created_at < ?",
+                        Long.class, start, end);
+                rows.add(metricRow(bucket, "hitl_inline_count", inlineCnt == null ? 0 : inlineCnt));
+                rows.add(metricRow(bucket, "hitl_slow_count", slowCnt == null ? 0 : slowCnt));
             }
         } catch (Exception ignored) {
             // 忽略 HITL 表未初始化的情况

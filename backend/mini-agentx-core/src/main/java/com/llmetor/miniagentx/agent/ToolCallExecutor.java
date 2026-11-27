@@ -59,13 +59,15 @@ public class ToolCallExecutor {
                     List<MergedToolCall> remainingCalls, List<ToolExecutionOutcome> completedOutcomes);
     }
 
-    /** 默认非并发安全（HITL 高危）工具集合：一轮命中多个时自动切入串行队列逐个审批 */
+    /** 默认非并发安全（HITL 高危/交互）工具集合：一轮命中多个时自动切入串行队列逐个审批并预落盘快照 */
     public static final Set<String> DEFAULT_SERIAL_TOOLS = Set.of(
             "approveTask",
             "rejectTask",
             "partialApproveLedger",
             "submitLedgerForReview",
-            "resubmitLedger"
+            "resubmitLedger",
+            "ask_user_question",
+            "confirm_plan"
     );
 
     private final ObjectMapper mapper = new ObjectMapper();
@@ -139,12 +141,14 @@ public class ToolCallExecutor {
         for (int i = 0; i < n; i++) {
             final int index = i;
             final MergedToolCall call = calls.get(i);
+            final Consumer<String> preParkSaver = preParkHook == null ? null
+                    : decId -> preParkHook.onPrePark(decId, index, List.of());
             executor.execute(() -> {
                 ToolExecutionOutcome outcome;
                 try {
                     outcome = executeOne(call, toolMap, params, conversationId,
                             parentSessionId, interruptCtx, stepEmitter, sink, emitLock,
-                            null, null, null, null);
+                            null, null, preParkSaver, null);
                 } catch (HitlParkException parkEx) {
                     // 子 Agent 内部可能触发 HITL 挂起（SubAgentTool 透传 HitlParkException）
                     if (onPark != null) {

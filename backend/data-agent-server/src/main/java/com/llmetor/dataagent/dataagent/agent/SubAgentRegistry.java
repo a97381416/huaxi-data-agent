@@ -131,7 +131,7 @@ public class SubAgentRegistry {
 
         List<ToolCallback> result = new ArrayList<>();
 
-        // 1. 问数分析子 Agent（常驻 SQL 六工具 + lookupGlossary + MCP 图表 + TodoWrite）
+        // 1. 问数分析子 Agent（常驻 SQL 六工具 + lookupGlossary + HITL + MCP 图表 + TodoWrite）
         if (isSkillEnabledOrFallback(CODE_DATA_ANALYSIS)) {
             List<ToolCallback> tools = new ArrayList<>(toolGroups.dataAnalysisTools());
             if (alwaysMcpTools != null && !alwaysMcpTools.isEmpty()) {
@@ -143,7 +143,8 @@ public class SubAgentRegistry {
             String prompt = buildSubPrompt(CODE_DATA_ANALYSIS,
                     "你是华西项目管理平台的「数据分析专员」，负责查表、统计、对比、趋势分析、明细查询与可视化图表生成。"
                             + "你的 SQL 与图表工具已全部常驻可用，无需调用 tool_search，请直接按业务规范执行。"
-                            + "面对「有多少/统计/汇总」类问题，优先使用 1~2 条聚合 SQL（COUNT/GROUP BY）直接得出结论并作答，避免无意义的多轮逐表探查或全量明细展开。",
+                            + "当用户需求存在关键统计口径、时间范围或报告深度歧义时，调用 ask_user_question(required=false) 弹出 1~3 题轻量澄清卡（附推荐默认项），严禁在正文输出长串文本提问清单。"
+                            + "【查询收口铁律】轻量问题用 1~2 条聚合 SQL，完整报告用 3~6 条核心聚合 SQL（TopN 用 LIMIT 15）；拿到核心汇总指标后必须立即收口输出报告，严禁发散探测无关表或分页全拉导致无止境查库超时！",
                     userCtx, filesCtx);
             result.add(new SubAgentTool(
                     TOOL_DATA_ANALYSIS,
@@ -154,16 +155,16 @@ public class SubAgentRegistry {
                             pauseStateStore, contextPolicy, loopGuardConfig)));
         }
 
-        // 2. 首次填报子 Agent（常驻填报 7 工具 + cancelConfirm + TodoWrite）
+        // 2. 首次填报子 Agent（常驻填报 7 工具 + HITL + TodoWrite）
         if (isSkillEnabledOrFallback(CODE_DECLARANT_FILL)) {
             List<ToolCallback> tools = new ArrayList<>(toolGroups.declarantFillTools());
             if (hasAnyFile) {
                 tools.addAll(List.of(ToolCallbacks.from(analyzeFileTool)));
             }
             String prompt = buildSubPrompt(CODE_DECLARANT_FILL,
-                    "你是华西项目管理平台的「资料填报专员」，负责项目资料首次填报全流程（查我的项目→查阶段树→拉填报节点清单→暂存草稿→查询审核人→生成提审确认计划）。"
-                            + "你的全部填报工具已常驻可用，无需调用 tool_search。若任务要求跨项目全量数量统计（如汇总全部已上报/已通过数量），请立即说明本专员仅负责填报办理与草稿管理、无法做全量聚合统计（需交由数据分析专员查库），严禁逐项目循环翻树盲猜！"
-                            + "涉及 submitLedgerForReview 签发确认令牌（ct_xxx）时，严禁自行二次调用确认，必须把确认计划原样返回给用户等待确认！",
+                    "你是华西项目管理平台的「资料填报专员」，负责项目资料首次填报全流程（查草稿与我的项目→查阶段树→拉填报节点清单→暂存草稿→查询审核人→提交审核）。"
+                            + "你的全部填报与 HITL 交互工具已常驻可用，无需调用 tool_search。若任务要求跨项目全量数量统计（如汇总全部已上报/已通过数量），请立即说明本专员仅负责填报办理与草稿管理、无法做全量聚合统计（需交由数据分析专员查库），严禁逐项目循环翻树盲猜！"
+                            + "交互遵循「表格看全景，卡片做决策」：多项目/草稿/阶段/节点及审核人挑选先输出精简 Markdown 状态表再调 ask_user_question(required=true) 弹卡（唯一命中直接跳过）；批量修改状态或新增自定义类别先调 confirm_plan；收齐提审参数后直接调用 submitLedgerForReview，由系统自动弹出 HITL 授权确认卡，严禁要求用户手打序号或确认令牌，严禁替用户代签。",
                     userCtx, filesCtx);
             result.add(new SubAgentTool(
                     TOOL_DECLARANT_FILL,
@@ -174,15 +175,15 @@ public class SubAgentRegistry {
                             pauseStateStore, contextPolicy, loopGuardConfig)));
         }
 
-        // 3. 审核处理子 Agent（常驻审核 6 工具 + cancelConfirm + TodoWrite）
+        // 3. 审核处理子 Agent（常驻审核 6 工具 + HITL + TodoWrite）
         if (isSkillEnabledOrFallback(CODE_REVIEWER_WORKFLOW)) {
             List<ToolCallback> tools = new ArrayList<>(toolGroups.reviewerWorkflowTools());
             if (hasAnyFile) {
                 tools.addAll(List.of(ToolCallbacks.from(analyzeFileTool)));
             }
             String prompt = buildSubPrompt(CODE_REVIEWER_WORKFLOW,
-                    "你是华西项目管理平台的「审核审批专员」，负责查看待审核任务、审阅台账详情、查看会审选项，以及执行通过/驳回/部分通过的确认计划。"
-                            + "你的全部审核工具已常驻可用，无需调用 tool_search。签发确认令牌（ct_xxx）后严禁自行二次确认，必须原样返回给用户等待确认！",
+                    "你是华西项目管理平台的「审核审批专员」，负责查看待审核任务、审阅台账详情、查看会审选项，以及执行通过/驳回/部分通过审批。"
+                            + "你的全部审核与 HITL 交互工具已常驻可用，无需调用 tool_search。交互遵循「表格看全景，卡片做决策」：多条待审任务先输出精简表再调 ask_user_question(required=true) 选任务（唯一命中跳过）；审阅明细后用 1 张 2~3 步 ask_user_question(required=true) 收齐审核结论、意见与特殊流程下级人员；PM 部分通过先走 confirm_plan 核对逐条清单；参数收齐后直接调用 approveTask / rejectTask / partialApproveLedger，由系统自动弹出 L3 红色 HITL 授权确认卡，严禁要求用户手打序号或确认令牌。",
                     userCtx, filesCtx);
             result.add(new SubAgentTool(
                     TOOL_REVIEWER_WORKFLOW,
@@ -193,7 +194,7 @@ public class SubAgentRegistry {
                             pauseStateStore, contextPolicy, loopGuardConfig)));
         }
 
-        // 4. 驳回重提子 Agent（常驻任务重提 5 工具 + TodoWrite）
+        // 4. 驳回重提子 Agent（常驻任务重提 4 工具 + HITL + TodoWrite）
         if (isSkillEnabledOrFallback(CODE_DECLARANT_WORKFLOW)) {
             List<ToolCallback> tools = new ArrayList<>(toolGroups.declarantWorkflowTools());
             if (hasAnyFile) {
@@ -201,7 +202,8 @@ public class SubAgentRegistry {
             }
             String prompt = buildSubPrompt(CODE_DECLARANT_WORKFLOW,
                     "你是华西项目管理平台的「驳回重提专员」，负责查看申报人被驳回的待办任务、查看被驳回明细、暂存修改草稿以及重新提交审核。"
-                            + "你的全部重提工具已常驻可用，无需调用 tool_search。调用 getTaskDetail 前必须确认任务属于资料台账类且带有效台账 ID，严禁把项目批注等非台账任务 ID 反复传入 getTaskDetail！签发确认令牌（ct_xxx）后严禁自行二次确认，必须原样返回给用户等待确认！",
+                            + "你的全部重提与 HITL 交互工具已常驻可用，无需调用 tool_search。调用 getTaskDetail 前必须确认任务属于资料台账类且带有效台账 ID，严禁把项目批注等非台账任务 ID 反复传入 getTaskDetail！"
+                            + "交互遵循「表格看全景，卡片做决策」：多条被驳任务挑选及主动上传「待确认」文件类别映射使用 ask_user_question(required=true)（唯一命中跳过）；批量修改先走 confirm_plan；重提参数收齐后直接调用 resubmitLedger，由系统自动弹出 HITL 授权确认卡，严禁要求用户手打序号或确认令牌。",
                     userCtx, filesCtx);
             result.add(new SubAgentTool(
                     TOOL_DECLARANT_RESUBMIT,
@@ -215,9 +217,9 @@ public class SubAgentRegistry {
         return List.copyOf(result);
     }
 
-    /** 限制子 Agent 单次委托最大轮次，防止无限探索拖垮 180s 超时窗口 */
+    /** 限制子 Agent 单次委托最大轮次，防止无限探索拖垮 600s 超时窗口 */
     private static int subMaxRounds(int maxRounds) {
-        return Math.min(Math.max(maxRounds, 1), 25);
+        return Math.min(Math.max(maxRounds, 1), 35);
     }
 
     private ReactAgent buildSubReactAgent(ChatModel chatModel,

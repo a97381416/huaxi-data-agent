@@ -5,9 +5,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.llmetor.dataagent.dataagent.action.ActionAuditLogger;
 import com.llmetor.dataagent.dataagent.action.FunctionPermissionChecker;
 import com.llmetor.dataagent.dataagent.action.RestActionClient;
+import com.llmetor.dataagent.dataagent.hitl.HitlToolHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -28,6 +30,8 @@ import java.util.Map;
 @Component
 public class FillFileEntryTool {
 
+    static final String ACTION = "fillFileEntry";
+
     private final FunctionPermissionChecker permissionChecker;
     private final RestActionClient restActionClient;
     private final FillContextSupport contextSupport;
@@ -35,6 +39,7 @@ public class FillFileEntryTool {
     private final FillPanelSupport panelSupport;
     private final ListFillNodesTool listFillNodesTool;
     private final ActionAuditLogger auditLogger;
+    private final HitlToolHelper hitlHelper;
 
     public FillFileEntryTool(FunctionPermissionChecker permissionChecker,
                              RestActionClient restActionClient,
@@ -43,6 +48,19 @@ public class FillFileEntryTool {
                              FillPanelSupport panelSupport,
                              ListFillNodesTool listFillNodesTool,
                              ActionAuditLogger auditLogger) {
+        this(permissionChecker, restActionClient, contextSupport, patchMerger,
+                panelSupport, listFillNodesTool, auditLogger, null);
+    }
+
+    @Autowired
+    public FillFileEntryTool(FunctionPermissionChecker permissionChecker,
+                             RestActionClient restActionClient,
+                             FillContextSupport contextSupport,
+                             FillPatchMerger patchMerger,
+                             FillPanelSupport panelSupport,
+                             ListFillNodesTool listFillNodesTool,
+                             ActionAuditLogger auditLogger,
+                             HitlToolHelper hitlHelper) {
         this.permissionChecker = permissionChecker;
         this.restActionClient = restActionClient;
         this.contextSupport = contextSupport;
@@ -50,6 +68,7 @@ public class FillFileEntryTool {
         this.panelSupport = panelSupport;
         this.listFillNodesTool = listFillNodesTool;
         this.auditLogger = auditLogger;
+        this.hitlHelper = hitlHelper;
     }
 
     @Tool(name = "fillFileEntry",
@@ -76,6 +95,12 @@ public class FillFileEntryTool {
         Long tenant = FillContextSupport.parseLong(tenantId);
 
         try {
+            if (hitlHelper != null) {
+                String verifyDone = hitlHelper.checkVerifyOutcomeShortCircuit(ACTION);
+                if (verifyDone != null) {
+                    return verifyDone;
+                }
+            }
             String denied = permissionChecker.checkPermission(uid, ListFillNodesTool.PERMISSION);
             if (denied != null) {
                 return denied;
@@ -119,66 +144,83 @@ public class FillFileEntryTool {
             }
 
             // 建/续草稿
-            String ledgerId;
-            String docNumber;
-            if (ctx.hasDraft()) {
-                ledgerId = ctx.draftLedgerId();
-                docNumber = ledger.docNumber();
-                ObjectNode body = supportBody(ctx, payload);
-                body.put("id", Long.parseLong(ledgerId));
-                RestActionClient.ActionResult r = restActionClient.put(
-                        "/doc/ledger/update", body, token, tenant);
-                contextSupport.requireOk(r, "更新台账草稿");
-            } else {
-                ObjectNode body = supportBody(ctx, payload);
-                RestActionClient.ActionResult r = restActionClient.post(
-                        "/doc/ledger/create", body, token, tenant);
-                contextSupport.requireOk(r, "创建台账草稿");
-                ledgerId = r.data().asText("");
-                docNumber = "";
+            String bizId = ctx.hasDraft() ? ledger.docNumber()
+                    : ctx.project().projectName() + "/" + ctx.phase().phaseName();
+            if (hitlHelper != null) {
+                return hitlHelper.executeWithVerifyOutcome(
+                        ACTION,
+                        ctx.hasDraft() ? "更新台账草稿" : "新建台账草稿",
+                        bizId,
+                        uid,
+                        conversationId,
+                        () -> saveDraftRemote(ctx, payload, token, tenant),
+                        ledgerId -> formatFillSuccess(uid, conversationId, ctx, ledgerId, merged, payload, token, tenant)
+                );
             }
-
-            // 重拉最新草稿（批次号口径一致）
-            FillContextSupport.LedgerView fresh = contextSupport.loadLedgerDetail(ledgerId, token, tenant);
-            docNumber = fresh.docNumber();
-
-            auditLogger.log(ActionAuditLogger.entry()
-                    .conversationId(conversationId).userId(uid)
-                    .tool("fillFileEntry").action("stage-draft")
-                    .businessObject(docNumber)
-                    .success(true)
-                    .detail("changes=" + merged.changeCount() + ", rows=" + payload.size()
-                            + (ctx.hasDraft() ? ", update" : ", create"))
-                    .build());
-
-            StringBuilder sb = new StringBuilder("✅ 已暂存 ").append(merged.changeCount())
-                    .append(" 项修改（台账仍为草稿，未提审）：\n");
-            for (FillPatchMerger.ResolvedPatch rp : merged.resolved()) {
-                sb.append("- ").append(rp.node().isBlank() ? "" : "[" + rp.node() + "] ")
-                        .append(rp.category()).append(" · ").append(FillLabels.fieldLabel(rp.field()))
-                        .append("：").append(rp.oldValue()).append(" → ").append(rp.newValue()).append('\n');
-            }
-            for (FillPatchMerger.AddedRow ar : merged.added()) {
-                sb.append("- 新增自定义行 [").append(ar.node()).append("] ").append(ar.category())
-                        .append(" · ").append(FillLabels.fieldLabel(ar.field()))
-                        .append("：").append(ar.newValue()).append('\n');
-            }
-            sb.append("- 台账批次：**").append(docNumber.isEmpty() ? ledgerId : docNumber)
-                    .append("**（草稿").append(ctx.hasDraft() ? "续填" : "新建").append("）\n");
-
-            // 闸2 软校验：半成品允许，warnings 转达
-            List<String> warnings = panelSupport.softWarnings(payload);
-            if (!warnings.isEmpty()) {
-                sb.append("\n⚠️ 暂存成功，但有以下提醒（提审前需补齐）：\n");
-                for (String w : warnings) {
-                    sb.append("- ").append(w).append('\n');
-                }
-            }
-            sb.append("\n台账仍为草稿，可继续攒批修改；用户明确说「提交审核」时再走提审确认流程。");
-            return sb.toString();
+            String ledgerId = saveDraftRemote(ctx, payload, token, tenant);
+            return formatFillSuccess(uid, conversationId, ctx, ledgerId, merged, payload, token, tenant);
         } catch (FillContextSupport.TaskFlowException e) {
             return e.getMessage();
         }
+    }
+
+    private String saveDraftRemote(FillContextSupport.FillContext ctx, List<ObjectNode> payload,
+                                   String token, Long tenant) {
+        if (ctx.hasDraft()) {
+            String ledgerId = ctx.draftLedgerId();
+            ObjectNode body = supportBody(ctx, payload);
+            body.put("id", Long.parseLong(ledgerId));
+            RestActionClient.ActionResult r = restActionClient.put("/doc/ledger/update", body, token, tenant);
+            contextSupport.requireOk(r, "更新台账草稿");
+            return ledgerId;
+        }
+        ObjectNode body = supportBody(ctx, payload);
+        RestActionClient.ActionResult r = restActionClient.post("/doc/ledger/create", body, token, tenant);
+        contextSupport.requireOk(r, "创建台账草稿");
+        return r.data().asText("");
+    }
+
+    private String formatFillSuccess(Long uid, String conversationId, FillContextSupport.FillContext ctx,
+                                     String ledgerId, FillPatchMerger.MergeResult merged,
+                                     List<ObjectNode> payload, String token, Long tenant) {
+        // 重拉最新草稿（批次号口径一致）
+        FillContextSupport.LedgerView fresh = contextSupport.loadLedgerDetail(ledgerId, token, tenant);
+        String docNumber = fresh.docNumber();
+
+        auditLogger.log(ActionAuditLogger.entry()
+                .conversationId(conversationId).userId(uid)
+                .tool("fillFileEntry").action("stage-draft")
+                .businessObject(docNumber)
+                .success(true)
+                .detail("changes=" + merged.changeCount() + ", rows=" + payload.size()
+                        + (ctx.hasDraft() ? ", update" : ", create"))
+                .build());
+
+        StringBuilder sb = new StringBuilder("✅ 已暂存 ").append(merged.changeCount())
+                .append(" 项修改（台账仍为草稿，未提审）：\n");
+        for (FillPatchMerger.ResolvedPatch rp : merged.resolved()) {
+            sb.append("- ").append(rp.node().isBlank() ? "" : "[" + rp.node() + "] ")
+                    .append(rp.category()).append(" · ").append(FillLabels.fieldLabel(rp.field()))
+                    .append("：").append(rp.oldValue()).append(" → ").append(rp.newValue()).append('\n');
+        }
+        for (FillPatchMerger.AddedRow ar : merged.added()) {
+            sb.append("- 新增自定义行 [").append(ar.node()).append("] ").append(ar.category())
+                    .append(" · ").append(FillLabels.fieldLabel(ar.field()))
+                    .append("：").append(ar.newValue()).append('\n');
+        }
+        sb.append("- 台账批次：**").append(docNumber.isEmpty() ? ledgerId : docNumber)
+                .append("**（草稿").append(ctx.hasDraft() ? "续填" : "新建").append("）\n");
+
+        // 闸2 软校验：半成品允许，warnings 转达
+        List<String> warnings = panelSupport.softWarnings(payload);
+        if (!warnings.isEmpty()) {
+            sb.append("\n⚠️ 暂存成功，但有以下提醒（提审前需补齐）：\n");
+            for (String w : warnings) {
+                sb.append("- ").append(w).append('\n');
+            }
+        }
+        sb.append("\n台账仍为草稿，可继续攒批修改；用户明确说「提交审核」时再走提审确认流程。");
+        return sb.toString();
     }
 
     /** create/update 请求体（phaseId/projectId/fileEntries，对齐业务前端 payload） */

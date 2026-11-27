@@ -120,6 +120,12 @@ public class PartialApproveLedgerTool {
 
     private String planRound(Long uid, String taskId, List<DecisionSpec> decisions, String opinion,
                              String token, Long tenant, String conversationId) {
+        if (hitlHelper != null) {
+            String verifyDone = hitlHelper.checkVerifyOutcomeShortCircuit(ACTION);
+            if (verifyDone != null) {
+                return verifyDone;
+            }
+        }
         ReviewSupport.ReviewTaskRef task = support.findMyReviewTask(taskId, token, tenant);
         support.requireApprovalTodoTask(task);
         if (!task.docLedger()) {
@@ -221,6 +227,11 @@ public class PartialApproveLedgerTool {
         String canonical = canonicalJson(body);
         String hash = confirmTokenService.payloadHash(List.of(ACTION, task.taskId(), canonical));
         if (hitlHelper != null && hitlHelper.isEnabled(ACTION)) {
+            if (hitlHelper.isResumingVerifyRetry(ACTION)) {
+                return doExecutePartial(uid, task, body, outcomeNote,
+                        com.llmetor.miniagentx.agent.ToolExecutionContext.currentResumeDecisionId(),
+                        token, tenant, conversationId);
+            }
             String docNum = task.ledgerHeader().path("docNumber").asText("");
             String targetSummary = task.title() + (docNum.isBlank() ? "" : "（" + docNum + "）");
             List<DecisionModels.KeyParamItem> kps = List.of(
@@ -300,14 +311,7 @@ public class PartialApproveLedgerTool {
             if (!consume.ok()) {
                 return HitlToolHelper.formatConsumeError(consume, ACTION);
             }
-            RestActionClient.ActionResult r = restActionClient.post(
-                    "/doc/ledger-process/partial-approve", reqBody, token, tenant);
-            if (!r.success()) {
-                audit(uid, conversationId, "partial", task, confirmToken, false, r.msg());
-                return "❌ 部分通过执行失败：" + r.msg();
-            }
-            audit(uid, conversationId, "partial", task, confirmToken, true, "executed");
-            return "✅ 部分通过完成\n- 任务 " + task.title() + "：已办结（部分通过）\n- 影响：" + stored.outcomeNote() + "\n";
+            return doExecutePartial(uid, task, reqBody, stored.outcomeNote(), confirmToken, token, tenant, conversationId);
         }
 
         ReviewPlanCache.Plan plan = planCache.get(confirmToken);
@@ -350,20 +354,39 @@ public class PartialApproveLedgerTool {
             }
         }
 
-        RestActionClient.ActionResult r = restActionClient.post(
-                "/doc/ledger-process/partial-approve", plan.requestBody(), token, tenant);
-        if (!r.success()) {
-            planCache.remove(confirmToken);
-            audit(uid, conversationId, "partial", task, confirmToken, false, r.msg());
-            return "❌ 部分通过执行失败：" + r.msg() + "\n（计划已作废；如需重试请重新发起首轮。）";
-        }
-        planCache.remove(confirmToken);
-        audit(uid, conversationId, "partial", task, confirmToken, true, "executed");
+        return doExecutePartial(uid, task, plan.requestBody(), plan.outcomeNote(), confirmToken, token, tenant, conversationId);
+    }
 
-        StringBuilder sb = new StringBuilder("✅ 部分通过完成\n");
-        sb.append("- 任务 ").append(task.title()).append("：已办结（部分通过）\n");
-        sb.append("- 影响：").append(plan.outcomeNote()).append('\n');
-        return sb.toString();
+    private String doExecutePartial(Long uid, ReviewSupport.ReviewTaskRef task,
+                                    com.fasterxml.jackson.databind.JsonNode reqBody,
+                                    String outcomeNote, String confirmToken,
+                                    String token, Long tenant, String conversationId) {
+        String bizId = task.ledgerHeader() != null && !task.ledgerHeader().path("docNumber").asText("").isBlank()
+                ? task.ledgerHeader().path("docNumber").asText("") : "task:" + task.taskId();
+        if (hitlHelper != null) {
+            return hitlHelper.executeWithVerifyOutcome(
+                    ACTION,
+                    "台账部分通过",
+                    bizId,
+                    uid,
+                    conversationId,
+                    () -> restActionClient.post("/doc/ledger-process/partial-approve", reqBody, token, tenant),
+                    r -> formatPartialResult(uid, task, outcomeNote, confirmToken, conversationId, r)
+            );
+        }
+        RestActionClient.ActionResult r = restActionClient.post("/doc/ledger-process/partial-approve", reqBody, token, tenant);
+        return formatPartialResult(uid, task, outcomeNote, confirmToken, conversationId, r);
+    }
+
+    private String formatPartialResult(Long uid, ReviewSupport.ReviewTaskRef task, String outcomeNote,
+                                       String confirmToken, String conversationId, RestActionClient.ActionResult r) {
+        planCache.remove(confirmToken);
+        if (!r.success()) {
+            audit(uid, conversationId, "partial", task, confirmToken, false, r.msg());
+            return "❌ 部分通过执行失败：" + r.msg();
+        }
+        audit(uid, conversationId, "partial", task, confirmToken, true, "executed");
+        return "✅ 部分通过完成\n- 任务 " + task.title() + "：已办结（部分通过）\n- 影响：" + outcomeNote + "\n";
     }
 
     /** 同计划重签新令牌（现状守卫已通过、参数未变） */
@@ -463,6 +486,7 @@ public class PartialApproveLedgerTool {
                 .conversationId(conversationId).userId(uid)
                 .tool("partialApproveLedger").action(action)
                 .businessObject(biz).confirmToken(confirmToken)
+                .decisionId(confirmToken != null && confirmToken.startsWith("dec_") ? confirmToken : null)
                 .success(success)
                 .errorMessage(success ? null : detail)
                 .detail(success ? detail : null)

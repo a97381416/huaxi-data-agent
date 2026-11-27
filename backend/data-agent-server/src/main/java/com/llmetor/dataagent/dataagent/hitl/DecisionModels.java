@@ -179,8 +179,22 @@ public final class DecisionModels {
             LocalDateTime expiresAt,
             LocalDateTime createdAt,
             LocalDateTime answeredAt,
-            LocalDateTime consumedAt
+            LocalDateTime consumedAt,
+            String resolutionMode
     ) {
+        public DecisionEntity(
+                String decisionId, String conversationId, String sessionId, String toolCallId,
+                String agentCode, long ownerUserId, String type, String status, int revision,
+                String toolName, String scopeKey, String actionSummary, String payloadJson,
+                String payloadHash, String optionsJson, String decisionOption, String answerJson,
+                String userWords, String grantId, Long answeredBy, String answeredByName,
+                String clientIp, String commandId, LocalDateTime expiresAt, LocalDateTime createdAt,
+                LocalDateTime answeredAt, LocalDateTime consumedAt) {
+            this(decisionId, conversationId, sessionId, toolCallId, agentCode, ownerUserId, type, status,
+                    revision, toolName, scopeKey, actionSummary, payloadJson, payloadHash, optionsJson,
+                    decisionOption, answerJson, userWords, grantId, answeredBy, answeredByName, clientIp,
+                    commandId, expiresAt, createdAt, answeredAt, consumedAt, null);
+        }
     }
 
     /** 会话级同类授权实体（映射 agentx_decision_grant） */

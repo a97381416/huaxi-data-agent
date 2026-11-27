@@ -6,21 +6,21 @@
   >
     <!-- 1. 待处理态（PENDING 且未本地超时） -->
     <template v-if="isPendingActive">
-      <div class="flex items-center justify-between border-b border-amber-200/80 bg-amber-50/80 px-4 py-2.5 rounded-t-xl">
-        <div class="flex items-center gap-2 text-sm font-semibold text-amber-900">
-          <span class="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-xs text-white">!</span>
-          <span v-if="isQueued">
+      <div class="flex items-center justify-between gap-2 border-b border-amber-200/80 bg-amber-50/80 px-4 py-2.5 rounded-t-xl">
+        <div class="flex min-w-0 flex-1 items-center gap-2 text-sm font-semibold text-amber-900">
+          <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-500 text-xs text-white">!</span>
+          <span v-if="isQueued" class="min-w-0 truncate">
             待审批队列 (当前第 {{ card.queueIndex }} 项 / 共 {{ card.queueTotal }} 项)
           </span>
-          <span v-else>需要您的授权确认</span>
+          <span v-else class="shrink-0 whitespace-nowrap">需要您的授权确认</span>
           <span
             v-if="card.agentCode && card.agentCode !== 'single' && card.agentCode !== 'router'"
-            class="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-normal text-amber-700"
+            class="shrink-0 whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-normal text-amber-700"
           >
             来自专员 {{ card.agentCode }}
           </span>
         </div>
-        <span class="rounded-full bg-white/90 px-2.5 py-0.5 font-mono text-xs font-medium text-amber-700 shadow-xs">
+        <span class="shrink-0 whitespace-nowrap rounded-full bg-white/90 px-2.5 py-0.5 font-mono text-xs font-medium text-amber-700 shadow-xs">
           剩余 {{ formattedCountdown }}
         </span>
       </div>
@@ -28,27 +28,27 @@
       <!-- 二期 HITL：60s 超时降级为后台挂起时的温柔提示条（卡片依然可点击） -->
       <div
         v-if="card.parked"
-        class="flex items-center gap-2 border-b border-blue-200/70 bg-blue-50/80 px-4 py-1.5 text-xs text-blue-800"
+        class="flex items-start gap-2 border-b border-blue-200/70 bg-blue-50/80 px-4 py-1.5 text-xs text-blue-800"
       >
-        <span>⏸</span>
-        <span>任务已转入后台等待您的审批（有效至 {{ card.expiresAt || '30分钟内' }}）</span>
+        <span class="shrink-0">⏸</span>
+        <span class="min-w-0 flex-1 break-words">任务已转入后台等待您的审批（有效至 {{ card.expiresAt || '30分钟内' }}）</span>
       </div>
 
       <div class="space-y-2.5 px-4 py-3 text-[13px] text-gray-700">
         <div class="flex items-baseline gap-2">
           <span class="w-18 shrink-0 text-gray-400">动作类型</span>
-          <span class="font-semibold text-gray-900">{{ card.actionLabel || card.toolName }}</span>
+          <span class="min-w-0 flex-1 break-words font-semibold text-gray-900">{{ card.actionLabel || card.toolName }}</span>
         </div>
         <div class="flex items-baseline gap-2">
           <span class="w-18 shrink-0 text-gray-400">影响对象</span>
-          <span class="font-medium text-gray-800">{{ card.targetSummary || card.actionSummary }}</span>
+          <span class="min-w-0 flex-1 break-words font-medium text-gray-800">{{ card.targetSummary || card.actionSummary }}</span>
         </div>
         <div v-if="card.keyParams && card.keyParams.length" class="flex items-start gap-2">
           <span class="w-18 shrink-0 text-gray-400">关键参数</span>
           <ul class="min-w-0 flex-1 space-y-1">
             <li v-for="(kp, idx) in card.keyParams" :key="idx" class="flex items-baseline gap-1.5 text-xs">
-              <span class="text-gray-400">• {{ kp.label }}：</span>
-              <span class="break-all font-medium text-gray-800">{{ kp.value }}</span>
+              <span class="shrink-0 text-gray-400">• {{ kp.label }}：</span>
+              <span class="min-w-0 flex-1 break-all font-medium text-gray-800">{{ kp.value }}</span>
             </li>
           </ul>
         </div>
@@ -75,7 +75,7 @@
         >
           <div class="mb-1 font-medium text-amber-900">后续排队中（需逐项审批，只读预览）：</div>
           <ul class="space-y-0.5 pl-2">
-            <li v-for="(item, idx) in card.queuePreview" :key="item.toolCallId || idx">
+            <li v-for="(item, idx) in card.queuePreview" :key="item.toolCallId || idx" class="break-words">
               {{ (card.queueIndex || 1) + idx + 1 }}. {{ item.label || item.toolName }}（等待中）
             </li>
           </ul>
@@ -166,15 +166,15 @@
       v-else-if="isApprovedOrConsumed"
       class="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 text-xs text-emerald-800"
     >
-      <div class="flex items-center gap-2">
-        <span>✅</span>
-        <span>
+      <div class="flex min-w-0 flex-1 items-start gap-2">
+        <span class="shrink-0">✅</span>
+        <span class="min-w-0 flex-1 break-words">
           <strong>{{ card.answeredByName || '当前用户' }}</strong>
           于 {{ card.answeredAt || card.createdAt }} 批准「{{ card.actionLabel || card.toolName }}」
           （{{ card.decisionOption === 'ALLOW_SESSION' ? '本会话同类放行' : '仅本次' }}）
         </span>
       </div>
-      <span v-if="card.status === 'CONSUMED'" class="rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] text-emerald-700">
+      <span v-if="card.status === 'CONSUMED'" class="shrink-0 rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] text-emerald-700">
         已执行
       </span>
     </div>
@@ -184,30 +184,30 @@
       v-else-if="card.status === 'AUTO_APPROVED_BY_GRANT'"
       class="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 text-xs text-blue-800"
     >
-      <div class="flex items-center gap-1.5">
-        <span>⚡</span>
-        <span>
+      <div class="flex min-w-0 flex-1 items-start gap-1.5">
+        <span class="shrink-0">⚡</span>
+        <span class="min-w-0 flex-1 break-words">
           已依据您授予的会话权限自动放行「{{ card.actionSummary || card.actionLabel }}」
         </span>
       </div>
       <button
         v-if="card.grantId && !grantRevoked"
         type="button"
-        class="rounded border border-blue-300 bg-white px-2 py-0.5 text-[11px] font-medium text-blue-700 hover:bg-blue-50"
+        class="shrink-0 rounded border border-blue-300 bg-white px-2 py-0.5 text-[11px] font-medium text-blue-700 hover:bg-blue-50"
         @click="onRevokeGrant"
       >
         撤销本会话授权
       </button>
-      <span v-else-if="grantRevoked" class="text-[11px] text-gray-400">已撤销同类授权</span>
+      <span v-else-if="grantRevoked" class="shrink-0 text-[11px] text-gray-400">已撤销同类授权</span>
     </div>
 
     <!-- 4. 已拒绝留痕态 -->
     <div
       v-else-if="card.status === 'REJECTED'"
-      class="flex items-center gap-2 px-3.5 py-2 text-xs text-red-800"
+      class="flex items-start gap-2 px-3.5 py-2 text-xs text-red-800"
     >
-      <span>❌</span>
-      <span>
+      <span class="shrink-0">❌</span>
+      <span class="min-w-0 flex-1 break-words">
         <strong>{{ card.answeredByName || '当前用户' }}</strong>
         于 {{ card.answeredAt || card.createdAt }} 拒绝「{{ card.actionLabel || card.toolName }}」
         <template v-if="card.userWords">｜理由：{{ card.userWords }}</template>
