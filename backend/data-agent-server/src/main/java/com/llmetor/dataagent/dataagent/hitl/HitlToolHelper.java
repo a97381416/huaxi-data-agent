@@ -2,31 +2,51 @@ package com.llmetor.dataagent.dataagent.hitl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.llmetor.dataagent.dataagent.action.ActionAuditLogger;
+import com.llmetor.dataagent.dataagent.action.UnknownOutcomeException;
 import com.llmetor.dataagent.dataagent.hitl.DecisionModels.*;
 import static com.llmetor.dataagent.dataagent.hitl.DecisionModels.*;
 import com.llmetor.miniagentx.agent.ToolExecutionContext;
 import com.llmetor.miniagentx.interrupt.HitlParkException;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
- * 写操作工具接入一期 HITL 的统一辅助组件：
+ * 写操作工具接入 HITL 的统一辅助组件：
  * <ul>
  *   <li>判断工具是否启用 HITL（支持灰度开关）；</li>
  *   <li>序列化/反序列化持久化执行计划（重启可恢复，不依赖内存 PlanCache）；</li>
- *   <li>统一处理 verifyAndConsume 失败提示文案。</li>
+ *   <li>统一处理 verifyAndConsume 失败提示文案；</li>
+ *   <li>三期 HITL：统一截获 {@link UnknownOutcomeException} 拉起 {@code VERIFY_OUTCOME} 核对型 HITL。</li>
  * </ul>
  */
 @Component
-@RequiredArgsConstructor
 public class HitlToolHelper {
 
     private final DecisionService decisionService;
     private final ObjectMapper objectMapper;
+    private final ActionAuditLogger auditLogger;
+    private final String platformUrl;
+
+    @Autowired
+    public HitlToolHelper(
+            DecisionService decisionService,
+            ObjectMapper objectMapper,
+            @Autowired(required = false) ActionAuditLogger auditLogger,
+            @Value("${data-agent.action.platform-url:http://192.168.2.77:3000}") String platformUrl) {
+        this.decisionService = decisionService;
+        this.objectMapper = objectMapper;
+        this.auditLogger = auditLogger;
+        this.platformUrl = platformUrl;
+    }
 
     /** 审批类工具持久化计划载体（存入 agentx_decision.payload_json） */
     public record ReviewStoredPlan(
@@ -134,6 +154,7 @@ public class HitlToolHelper {
                 decisionService.emitWithdrawn(updated != null ? updated : entity);
                 yield "⏹️ 该审批单已过期或被新对话取代（未执行）。";
             }
+            default -> "⏹️ 该审批单状态已变更（未执行）。";
         };
     }
 
@@ -141,6 +162,131 @@ public class HitlToolHelper {
         String reason = StringUtils.hasText(userWords) ? userWords.trim() : "未说明具体原因";
         return "❌ 用户已在审批卡片上【拒绝】执行（" + actionLabel + "），拒绝理由：「" + reason
                 + "」。请不要调用写操作执行，并结合该拒绝理由向用户反馈调整建议或下一步方案。";
+    }
+
+    /**
+     * 三期 HITL：统一截获写请求 {@link UnknownOutcomeException}，拉起 {@code VERIFY_OUTCOME} 核对型 HITL。
+     * 严禁自动重试！仅当用户去主平台核对后明确选择「确认未生效，重新执行」时才安全重发一次。
+     */
+    public <T> String executeWithVerifyOutcome(
+            String toolName, String actionLabel, String bizId, Long uid, String conversationId,
+            Supplier<T> writeCall, Function<T, String> onSuccess) {
+        // 慢路径恢复：若当前正在恢复一张 VERIFY_OUTCOME 决策单，直接按其终态分流，不重发首轮请求
+        String resumeDecId = ToolExecutionContext.currentResumeDecisionId();
+        if (StringUtils.hasText(resumeDecId)) {
+            DecisionEntity resumeEntity = decisionService.findById(resumeDecId);
+            if (resumeEntity != null && TYPE_VERIFY_OUTCOME.equals(resumeEntity.type())) {
+                return handleVerifyOutcomeState(resumeEntity, toolName, actionLabel, bizId, uid, conversationId,
+                        writeCall, onSuccess);
+            }
+        }
+        try {
+            T result = writeCall.get();
+            return onSuccess.apply(result);
+        } catch (UnknownOutcomeException uoe) {
+            Map<String, Object> rawPayload = new LinkedHashMap<>();
+            rawPayload.put("bizId", bizId);
+            rawPayload.put("actionLabel", actionLabel);
+            rawPayload.put("requestTime", uoe.getRequestTime());
+            rawPayload.put("errorSummary", uoe.getErrorSummary());
+            rawPayload.put("platformUrl", platformUrl);
+            rawPayload.put("method", uoe.getMethod());
+            rawPayload.put("path", uoe.getPath());
+
+            List<KeyParamItem> kps = cleanKeyParams(List.of(
+                    kp("业务单号", bizId),
+                    kp("请求时间", uoe.getRequestTime()),
+                    kp("错误摘要", uoe.getErrorSummary())
+            ));
+            String hash = decisionService.payloadHash(rawPayload);
+            CreateResult created = decisionService.createOrAutoApprove(new CreateDecisionRequest(
+                    conversationId, conversationId, null, null, uid != null ? uid : 0L,
+                    TYPE_VERIFY_OUTCOME, toolName, null, null, false,
+                    actionLabel, bizId, kps,
+                    "「" + actionLabel + "」网络超时结果未知，请前往主平台核对（" + bizId + "）",
+                    rawPayload, hash, null));
+
+            DecisionEntity entity = created.entity();
+            String decId = entity.decisionId();
+            DecisionAwaitRegistry.AwaitResult res = decisionService.awaitDecision(decId, true);
+            return switch (res.state()) {
+                case CONFIRMED_SUCCEEDED -> finalizeVerifySucceeded(entity, toolName, bizId, uid, conversationId);
+                case CONFIRMED_NOT_APPLIED -> finalizeVerifyRetry(entity, toolName, bizId, uid, conversationId, writeCall, onSuccess);
+                case ABORTED -> finalizeVerifyAborted(entity, toolName, bizId, uid, conversationId);
+                case PARKED -> throw new HitlParkException(decId, "等待人工核对主平台结果超时，已转入后台挂起");
+                case EXPIRED, SUPERSEDED -> {
+                    DecisionEntity updated = decisionService.findById(decId);
+                    decisionService.emitWithdrawn(updated != null ? updated : entity);
+                    yield "⏹️ 该核对单已过期或被新对话取代（未重发请求）。";
+                }
+                default -> "⏹️ 核对单状态已变更（未重发请求）。";
+            };
+        }
+    }
+
+    private <T> String handleVerifyOutcomeState(
+            DecisionEntity entity, String toolName, String actionLabel, String bizId,
+            Long uid, String conversationId, Supplier<T> writeCall, Function<T, String> onSuccess) {
+        return switch (entity.status()) {
+            case STATUS_CONFIRMED_SUCCEEDED -> finalizeVerifySucceeded(entity, toolName, bizId, uid, conversationId);
+            case STATUS_CONFIRMED_NOT_APPLIED -> finalizeVerifyRetry(entity, toolName, bizId, uid, conversationId, writeCall, onSuccess);
+            case STATUS_ABORTED -> finalizeVerifyAborted(entity, toolName, bizId, uid, conversationId);
+            case STATUS_EXPIRED, STATUS_SUPERSEDED -> {
+                decisionService.emitWithdrawn(entity);
+                yield "⏹️ 该核对单已过期或被新对话取代（未重发请求）。";
+            }
+            default -> throw new HitlParkException(entity.decisionId(), "等待人工核对主平台结果");
+        };
+    }
+
+    private String finalizeVerifySucceeded(DecisionEntity entity, String toolName, String bizId,
+                                         Long uid, String conversationId) {
+        DecisionEntity updated = decisionService.findById(entity.decisionId());
+        decisionService.emitResolved(updated != null ? updated : entity);
+        logVerifyAudit(conversationId, uid, toolName, bizId, entity.decisionId(), true, "人工核对已生效，补记成功");
+        return "✅ 经您人工核对，主平台已生效（业务单号：" + bizId + "）。系统未重复发送请求，已补记成功审计，请继续后续流程。";
+    }
+
+    private <T> String finalizeVerifyRetry(DecisionEntity entity, String toolName, String bizId,
+                                           Long uid, String conversationId,
+                                           Supplier<T> writeCall, Function<T, String> onSuccess) {
+        DecisionEntity updated = decisionService.findById(entity.decisionId());
+        decisionService.emitResolved(updated != null ? updated : entity);
+        logVerifyAudit(conversationId, uid, toolName, bizId, entity.decisionId(), true, "人工核对未生效，安全重发一次");
+        try {
+            T retryRes = writeCall.get();
+            return "🔄 已根据您的人工核对结果安全重发一次：\n\n" + onSuccess.apply(retryRes);
+        } catch (UnknownOutcomeException again) {
+            logVerifyAudit(conversationId, uid, toolName, bizId, entity.decisionId(), false,
+                    "人工核对后重发再次超时: " + again.getErrorSummary());
+            return "❌ 人工核对后安全重发一次仍发生超时（" + again.getErrorSummary()
+                    + "）。为避免重复提交，请前往主平台确认后手动处理。";
+        }
+    }
+
+    private String finalizeVerifyAborted(DecisionEntity entity, String toolName, String bizId,
+                                       Long uid, String conversationId) {
+        DecisionEntity updated = decisionService.findById(entity.decisionId());
+        decisionService.emitResolved(updated != null ? updated : entity);
+        logVerifyAudit(conversationId, uid, toolName, bizId, entity.decisionId(), false, "人工核对后选择放弃");
+        return "⏹️ 您已放弃该写操作（业务单号：" + bizId + "），系统未重发请求，本次操作已中止。";
+    }
+
+    private void logVerifyAudit(String conversationId, Long uid, String toolName, String bizId,
+                                String decisionId, boolean success, String detail) {
+        if (auditLogger == null) {
+            return;
+        }
+        auditLogger.log(ActionAuditLogger.entry()
+                .conversationId(conversationId)
+                .userId(uid)
+                .tool(toolName)
+                .action("verify-outcome")
+                .businessObject(bizId)
+                .decisionId(decisionId)
+                .success(success)
+                .detail(detail)
+                .build());
     }
 
     public static String formatPlanHint(CreateResult created, String summaryLine, String bizKeyHint) {

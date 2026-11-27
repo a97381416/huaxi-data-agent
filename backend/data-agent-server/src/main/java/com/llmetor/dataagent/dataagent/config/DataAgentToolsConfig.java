@@ -32,10 +32,14 @@ public class DataAgentToolsConfig {
 
     /** 常驻层：每请求工具清单必带 */
     @Bean
-    public List<ToolCallback> dataResidentTools(GlossaryCatalog glossaryCatalog) {
+    public List<ToolCallback> dataResidentTools(
+            GlossaryCatalog glossaryCatalog,
+            com.llmetor.dataagent.dataagent.hitl.AskUserQuestionTool askUserQuestionTool,
+            com.llmetor.dataagent.dataagent.hitl.ConfirmPlanTool confirmPlanTool) {
         List<ToolCallback> tools = new ArrayList<>();
         tools.add(LookupGlossaryTool.builder().terms(glossaryCatalog.listAll()).build());
         tools.add(TodoWriteTool.create());
+        tools.addAll(Arrays.asList(ToolCallbacks.from(askUserQuestionTool, confirmPlanTool)));
         return List.copyOf(tools);
     }
 
@@ -90,12 +94,16 @@ public class DataAgentToolsConfig {
             List<ToolCallback> reviewerWorkflowTools,
             List<ToolCallback> declarantWorkflowTools,
             ToolCallback cancelConfirmTool,
-            ToolCallback todoWriteTool) {
+            ToolCallback todoWriteTool,
+            ToolCallback askUserQuestionTool,
+            ToolCallback confirmPlanTool) {
     }
 
     @Bean
     public SubAgentToolGroups subAgentToolGroups(
             GlossaryCatalog glossaryCatalog,
+            com.llmetor.dataagent.dataagent.hitl.AskUserQuestionTool askUserQuestionTool,
+            com.llmetor.dataagent.dataagent.hitl.ConfirmPlanTool confirmPlanTool,
             com.llmetor.dataagent.dataagent.tools.ListTablesTool listTablesTool,
             com.llmetor.dataagent.dataagent.tools.DescribeTablesTool describeTablesTool,
             com.llmetor.dataagent.dataagent.tools.ValidateSqlTool validateSqlTool,
@@ -156,6 +164,8 @@ public class DataAgentToolsConfig {
                 List.copyOf(reviewerWorkflow),
                 List.copyOf(declarantWorkflow),
                 cancelConfirm,
-                todoWrite);
+                todoWrite,
+                ToolCallbacks.from(askUserQuestionTool)[0],
+                ToolCallbacks.from(confirmPlanTool)[0]);
     }
 }

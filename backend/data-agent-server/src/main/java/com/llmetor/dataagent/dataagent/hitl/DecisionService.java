@@ -178,9 +178,11 @@ public class DecisionService {
         String payloadJson = toJson(req.rawPayload());
         String optionsJson = buildOptionsMetaJson(req);
 
-        // 检查会话级同类放行
+        // 检查会话级同类放行（安全红线：仅 PERMISSION 类型允许同类放行，QUESTION/VERIFY_OUTCOME/PLAN_CONFIRM 绝对禁止）
+        String effectiveType = StringUtils.hasText(req.type()) ? req.type().trim().toUpperCase() : TYPE_PERMISSION;
+        boolean permissionType = TYPE_PERMISSION.equals(effectiveType);
         DecisionGrantEntity matchedGrant = null;
-        if (req.allowSessionGrant() && StringUtils.hasText(req.scopeKey())) {
+        if (permissionType && req.allowSessionGrant() && StringUtils.hasText(req.scopeKey())) {
             matchedGrant = tryConsumeGrant(req.ownerUserId(), rootConvId, req.scopeKey());
         }
 
@@ -223,10 +225,32 @@ public class DecisionService {
         return new CreateResult(entity, card, false, null);
     }
 
-    /** 二期 HITL：进入 60s 在线原地等待（进入前预落盘 PauseState） */
+    /** 二期/三期 HITL：进入 60s 在线原地等待（进入前预落盘 PauseState） */
     public DecisionAwaitRegistry.AwaitResult awaitDecision(String decisionId) {
-        ToolExecutionContext.savePreParkState(decisionId);
+        return awaitDecision(decisionId, true);
+    }
+
+    /** 三期 HITL：支持轻量短等待（QUESTION 类型传 savePrePark=false，超时不挂起整个会话） */
+    public DecisionAwaitRegistry.AwaitResult awaitDecision(String decisionId, boolean savePrePark) {
+        if (savePrePark) {
+            ToolExecutionContext.savePreParkState(decisionId);
+        }
         return awaitRegistry.registerAndAwait(decisionId, properties.getInlineAwaitSeconds(), this::findById);
+    }
+
+    /** 三期 HITL：收集型问答 60s 超时软收尾（不卡死会话，发 HITL_WITHDRAWN） */
+    public void markSoftTimedOut(String decisionId) {
+        if (!StringUtils.hasText(decisionId)) {
+            return;
+        }
+        int updated = jdbc.update(
+                "UPDATE agentx_decision SET status = ?, revision = revision + 1 WHERE decision_id = ? AND status = ?",
+                STATUS_TIMED_OUT_SOFT, decisionId, STATUS_PENDING);
+        if (updated > 0) {
+            DecisionEntity entity = findById(decisionId);
+            emitWithdrawn(entity);
+            log.info("[hitl] 收集型问答软超时自动跳过: decisionId={}", decisionId);
+        }
     }
 
     /** 二期 HITL：向 SSE 推送 HITL_RESOLVED（用于拒绝或消费完成时折叠卡片） */
@@ -246,7 +270,7 @@ public class DecisionService {
     }
 
     /**
-     * 人工签字审批（CAS 乐观锁 + 真人鉴权 + 幂等键 + 风险门控）。
+     * 人工签字审批 / 问答提交 / 核对拍板 / 计划确认（CAS 乐观锁 + 真人鉴权 + 幂等键 + 风险门控）。
      */
     public DecideResponse decide(String decisionId, long currentUserId, String currentUserName,
                                  String clientIp, DecideRequest req) {
@@ -254,15 +278,14 @@ public class DecisionService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "审批选项不能为空");
         }
         String option = req.option().trim().toUpperCase();
-        if (!OPTION_ALLOW_ONCE.equals(option) && !OPTION_ALLOW_SESSION.equals(option)
-                && !OPTION_REJECTED.equals(option) && !OPTION_REJECT_ALL.equals(option)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "不支持的审批选项: " + option);
-        }
 
         DecisionEntity entity = findById(decisionId);
         if (entity == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "审批单不存在: " + decisionId);
         }
+
+        // 校验选项与决策单类型是否匹配
+        validateOptionForType(entity.type(), option);
 
         // 1. 归属权校验（严禁越权替他人审批）
         if (entity.ownerUserId() != currentUserId) {
@@ -300,23 +323,25 @@ public class DecisionService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "审批单版本已变更，请刷新后重试");
         }
 
-        // 6. L3 不可逆工具禁止本会话同类放行
+        // 6. L3 不可逆工具及非 PERMISSION 类型禁止本会话同类放行（收集型权限隔离硬拦截）
         Map<String, Object> optsMeta = parseJsonMap(entity.optionsJson());
-        boolean allowSessionGrant = Boolean.TRUE.equals(optsMeta.get("allowSessionGrant"));
+        boolean allowSessionGrant = TYPE_PERMISSION.equals(entity.type())
+                && Boolean.TRUE.equals(optsMeta.get("allowSessionGrant"));
         if (OPTION_ALLOW_SESSION.equals(option) && !allowSessionGrant) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "该操作属于不可逆高危审批（L3），禁止本会话同类放行");
+                    "该操作禁止本会话同类放行");
         }
 
-        String targetStatus = (OPTION_REJECTED.equals(option) || OPTION_REJECT_ALL.equals(option))
-                ? STATUS_REJECTED : STATUS_APPROVED;
+        String targetStatus = resolveTargetStatus(entity.type(), option);
         String userWords = StringUtils.hasText(req.userWords()) ? req.userWords().trim() : null;
         String answerJsonStr = req.answerJson() != null ? toJson(req.answerJson()) : null;
         String cmdId = StringUtils.hasText(req.commandId()) ? req.commandId().trim() : null;
 
-        // 7. 若选择本会话同类放行，先创建授权单
+        // 7. 仅 PERMISSION 类型且选择本会话同类放行时才写授权表（QUESTION 等绝不写 grant 表）
         String grantId = null;
-        if (OPTION_ALLOW_SESSION.equals(option) && StringUtils.hasText(entity.scopeKey())) {
+        if (TYPE_PERMISSION.equals(entity.type())
+                && OPTION_ALLOW_SESSION.equals(option)
+                && StringUtils.hasText(entity.scopeKey())) {
             grantId = "gr_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
             String scopeDesc = stringVal(optsMeta.get("scopeDesc"));
             LocalDateTime grantExpires = now.plusHours(properties.getGrantTtlHours());
@@ -349,15 +374,57 @@ public class DecisionService {
         }
 
         DecisionEntity refreshed = findById(decisionId);
-        DecisionAwaitRegistry.AwaitResult awaitResult = STATUS_REJECTED.equals(targetStatus)
-                ? DecisionAwaitRegistry.AwaitResult.rejected(option, userWords)
-                : DecisionAwaitRegistry.AwaitResult.approved(option, grantId);
+        DecisionAwaitRegistry.AwaitResult awaitResult = buildAwaitResult(targetStatus, option, userWords, grantId, answerJsonStr);
         boolean inlineResumed = awaitRegistry.tryComplete(decisionId, awaitResult);
         String mode = inlineResumed ? MODE_INLINE_RESUMED : MODE_NEED_RESUME;
 
-        log.info("[hitl] 用户审批完成: decisionId={}, option={}, status={}, mode={}, actor={}({}), grantId={}",
-                decisionId, option, targetStatus, mode, currentUserName, currentUserId, grantId);
+        log.info("[hitl] 用户决策完成: decisionId={}, type={}, option={}, status={}, mode={}, actor={}({}), grantId={}",
+                decisionId, entity.type(), option, targetStatus, mode, currentUserName, currentUserId, grantId);
         return buildDecideResponse(refreshed, mode);
+    }
+
+    private static void validateOptionForType(String type, String option) {
+        String t = StringUtils.hasText(type) ? type.trim().toUpperCase() : TYPE_PERMISSION;
+        boolean valid = switch (t) {
+            case TYPE_QUESTION -> OPTION_SUBMIT_ANSWERS.equals(option) || OPTION_SKIP_QUESTION.equals(option);
+            case TYPE_VERIFY_OUTCOME -> OPTION_CONFIRMED_SUCCEEDED.equals(option)
+                    || OPTION_CONFIRMED_NOT_APPLIED.equals(option)
+                    || OPTION_ABORTED.equals(option);
+            case TYPE_PLAN_CONFIRM -> OPTION_APPROVE_PLAN.equals(option) || OPTION_REVISE_PLAN.equals(option);
+            default -> OPTION_ALLOW_ONCE.equals(option) || OPTION_ALLOW_SESSION.equals(option)
+                    || OPTION_REJECTED.equals(option) || OPTION_REJECT_ALL.equals(option);
+        };
+        if (!valid) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "决策单类型 " + t + " 不支持选项: " + option);
+        }
+    }
+
+    private static String resolveTargetStatus(String type, String option) {
+        return switch (option) {
+            case OPTION_SUBMIT_ANSWERS -> STATUS_ANSWERED;
+            case OPTION_SKIP_QUESTION -> STATUS_SKIPPED;
+            case OPTION_CONFIRMED_SUCCEEDED -> STATUS_CONFIRMED_SUCCEEDED;
+            case OPTION_CONFIRMED_NOT_APPLIED -> STATUS_CONFIRMED_NOT_APPLIED;
+            case OPTION_ABORTED -> STATUS_ABORTED;
+            case OPTION_REVISE_PLAN -> STATUS_REVISED;
+            case OPTION_REJECTED, OPTION_REJECT_ALL -> STATUS_REJECTED;
+            default -> STATUS_APPROVED;
+        };
+    }
+
+    private static DecisionAwaitRegistry.AwaitResult buildAwaitResult(
+            String targetStatus, String option, String userWords, String grantId, String answerJsonStr) {
+        return switch (targetStatus) {
+            case STATUS_ANSWERED -> DecisionAwaitRegistry.AwaitResult.answered(answerJsonStr);
+            case STATUS_SKIPPED -> DecisionAwaitRegistry.AwaitResult.skipped();
+            case STATUS_CONFIRMED_SUCCEEDED -> DecisionAwaitRegistry.AwaitResult.confirmedSucceeded();
+            case STATUS_CONFIRMED_NOT_APPLIED -> DecisionAwaitRegistry.AwaitResult.confirmedNotApplied();
+            case STATUS_ABORTED -> DecisionAwaitRegistry.AwaitResult.aborted();
+            case STATUS_REVISED -> DecisionAwaitRegistry.AwaitResult.revised(userWords);
+            case STATUS_REJECTED -> DecisionAwaitRegistry.AwaitResult.rejected(option, userWords);
+            default -> DecisionAwaitRegistry.AwaitResult.approved(option, grantId);
+        };
     }
 
     /**
@@ -461,7 +528,12 @@ public class DecisionService {
                     FROM agentx_decision d
                     WHERE d.owner_user_id = ? AND d.conversation_id = ?
                       AND d.status = 'PENDING' AND d.expires_at > CURRENT_TIMESTAMP
-                    ORDER BY d.created_at DESC
+                    ORDER BY CASE d.type
+                      WHEN 'VERIFY_OUTCOME' THEN 1
+                      WHEN 'PERMISSION' THEN 2
+                      WHEN 'PLAN_CONFIRM' THEN 3
+                      WHEN 'QUESTION' THEN 4
+                      ELSE 5 END ASC, d.created_at DESC
                     """;
             args = new Object[]{userId, conversationId.trim()};
         } else {
@@ -474,7 +546,12 @@ public class DecisionService {
                     FROM agentx_decision d
                     WHERE d.owner_user_id = ?
                       AND d.status = 'PENDING' AND d.expires_at > CURRENT_TIMESTAMP
-                    ORDER BY d.created_at DESC
+                    ORDER BY CASE d.type
+                      WHEN 'VERIFY_OUTCOME' THEN 1
+                      WHEN 'PERMISSION' THEN 2
+                      WHEN 'PLAN_CONFIRM' THEN 3
+                      WHEN 'QUESTION' THEN 4
+                      ELSE 5 END ASC, d.created_at DESC
                     """;
             args = new Object[]{userId};
         }
@@ -594,7 +671,8 @@ public class DecisionService {
                 convTitle,
                 queueIndex,
                 queueTotal,
-                queuePreview
+                queuePreview,
+                StringUtils.hasText(e.answerJson()) ? parseJsonAny(e.answerJson()) : null
         );
     }
 
@@ -610,6 +688,48 @@ public class DecisionService {
             case "resubmitLedger" -> "重新提交台账";
             default -> toolName;
         };
+    }
+
+    /** 三期 HITL：查询监控中心 HITL 专项统计指标 */
+    public Map<String, Object> getHitlMetrics(int hours) {
+        LocalDateTime since = LocalDateTime.now().minusHours(Math.max(1, hours));
+        Timestamp ts = Timestamp.valueOf(since);
+        Map<String, Object> result = new LinkedHashMap<>();
+        Long total = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM agentx_decision WHERE created_at >= ?", Long.class, ts);
+        long totalCount = total == null ? 0L : total;
+        result.put("total", totalCount);
+
+        Map<String, Long> byType = new LinkedHashMap<>();
+        for (String t : List.of(TYPE_PERMISSION, TYPE_QUESTION, TYPE_VERIFY_OUTCOME, TYPE_PLAN_CONFIRM)) {
+            Long c = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM agentx_decision WHERE type = ? AND created_at >= ?",
+                    Long.class, t, ts);
+            byType.put(t, c == null ? 0L : c);
+        }
+        result.put("byType", byType);
+
+        Double avgRespMs = jdbc.queryForObject(
+                "SELECT AVG(EXTRACT(EPOCH FROM (answered_at - created_at)) * 1000) "
+                        + "FROM agentx_decision WHERE answered_at IS NOT NULL AND created_at >= ?",
+                Double.class, ts);
+        result.put("avgResponseMs", avgRespMs != null ? Math.round(avgRespMs) : 0L);
+
+        Long approved = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM agentx_decision WHERE status IN ('APPROVED','CONSUMED','AUTO_APPROVED_BY_GRANT','ANSWERED','CONFIRMED_SUCCEEDED','CONFIRMED_NOT_APPLIED') AND created_at >= ?",
+                Long.class, ts);
+        Long rejected = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM agentx_decision WHERE status IN ('REJECTED','REVISED','ABORTED') AND created_at >= ?",
+                Long.class, ts);
+        Long skipped = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM agentx_decision WHERE status IN ('SKIPPED','TIMED_OUT_SOFT') AND created_at >= ?",
+                Long.class, ts);
+        result.put("approveRate", totalCount > 0 ? Math.round((approved == null ? 0 : approved) * 1000.0 / totalCount) / 10.0 : 0.0);
+        result.put("rejectRate", totalCount > 0 ? Math.round((rejected == null ? 0 : rejected) * 1000.0 / totalCount) / 10.0 : 0.0);
+        result.put("skipRate", totalCount > 0 ? Math.round((skipped == null ? 0 : skipped) * 1000.0 / totalCount) / 10.0 : 0.0);
+        long verifyCnt = byType.getOrDefault(TYPE_VERIFY_OUTCOME, 0L);
+        result.put("verifyOutcomeRate", totalCount > 0 ? Math.round(verifyCnt * 1000.0 / totalCount) / 10.0 : 0.0);
+        return result;
     }
 
     /** 定时扫描过期单据（每 5 分钟兜底清理） */
@@ -670,7 +790,32 @@ public class DecisionService {
 
     private DecideResponse buildDecideResponse(DecisionEntity entity, String mode) {
         String resumePrompt;
-        if (STATUS_REJECTED.equals(entity.status())) {
+        if (TYPE_QUESTION.equals(entity.type())) {
+            if (STATUS_ANSWERED.equals(entity.status())) {
+                resumePrompt = "用户已完成需求细节补充（decisionId=" + entity.decisionId()
+                        + "），答案 JSON：" + entity.answerJson() + "。请基于这些明确需求继续完成任务。";
+            } else {
+                resumePrompt = "用户选择跳过需求补充（decisionId=" + entity.decisionId()
+                        + "），请说明您的默认假设口径并继续完成任务。";
+            }
+        } else if (TYPE_VERIFY_OUTCOME.equals(entity.type())) {
+            resumePrompt = switch (entity.status()) {
+                case STATUS_CONFIRMED_SUCCEEDED -> "用户已人工核对主平台确认操作已生效（decisionId="
+                        + entity.decisionId() + "），无需重复执行，请继续后续流程。";
+                case STATUS_CONFIRMED_NOT_APPLIED -> "用户已人工核对主平台确认未生效（decisionId="
+                        + entity.decisionId() + "），请安全重发一次写操作。";
+                default -> "用户已放弃本次核对操作（decisionId=" + entity.decisionId() + "），请终止该写操作。";
+            };
+        } else if (TYPE_PLAN_CONFIRM.equals(entity.type())) {
+            if (STATUS_REVISED.equals(entity.status())) {
+                String words = StringUtils.hasText(entity.userWords()) ? entity.userWords() : "请调整计划";
+                resumePrompt = "用户打回了执行计划（decisionId=" + entity.decisionId()
+                        + "），修改意见：「" + words + "」。请按用户意见调整计划并重新确认。";
+            } else {
+                resumePrompt = "用户已批准执行计划（decisionId=" + entity.decisionId()
+                        + "），请按计划开始逐步执行。";
+            }
+        } else if (STATUS_REJECTED.equals(entity.status())) {
             String reason = StringUtils.hasText(entity.userWords()) ? entity.userWords() : "未说明具体原因";
             resumePrompt = "用户已在审批卡片上【拒绝】执行决策单 " + entity.decisionId()
                     + "（" + entity.actionSummary() + "），拒绝理由：「" + reason

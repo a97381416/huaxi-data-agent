@@ -156,6 +156,31 @@ public class MetricAggregateJob {
                 Long.class, start, end);
         rows.add(metricRow(bucket, "convs", convs == null ? 0 : convs));
 
+        // 三期 HITL 专项指标聚合（容错：agentx_decision 表尚未建表时不阻断基础监控聚合）
+        try {
+            Long hitlTotal = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM agentx_decision WHERE created_at >= ? AND created_at < ?",
+                    Long.class, start, end);
+            if (hitlTotal != null && hitlTotal > 0) {
+                rows.add(metricRow(bucket, "hitl_total", hitlTotal));
+                for (String t : List.of("PERMISSION", "QUESTION", "VERIFY_OUTCOME", "PLAN_CONFIRM")) {
+                    Long cnt = jdbc.queryForObject(
+                            "SELECT COUNT(*) FROM agentx_decision WHERE type = ? AND created_at >= ? AND created_at < ?",
+                            Long.class, t, start, end);
+                    rows.add(metricRow(bucket, "hitl_type_" + t.toLowerCase(), cnt == null ? 0 : cnt));
+                }
+                Double hitlAvgMs = jdbc.queryForObject(
+                        "SELECT AVG(EXTRACT(EPOCH FROM (answered_at - created_at)) * 1000) "
+                                + "FROM agentx_decision WHERE answered_at IS NOT NULL AND created_at >= ? AND created_at < ?",
+                        Double.class, start, end);
+                if (hitlAvgMs != null) {
+                    rows.add(metricRow(bucket, "hitl_avg_response_ms", hitlAvgMs));
+                }
+            }
+        } catch (Exception ignored) {
+            // 忽略 HITL 表未初始化的情况
+        }
+
         txTemplate.executeWithoutResult(status -> {
             jdbc.update("DELETE FROM agentx_monitor_metric WHERE minute = ? AND dim_user IS NULL", start);
             for (Object[] row : rows) {

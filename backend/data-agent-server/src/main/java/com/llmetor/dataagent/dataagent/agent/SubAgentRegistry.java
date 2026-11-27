@@ -98,6 +98,14 @@ public class SubAgentRegistry {
         return toolGroups.todoWriteTool();
     }
 
+    public ToolCallback askUserQuestionTool() {
+        return toolGroups.askUserQuestionTool();
+    }
+
+    public ToolCallback confirmPlanTool() {
+        return toolGroups.confirmPlanTool();
+    }
+
     /**
      * 为当前请求构建全部已启用的垂类 SubAgentTool 列表。
      */

@@ -36,29 +36,64 @@ public class DecisionAwaitRegistry implements SmartLifecycle {
         REJECT_ALL,
         PARKED,
         EXPIRED,
-        SUPERSEDED
+        SUPERSEDED,
+        // 三期 HITL 等待结果态
+        ANSWERED,
+        SKIPPED,
+        CONFIRMED_SUCCEEDED,
+        CONFIRMED_NOT_APPLIED,
+        ABORTED,
+        REVISED
     }
 
-    public record AwaitResult(AwaitState state, String option, String userWords, String grantId) {
+    public record AwaitResult(AwaitState state, String option, String userWords, String grantId, String answerJson) {
+        public AwaitResult(AwaitState state, String option, String userWords, String grantId) {
+            this(state, option, userWords, grantId, null);
+        }
+
         public static AwaitResult approved(String option, String grantId) {
-            return new AwaitResult(AwaitState.APPROVED, option, null, grantId);
+            return new AwaitResult(AwaitState.APPROVED, option, null, grantId, null);
         }
 
         public static AwaitResult rejected(String option, String userWords) {
             AwaitState s = OPTION_REJECT_ALL.equals(option) ? AwaitState.REJECT_ALL : AwaitState.REJECTED;
-            return new AwaitResult(s, option, userWords, null);
+            return new AwaitResult(s, option, userWords, null, null);
         }
 
         public static AwaitResult parked() {
-            return new AwaitResult(AwaitState.PARKED, null, null, null);
+            return new AwaitResult(AwaitState.PARKED, null, null, null, null);
         }
 
         public static AwaitResult expired() {
-            return new AwaitResult(AwaitState.EXPIRED, null, null, null);
+            return new AwaitResult(AwaitState.EXPIRED, null, null, null, null);
         }
 
         public static AwaitResult superseded() {
-            return new AwaitResult(AwaitState.SUPERSEDED, null, null, null);
+            return new AwaitResult(AwaitState.SUPERSEDED, null, null, null, null);
+        }
+
+        public static AwaitResult answered(String answerJson) {
+            return new AwaitResult(AwaitState.ANSWERED, OPTION_SUBMIT_ANSWERS, null, null, answerJson);
+        }
+
+        public static AwaitResult skipped() {
+            return new AwaitResult(AwaitState.SKIPPED, OPTION_SKIP_QUESTION, null, null, null);
+        }
+
+        public static AwaitResult confirmedSucceeded() {
+            return new AwaitResult(AwaitState.CONFIRMED_SUCCEEDED, OPTION_CONFIRMED_SUCCEEDED, null, null, null);
+        }
+
+        public static AwaitResult confirmedNotApplied() {
+            return new AwaitResult(AwaitState.CONFIRMED_NOT_APPLIED, OPTION_CONFIRMED_NOT_APPLIED, null, null, null);
+        }
+
+        public static AwaitResult aborted() {
+            return new AwaitResult(AwaitState.ABORTED, OPTION_ABORTED, null, null, null);
+        }
+
+        public static AwaitResult revised(String userWords) {
+            return new AwaitResult(AwaitState.REVISED, OPTION_REVISE_PLAN, userWords, null, null);
         }
     }
 
@@ -153,6 +188,12 @@ public class DecisionAwaitRegistry implements SmartLifecycle {
                         AwaitResult.approved(e.decisionOption(), e.grantId());
                 case STATUS_REJECTED ->
                         AwaitResult.rejected(e.decisionOption(), e.userWords());
+                case STATUS_ANSWERED -> AwaitResult.answered(e.answerJson());
+                case STATUS_SKIPPED, STATUS_TIMED_OUT_SOFT -> AwaitResult.skipped();
+                case STATUS_CONFIRMED_SUCCEEDED -> AwaitResult.confirmedSucceeded();
+                case STATUS_CONFIRMED_NOT_APPLIED -> AwaitResult.confirmedNotApplied();
+                case STATUS_ABORTED -> AwaitResult.aborted();
+                case STATUS_REVISED -> AwaitResult.revised(e.userWords());
                 case STATUS_EXPIRED -> AwaitResult.expired();
                 case STATUS_SUPERSEDED -> AwaitResult.superseded();
                 default -> {

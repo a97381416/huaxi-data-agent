@@ -420,6 +420,8 @@ public class DodoAgent {
                 traceCollector, pauseStateStore, contextPolicy, loopGuardConfig));
         routerTools.add(subAgentRegistry.cancelConfirmTool());
         routerTools.add(subAgentRegistry.todoWriteTool());
+        routerTools.add(subAgentRegistry.askUserQuestionTool());
+        routerTools.add(subAgentRegistry.confirmPlanTool());
 
         // 非垂类扩展技能保留给主路由 SkillsTool（如 skill-creator 等）
         List<String> extSkillDirs = skillManager.getEnabledSkillDirs().stream()

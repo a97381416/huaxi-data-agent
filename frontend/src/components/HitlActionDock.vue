@@ -1,8 +1,9 @@
 <template>
   <div v-if="visibleCards.length" class="mx-auto mb-2.5 w-full max-w-4xl space-y-2">
-    <HitlPermissionCard
+    <component
       v-for="card in visibleCards"
       :key="card.decisionId"
+      :is="cardComponent(card.type)"
       :card="card"
       :highlighted="focusDecisionId === card.decisionId"
       @decided="(resp) => $emit('decided', resp)"
@@ -15,6 +16,16 @@
 <script setup>
 import { computed } from 'vue'
 import HitlPermissionCard from '@/components/HitlPermissionCard.vue'
+import HitlQuestionCard from '@/components/HitlQuestionCard.vue'
+import HitlVerifyCard from '@/components/HitlVerifyCard.vue'
+import HitlPlanCard from '@/components/HitlPlanCard.vue'
+
+function cardComponent(type) {
+  if (type === 'QUESTION') return HitlQuestionCard
+  if (type === 'VERIFY_OUTCOME') return HitlVerifyCard
+  if (type === 'PLAN_CONFIRM') return HitlPlanCard
+  return HitlPermissionCard
+}
 
 const props = defineProps({
   decisions: { type: Array, default: () => [] },

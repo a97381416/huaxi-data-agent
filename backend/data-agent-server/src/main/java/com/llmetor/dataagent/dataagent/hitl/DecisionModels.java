@@ -15,6 +15,9 @@ public final class DecisionModels {
     }
 
     public static final String TYPE_PERMISSION = "PERMISSION";
+    public static final String TYPE_QUESTION = "QUESTION";
+    public static final String TYPE_VERIFY_OUTCOME = "VERIFY_OUTCOME";
+    public static final String TYPE_PLAN_CONFIRM = "PLAN_CONFIRM";
 
     public static final String STATUS_PENDING = "PENDING";
     public static final String STATUS_APPROVED = "APPROVED";
@@ -23,11 +26,27 @@ public final class DecisionModels {
     public static final String STATUS_AUTO_APPROVED_BY_GRANT = "AUTO_APPROVED_BY_GRANT";
     public static final String STATUS_EXPIRED = "EXPIRED";
     public static final String STATUS_SUPERSEDED = "SUPERSEDED";
+    // 三期 HITL 状态
+    public static final String STATUS_ANSWERED = "ANSWERED";
+    public static final String STATUS_SKIPPED = "SKIPPED";
+    public static final String STATUS_TIMED_OUT_SOFT = "TIMED_OUT_SOFT";
+    public static final String STATUS_CONFIRMED_SUCCEEDED = "CONFIRMED_SUCCEEDED";
+    public static final String STATUS_CONFIRMED_NOT_APPLIED = "CONFIRMED_NOT_APPLIED";
+    public static final String STATUS_ABORTED = "ABORTED";
+    public static final String STATUS_REVISED = "REVISED";
 
     public static final String OPTION_ALLOW_ONCE = "ALLOW_ONCE";
     public static final String OPTION_ALLOW_SESSION = "ALLOW_SESSION";
     public static final String OPTION_REJECTED = "REJECTED";
     public static final String OPTION_REJECT_ALL = "REJECT_ALL";
+    // 三期 HITL 决策选项
+    public static final String OPTION_SUBMIT_ANSWERS = "SUBMIT_ANSWERS";
+    public static final String OPTION_SKIP_QUESTION = "SKIP_QUESTION";
+    public static final String OPTION_CONFIRMED_SUCCEEDED = "CONFIRMED_SUCCEEDED";
+    public static final String OPTION_CONFIRMED_NOT_APPLIED = "CONFIRMED_NOT_APPLIED";
+    public static final String OPTION_ABORTED = "ABORTED";
+    public static final String OPTION_APPROVE_PLAN = "APPROVE_PLAN";
+    public static final String OPTION_REVISE_PLAN = "REVISE_PLAN";
 
     public static final String MODE_INLINE_RESUMED = "INLINE_RESUMED";
     public static final String MODE_NEED_RESUME = "NEED_RESUME";
@@ -75,7 +94,8 @@ public final class DecisionModels {
             String conversationTitle,
             Integer queueIndex,
             Integer queueTotal,
-            List<QueuePreviewItem> queuePreview
+            List<QueuePreviewItem> queuePreview,
+            Object answerJson
     ) {
         public HitlCardPayload(
                 String decisionId, String conversationId, String toolCallId, String agentCode,
@@ -89,7 +109,23 @@ public final class DecisionModels {
                     toolName, actionLabel, targetSummary, actionSummary, keyParams, rawPayload,
                     scopeKey, scopeDesc, allowSessionGrant, decisionOption, userWords, grantId,
                     answeredByName, expiresAt, createdAt, answeredAt, consumedAt, remainingSeconds,
-                    conversationTitle, null, null, null);
+                    conversationTitle, null, null, null, null);
+        }
+
+        public HitlCardPayload(
+                String decisionId, String conversationId, String toolCallId, String agentCode,
+                String type, String status, int revision, String toolName, String actionLabel,
+                String targetSummary, String actionSummary, List<KeyParamItem> keyParams,
+                Object rawPayload, String scopeKey, String scopeDesc, boolean allowSessionGrant,
+                String decisionOption, String userWords, String grantId, String answeredByName,
+                String expiresAt, String createdAt, String answeredAt, String consumedAt,
+                long remainingSeconds, String conversationTitle,
+                Integer queueIndex, Integer queueTotal, List<QueuePreviewItem> queuePreview) {
+            this(decisionId, conversationId, toolCallId, agentCode, type, status, revision,
+                    toolName, actionLabel, targetSummary, actionSummary, keyParams, rawPayload,
+                    scopeKey, scopeDesc, allowSessionGrant, decisionOption, userWords, grantId,
+                    answeredByName, expiresAt, createdAt, answeredAt, consumedAt, remainingSeconds,
+                    conversationTitle, queueIndex, queueTotal, queuePreview, null);
         }
     }
 

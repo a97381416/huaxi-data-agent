@@ -11,8 +11,16 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
+import java.io.EOFException;
+import java.io.IOException;
+import java.net.ConnectException;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 
@@ -96,7 +104,7 @@ public class RestActionClient {
      * 测试构造：builder 已被 MockRestServiceServer 绑定（requestFactory 为 mock，
      * 不可再覆盖），因此本构造不设超时工厂。
      */
-    RestActionClient(RestClient.Builder mockBoundBuilder, String baseUrl, int readRetryTimes) {
+    public RestActionClient(RestClient.Builder mockBoundBuilder, String baseUrl, int readRetryTimes) {
         this(mockBoundBuilder, baseUrl, 0, 0, readRetryTimes, false);
     }
 
@@ -149,11 +157,15 @@ public class RestActionClient {
         return r.errorType() == ErrorType.UNREACHABLE || r.errorType() == ErrorType.SERVER_ERROR;
     }
 
+    private static final DateTimeFormatter REQ_TS_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
     private ActionResult exchangeOnce(String path, Map<String, String> query,
                                       String token, Long tenantId, HttpMethod method, Object body) {
         if (token == null || token.isBlank()) {
             return ActionResult.fail(0, 401, "当前会话缺少登录凭证，请重新登录后再执行该操作。", ErrorType.AUTH_MISSING);
         }
+        boolean isWrite = method != HttpMethod.GET;
+        String requestTime = LocalDateTime.now().format(REQ_TS_FMT);
         try {
             RestClient.RequestBodySpec spec = restClient
                     .method(method)
@@ -177,6 +189,11 @@ public class RestActionClient {
         } catch (RestClientResponseException e) {
             int status = e.getStatusCode().value();
             String json = e.getResponseBodyAsString();
+            if (isWrite && status == 504) {
+                log.warn("[action] 写请求 504 超时（结果未知，严禁自动重试）: {} {}", method, path);
+                throw new UnknownOutcomeException(method.name(), path, requestTime,
+                        "HTTP 504 Gateway Timeout", status, e);
+            }
             if (status >= 500) {
                 // 5xx：服务级异常，可重试分类；尽量从 body 取原因，取不到用固定降级话术
                 String reason = extractMsg(json);
@@ -188,14 +205,67 @@ public class RestActionClient {
             // 4xx：yudao GlobalExceptionHandler 仍返回 CommonResult JSON（401/403/400）
             return parseCommonResult(status, json);
         } catch (ResourceAccessException e) {
+            if (isWrite && isUnknownOutcomeCause(e)) {
+                String summary = summarizeNetworkError(e);
+                log.warn("[action] 写请求发生未知结果网络异常（严禁自动重试）: {} {} - {}", method, path, summary);
+                throw new UnknownOutcomeException(method.name(), path, requestTime, summary, 0, e);
+            }
             log.warn("[action] 主系统不可达: {} {} - {}", method, path, e.getMessage());
             return ActionResult.fail(0, null,
                     "主系统暂不可达（网络异常），请稍后再试，或前往主平台操作。查询类问题不受影响。",
                     ErrorType.UNREACHABLE);
+        } catch (RestClientException e) {
+            if (isWrite && isUnknownOutcomeCause(e)) {
+                String summary = summarizeNetworkError(e);
+                log.warn("[action] 写请求响应中断（结果未知，严禁自动重试）: {} {} - {}", method, path, summary);
+                throw new UnknownOutcomeException(method.name(), path, requestTime, summary, 0, e);
+            }
+            log.warn("[action] 转发异常: {} {} - {}", method, path, e.getMessage());
+            return ActionResult.fail(0, null, "调用主系统时发生未知异常，请稍后再试。", ErrorType.SERVER_ERROR);
         } catch (Exception e) {
             log.warn("[action] 转发异常: {} {} - {}", method, path, e.getMessage());
             return ActionResult.fail(0, null, "调用主系统时发生未知异常，请稍后再试。", ErrorType.SERVER_ERROR);
         }
+    }
+
+    /**
+     * 精细区分连接未建立（确定未发送）vs 已发送但结果未知（ReadTimeout / 断流 / 连接重置）。
+     */
+    public static boolean isUnknownOutcomeCause(Throwable t) {
+        Throwable cur = t;
+        while (cur != null) {
+            if (cur instanceof ConnectException) {
+                return false;
+            }
+            if (cur instanceof SocketTimeoutException ste) {
+                String msg = ste.getMessage();
+                if (msg != null && msg.toLowerCase().contains("connect timed out")) {
+                    return false;
+                }
+                return true;
+            }
+            if (cur instanceof EOFException || cur instanceof SocketException) {
+                return true;
+            }
+            if (cur instanceof IOException ioe) {
+                String msg = ioe.getMessage();
+                if (msg != null && msg.toLowerCase().contains("connect")) {
+                    return false;
+                }
+                return true;
+            }
+            cur = cur.getCause();
+        }
+        return false;
+    }
+
+    private static String summarizeNetworkError(Throwable t) {
+        Throwable root = t;
+        while (root.getCause() != null) {
+            root = root.getCause();
+        }
+        String msg = root.getMessage();
+        return root.getClass().getSimpleName() + (msg != null && !msg.isBlank() ? ": " + msg : "");
     }
 
     private void applyAuthHeaders(HttpHeaders headers, String token, Long tenantId) {

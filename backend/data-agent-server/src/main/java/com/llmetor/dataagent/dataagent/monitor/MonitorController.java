@@ -53,12 +53,19 @@ public class MonitorController {
     private final AnomalyDetectService detectService;
     private final RiskStore riskStore;
     private final com.llmetor.dataagent.dataagent.monitor.detect.DetectRerunService rerunService;
+    private final com.llmetor.dataagent.dataagent.hitl.DecisionService decisionService;
     private final ObjectMapper objectMapper;
 
     /** 总览：KPI + 趋势（查分钟级聚合表）+ 失败会话 TOP + 进行中会话（卡死检测） */
     @GetMapping("/overview")
     public R<OverviewVO> overview(@RequestParam(defaultValue = "24h") String range) {
         return R.ok(monitorQueryService.overview(range));
+    }
+
+    /** 三期 HITL：专项指标（各类型触发次数、平均人工响应耗时、批准/拒绝/跳过率、核对型触发率） */
+    @GetMapping("/hitl-metrics")
+    public R<Map<String, Object>> hitlMetrics(@RequestParam(defaultValue = "24") int hours) {
+        return R.ok(decisionService.getHitlMetrics(hours));
     }
 
     /**

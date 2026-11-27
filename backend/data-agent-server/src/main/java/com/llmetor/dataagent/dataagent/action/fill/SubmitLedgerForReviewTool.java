@@ -391,10 +391,32 @@ public class SubmitLedgerForReviewTool {
         com.fasterxml.jackson.databind.node.ObjectNode vars = body.putObject("variables");
         variables.forEach(vars::put);
 
+        if (hitlHelper != null) {
+            return hitlHelper.executeWithVerifyOutcome(
+                    ACTION,
+                    "提交台账审核",
+                    ledger.docNumber(),
+                    uid,
+                    conversationId,
+                    () -> {
+                        RestActionClient.ActionResult r = restActionClient.post(
+                                "/doc/ledger/submit-for-review", body, token, tenant);
+                        contextSupport.requireOk(r, "提交审核");
+                        return r;
+                    },
+                    r -> formatSubmitSuccess(uid, ledger, v, plan, confirmToken, conversationId)
+            );
+        }
+
         RestActionClient.ActionResult r = restActionClient.post(
                 "/doc/ledger/submit-for-review", body, token, tenant);
         contextSupport.requireOk(r, "提交审核");
+        return formatSubmitSuccess(uid, ledger, v, plan, confirmToken, conversationId);
+    }
 
+    private String formatSubmitSuccess(Long uid, FillContextSupport.LedgerView ledger,
+                                       FillPanelSupport.SubmitValidation v, SubmitPlanCache.Plan plan,
+                                       String confirmToken, String conversationId) {
         planCache.remove(confirmToken);
         nodeSelectionCache.remove(conversationId);
         audit(uid, conversationId, "submit", ledger.docNumber(), confirmToken, true,
